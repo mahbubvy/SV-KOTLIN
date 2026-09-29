@@ -5,6 +5,7 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import com.secretvault.app.core.crypto.KeyStoreManager
 import com.secretvault.app.core.crypto.VaultCryptoEngine
+import com.secretvault.app.core.database.DatabaseKeyManager
 import com.secretvault.app.core.database.VaultDatabase
 import com.secretvault.app.core.image.EncryptedThumbnailFetcher
 import com.secretvault.app.core.image.EncryptedThumbnailKeyer
@@ -16,7 +17,6 @@ import com.secretvault.app.data.repository.VaultAlbumRepository
 import com.secretvault.app.data.repository.VaultMediaRepository
 import net.sqlcipher.database.SQLiteDatabase
 import java.io.File
-import java.security.MessageDigest
 
 class SecretVaultApp : Application(), ImageLoaderFactory {
 
@@ -47,8 +47,7 @@ class SecretVaultApp : Application(), ImageLoaderFactory {
         sessionManager = SessionManager()
 
         // 3. Initialize Database with Hardware-derived Passphrase
-        val masterKey = keyStoreManager.getOrCreateMasterKey()
-        val dbPassphrase = MessageDigest.getInstance("SHA-256").digest(masterKey.encoded ?: "vault_db_key".toByteArray())
+        val dbPassphrase = DatabaseKeyManager(this, keyStoreManager).getOrCreatePassphrase()
         database = VaultDatabase.getInstance(this, dbPassphrase)
 
         // 4. Initialize Repositories
