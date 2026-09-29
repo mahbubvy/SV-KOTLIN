@@ -18,6 +18,8 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.security.GeneralSecurityException
 import java.security.KeyStoreException
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
 import kotlin.random.Random
@@ -142,15 +144,47 @@ class VaultCryptoEngineTest {
     }
 
     @Test
+    fun versionTwoEnvelopeFilesRemainReadable() {
+        val chunks = ChunkedCipherStream(64 * 1024)
+        val iv = ByteArray(12) { (it + 9).toByte() }
+        val original = ByteArray(64 * 1024 + 13) { (it * 11).toByte() }
+        val rawFileKey = ByteArray(32) { (it * 5).toByte() }
+        val v2Header = ChunkedCipherStream.StreamHeader(ChunkedCipherStream.ENVELOPE_VERSION, 64 * 1024, iv)
+        val wrapper = Cipher.getInstance(ChunkedCipherStream.CIPHER_ALGORITHM).apply {
+            init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv))
+            updateAAD(v2Header.authenticationData())
+        }
+        val wrappedFileKey = wrapper.doFinal(rawFileKey)
+        val output = ByteArrayOutputStream()
+        chunks.writeHeader(output, iv, 64 * 1024, wrappedFileKey)
+        val framed = java.io.DataOutputStream(output)
+        val fileKey = SecretKeySpec(rawFileKey, "AES")
+        for ((index, offset) in original.indices.step(64 * 1024).withIndex()) {
+            val encryptedChunk = chunks.encryptChunk(
+                original, offset, minOf(64 * 1024, original.size - offset), fileKey, iv, index
+            )
+            framed.writeInt(encryptedChunk.size)
+            framed.write(encryptedChunk)
+        }
+        val encoded = output.toByteArray()
+        assertEquals(ChunkedCipherStream.ENVELOPE_VERSION, chunks.readHeader(ByteArrayInputStream(encoded)).version)
+        assertArrayEquals(original, cryptoEngine.decryptBytes(encoded, key))
+        val file = tempFolder.newFile("v2-envelope.enc").apply { writeBytes(encoded) }
+        assertArrayEquals(original.copyOfRange(65_530, original.size), cryptoEngine.decryptRange(file, 65_530, 19, key))
+    }
+    @Test
     fun envelopeWriterAuthenticatesKeyAndHeaderAndSupportsEmptyFiles() {
         val output = ByteArrayOutputStream()
         val original = ByteArray(70001) { (it * 3).toByte() }
         cryptoEngine.createEncryptingOutputStream(output, key).use { it.write(original) }
         val encoded = output.toByteArray()
         val header = ChunkedCipherStream().readHeader(ByteArrayInputStream(encoded))
-        assertEquals(ChunkedCipherStream.ENVELOPE_VERSION, header.version)
+        assertEquals(ChunkedCipherStream.COMPLETION_VERSION, header.version)
         assertEquals(69, header.headerSize)
         assertArrayEquals(original, cryptoEngine.decryptBytes(encoded, key))
+        val completeFile = tempFolder.newFile("complete-size.enc").apply { writeBytes(encoded) }
+        assertEquals(original.size.toLong(), cryptoEngine.calculatePlaintextSize(completeFile, key))
+        assertEquals(original.size.toLong(), cryptoEngine.getPlaintextSize(completeFile, key))
         for (offset in listOf(8, 21, 68, 80, encoded.lastIndex)) {
             val modified = encoded.clone()
             modified[offset] = (modified[offset].toInt() xor 1).toByte()
@@ -181,5 +215,24 @@ class VaultCryptoEngineTest {
         assertTrue(sourceFile.exists())
         assertArrayEquals(original, sourceFile.readBytes())
         assertFalse(destination.exists())
+    }
+    @Test
+    fun completionMetadataRejectsRemovedTrailingChunksAndKeepsRangeReads() {
+        val original = ByteArray(2 * 64 * 1024) { (it * 7).toByte() }
+        val encrypted = cryptoEngine.encryptBytes(original, key)
+        val header = ChunkedCipherStream().readHeader(ByteArrayInputStream(encrypted))
+
+        assertEquals(ChunkedCipherStream.COMPLETION_VERSION, header.version)
+        assertArrayEquals(original.copyOfRange(64_000, 70_000), cryptoEngine.decryptRange(
+            tempFolder.newFile("complete.enc").apply { writeBytes(encrypted) }, 64_000, 6_000, key
+        ))
+
+        val firstChunkEnd = header.headerSize + 4 + 64 * 1024 + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES
+        val footerStart = encrypted.size - ChunkedCipherStream.FOOTER_SIZE
+        val truncated = encrypted.copyOfRange(0, firstChunkEnd) + encrypted.copyOfRange(footerStart, encrypted.size)
+        assertThrows(GeneralSecurityException::class.java) { cryptoEngine.decryptBytes(truncated, key) }
+        assertThrows(GeneralSecurityException::class.java) {
+            cryptoEngine.decryptBytes(encrypted.copyOf(footerStart), key)
+        }
     }
 }

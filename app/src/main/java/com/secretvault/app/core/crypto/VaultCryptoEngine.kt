@@ -40,7 +40,7 @@ class VaultCryptoEngine(
         val rawKey = ByteArray(32).also { SecureRandom().nextBytes(it) }
         try {
             val header = ChunkedCipherStream.StreamHeader(
-                ChunkedCipherStream.ENVELOPE_VERSION, chunkSize, keyStoreManager.generateRandomIv()
+                ChunkedCipherStream.COMPLETION_VERSION, chunkSize, keyStoreManager.generateRandomIv()
             )
             val wrapped = wrapCipher(Cipher.ENCRYPT_MODE, key, header).doFinal(rawKey)
             return header.copy(wrappedKey = wrapped) to SecretKeySpec(rawKey, "AES")
@@ -73,7 +73,7 @@ class VaultCryptoEngine(
     ) {
         val (header, contentKey) = prepareEncryption(key)
         val baseIv = header.baseIv
-        cipherStream.writeHeader(output, baseIv, chunkSize, header.wrappedKey)
+        cipherStream.writeHeader(output, baseIv, chunkSize, header.wrappedKey, header.version)
 
         val buffer = ByteArray(chunkSize)
         val lenBuffer = ByteArray(4)
@@ -121,6 +121,7 @@ class VaultCryptoEngine(
                     break
                 }
             }
+            cipherStream.writeFooter(output, header, contentKey, bytesProcessed, chunkIndex)
             output.flush()
         } finally {
             SecureMemory.wipe(buffer)
@@ -155,54 +156,59 @@ class VaultCryptoEngine(
         val lenBuffer = ByteArray(4)
         var chunkIndex = 0
         var bytesProcessed = 0L
+        var completion: ChunkedCipherStream.StreamFooter? = null
 
         try {
             while (true) {
                 var read = 0
                 while (read < 4) {
-                    val r = input.read(lenBuffer, read, 4 - read)
-                    if (r == -1) break
-                    read += r
+                    val count = input.read(lenBuffer, read, 4 - read)
+                    if (count == -1) break
+                    read += count
                 }
-
-                if (read == 0) {
-                    // Normal EOF
-                    break
-                }
-
-                if (read < 4) {
-                    throw GeneralSecurityException("Truncated chunk length at chunk $chunkIndex")
-                }
+                if (read == 0) break
+                if (read < 4) throw GeneralSecurityException("Truncated chunk length at chunk $chunkIndex")
 
                 val chunkLength = ByteBuffer.wrap(lenBuffer).order(ByteOrder.BIG_ENDIAN).int
-                if (chunkLength <= ChunkedCipherStream.GCM_TAG_LENGTH_BYTES || chunkLength > header.chunkSize + 1024) {
+                if (header.version == ChunkedCipherStream.COMPLETION_VERSION &&
+                    chunkLength == ChunkedCipherStream.FOOTER_MAGIC_INT
+                ) {
+                    val encryptedFooter = ByteArray(ChunkedCipherStream.FOOTER_SIZE - 4)
+                    var footerRead = 0
+                    while (footerRead < encryptedFooter.size) {
+                        val count = input.read(encryptedFooter, footerRead, encryptedFooter.size - footerRead)
+                        if (count == -1) throw GeneralSecurityException("Truncated stream completion record")
+                        footerRead += count
+                    }
+                    val footer = cipherStream.decryptFooter(encryptedFooter, header, contentKey)
+                    if (footer.chunkCount != chunkIndex || footer.plaintextSize != bytesProcessed) {
+                        throw GeneralSecurityException("Stream completion metadata does not match its chunks")
+                    }
+                    if (input.read() != -1) throw GeneralSecurityException("Trailing data after stream completion record")
+                    completion = footer
+                    break
+                }
+                if (chunkLength <= ChunkedCipherStream.GCM_TAG_LENGTH_BYTES ||
+                    chunkLength > header.chunkSize + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES
+                ) {
                     throw GeneralSecurityException("Invalid chunk size: $chunkLength at chunk $chunkIndex")
                 }
 
                 val chunkCiphertext = ByteArray(chunkLength)
                 var chunkRead = 0
                 while (chunkRead < chunkLength) {
-                    val r = input.read(chunkCiphertext, chunkRead, chunkLength - chunkRead)
-                    if (r == -1) {
-                        throw GeneralSecurityException("Premature EOF in chunk payload at chunk $chunkIndex")
-                    }
-                    chunkRead += r
+                    val count = input.read(chunkCiphertext, chunkRead, chunkLength - chunkRead)
+                    if (count == -1) throw GeneralSecurityException("Premature EOF in chunk payload at chunk $chunkIndex")
+                    chunkRead += count
                 }
 
                 val decryptedChunk = cipherStream.decryptChunk(
-                    ciphertext = chunkCiphertext,
-                    offset = 0,
-                    length = chunkLength,
-                    key = contentKey,
-                    baseIv = baseIv,
-                    chunkIndex = chunkIndex
+                    chunkCiphertext, 0, chunkLength, contentKey, baseIv, chunkIndex
                 )
-
                 output.write(decryptedChunk)
+                bytesProcessed += decryptedChunk.size
                 SecureMemory.wipe(decryptedChunk)
                 SecureMemory.wipe(chunkCiphertext)
-
-                bytesProcessed += (chunkLength + 4)
                 chunkIndex++
 
                 if (totalBytes > 0 && onProgress != null) {
@@ -210,12 +216,14 @@ class VaultCryptoEngine(
                     onProgress(progress)
                 }
             }
+            if (header.version == ChunkedCipherStream.COMPLETION_VERSION && completion == null) {
+                throw GeneralSecurityException("Missing encrypted stream completion record")
+            }
             output.flush()
         } finally {
             SecureMemory.wipe(baseIv)
         }
     }
-
     /**
      * Encrypts a source file to a destination file.
      */
@@ -253,27 +261,29 @@ class VaultCryptoEngine(
      * Calculates the exact decrypted plaintext size of an encrypted file in O(1) time
      * by parsing the ChunkedCipherStream header and chunk framing.
      */
-    fun calculatePlaintextSize(encFile: File): Long {
+    fun calculatePlaintextSize(
+        encFile: File,
+        key: SecretKey? = null
+    ): Long {
         if (!encFile.exists() || encFile.length() < ChunkedCipherStream.HEADER_SIZE) return 0L
-        val fileLength = encFile.length()
-        val header = try {
-            FileInputStream(encFile).use { fis ->
-                cipherStream.readHeader(fis)
+        RandomAccessFile(encFile, "r").use { raf ->
+            val header = try {
+                cipherStream.readHeader(raf)
+            } catch (_: Exception) {
+                return 0L
             }
-        } catch (e: Exception) {
-            return 0L
+            if (header.version == ChunkedCipherStream.COMPLETION_VERSION) {
+                return cipherStream.readFooter(raf, header, getFileKey(header, key ?: keyStoreManager.getOrCreateMasterKey())).plaintextSize
+            }
+            val overhead = ChunkedCipherStream.CHUNK_HEADER_SIZE + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES
+            val fullChunkStorage = header.chunkSize + overhead
+            val payloadStorage = (raf.length() - header.headerSize).coerceAtLeast(0L)
+            val fullChunks = payloadStorage / fullChunkStorage
+            val remainder = payloadStorage % fullChunkStorage
+            val lastChunkPlain = if (remainder > overhead) remainder - overhead else 0L
+            return fullChunks * header.chunkSize + lastChunkPlain
         }
-
-        val chunkSize = header.chunkSize
-        val overhead = ChunkedCipherStream.CHUNK_HEADER_SIZE + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES
-        val fullChunkStorage = chunkSize + overhead
-        val payloadStorage = (fileLength - header.headerSize).coerceAtLeast(0L)
-        val numFullChunks = payloadStorage / fullChunkStorage
-        val remainder = payloadStorage % fullChunkStorage
-        val lastChunkPlain = if (remainder > overhead) remainder - overhead else 0L
-        return (numFullChunks * chunkSize) + lastChunkPlain
     }
-
     /**
      * In-memory encryption of a byte array (e.g., micro-thumbnail).
      */
@@ -319,6 +329,11 @@ class VaultCryptoEngine(
         val baseIv = header.baseIv
 
         val endOffset = startOffset + length
+        val footer = if (header.version == ChunkedCipherStream.COMPLETION_VERSION) {
+            cipherStream.readFooter(raf, header, contentKey).also {
+                if (endOffset > it.plaintextSize) throw GeneralSecurityException("Range exceeds authenticated stream size")
+            }
+        } else null
         val startChunk = (startOffset / readChunkSize).toInt()
         val endChunk = ((endOffset - 1) / readChunkSize).toInt()
 
@@ -332,6 +347,13 @@ class VaultCryptoEngine(
                 val chunkLen = raf.readInt()
                 if (chunkLen <= ChunkedCipherStream.GCM_TAG_LENGTH_BYTES || chunkLen > readChunkSize + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES) {
                     throw GeneralSecurityException("Invalid chunk size")
+                }
+                if (footer != null) {
+                    if (chunkIdx >= footer.chunkCount) throw GeneralSecurityException("Chunk is outside authenticated stream")
+                    val expectedPlainSize = minOf(readChunkSize.toLong(), footer.plaintextSize - chunkIdx.toLong() * readChunkSize).toInt()
+                    if (chunkLen != expectedPlainSize + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES) {
+                        throw GeneralSecurityException("Chunk length does not match authenticated stream size")
+                    }
                 }
 
                 val cipherBuffer = ByteArray(chunkLen)
@@ -367,26 +389,28 @@ class VaultCryptoEngine(
     /**
      * Reads the uncompressed plaintext size by scanning chunk length headers.
      */
-    fun getPlaintextSize(encryptedFile: File): Long {
+    fun getPlaintextSize(
+        encryptedFile: File,
+        key: SecretKey? = null
+    ): Long {
         RandomAccessFile(encryptedFile, "r").use { raf ->
             if (raf.length() < ChunkedCipherStream.HEADER_SIZE) return 0L
-            raf.seek(0)
-            cipherStream.readHeader(raf)
-
-            var totalPlaintext: Long = 0L
+            val header = cipherStream.readHeader(raf)
+            if (header.version == ChunkedCipherStream.COMPLETION_VERSION) {
+                return cipherStream.readFooter(raf, header, getFileKey(header, key ?: keyStoreManager.getOrCreateMasterKey())).plaintextSize
+            }
+            var totalPlaintext = 0L
             val fileLength = raf.length()
             while (raf.filePointer < fileLength) {
                 if (fileLength - raf.filePointer < 4) break
                 val chunkLen = raf.readInt()
                 if (chunkLen < ChunkedCipherStream.GCM_TAG_LENGTH_BYTES) break
-                val plainBytesInChunk = chunkLen - ChunkedCipherStream.GCM_TAG_LENGTH_BYTES
-                totalPlaintext += plainBytesInChunk
-                raf.skipBytes(chunkLen)
+                totalPlaintext += chunkLen - ChunkedCipherStream.GCM_TAG_LENGTH_BYTES
+                raf.seek((raf.filePointer + chunkLen).coerceAtMost(fileLength))
             }
             return totalPlaintext
         }
     }
-
     /**
      * Decrypts a specific byte range directly from an encrypted [File] in O(1) chunk access time.
      */
@@ -418,11 +442,12 @@ class VaultEncryptingOutputStream(
     private val lenBuffer = ByteArray(4)
     private var bufferPos = 0
     private var chunkIndex = 0
+    private var plaintextSize = 0L
     private var headerWritten = false
 
     private fun ensureHeader() {
         if (!headerWritten) {
-            cipherStream.writeHeader(output, baseIv, chunkSize, wrappedKey)
+            cipherStream.writeHeader(output, baseIv, chunkSize, wrappedKey, ChunkedCipherStream.COMPLETION_VERSION)
             headerWritten = true
         }
     }
@@ -430,6 +455,7 @@ class VaultEncryptingOutputStream(
     override fun write(b: Int) {
         ensureHeader()
         buffer[bufferPos++] = b.toByte()
+        plaintextSize++
         if (bufferPos == chunkSize) {
             flushChunk()
         }
@@ -439,6 +465,7 @@ class VaultEncryptingOutputStream(
         ensureHeader()
         var currentOff = off
         var remaining = len
+        plaintextSize += len
         while (remaining > 0) {
             val toCopy = minOf(remaining, chunkSize - bufferPos)
             System.arraycopy(b, currentOff, buffer, bufferPos, toCopy)
@@ -477,6 +504,10 @@ class VaultEncryptingOutputStream(
         try {
             ensureHeader()
             flushChunk()
+            val header = ChunkedCipherStream.StreamHeader(
+                ChunkedCipherStream.COMPLETION_VERSION, chunkSize, baseIv, wrappedKey
+            )
+            cipherStream.writeFooter(output, header, key, plaintextSize, chunkIndex)
             output.flush()
         } finally {
             SecureMemory.wipe(buffer)

@@ -26,6 +26,7 @@ class EncryptedMediaDataSource(
     private var chunkSize: Int = ChunkedCipherStream.DEFAULT_CHUNK_SIZE
     private var headerSize: Int = ChunkedCipherStream.HEADER_SIZE
     private var totalPlaintextSize: Long = 0L
+    private var streamFooter: ChunkedCipherStream.StreamFooter? = null
     private var currentPosition: Long = 0L
     private var bytesRemaining: Long = 0L
     private var opened: Boolean = false
@@ -61,20 +62,24 @@ class EncryptedMediaDataSource(
         this.chunkSize = header.chunkSize
         this.headerSize = header.headerSize
         this.baseIv = header.baseIv
-        this.masterKey = cryptoEngine.getFileKey(header)
+        val fileKey = cryptoEngine.getFileKey(header)
+        this.masterKey = fileKey
+        val footer = if (header.version == ChunkedCipherStream.COMPLETION_VERSION) {
+            cipherStream.readFooter(randomAccessFile, header, fileKey)
+        } else null
+        this.streamFooter = footer
 
-        // O(1) Instant calculation of total plaintext size
-        val fullChunkStorage = ChunkedCipherStream.CHUNK_HEADER_SIZE + chunkSize + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES
-        val payloadStorage = (fileLength - headerSize).coerceAtLeast(0L)
-        val numFullChunks = payloadStorage / fullChunkStorage
-        val remainder = payloadStorage % fullChunkStorage
-        val lastChunkPlain = if (remainder > ChunkedCipherStream.CHUNK_HEADER_SIZE + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES) {
-            remainder - (ChunkedCipherStream.CHUNK_HEADER_SIZE + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES)
+        if (footer != null) {
+            this.totalPlaintextSize = footer.plaintextSize
         } else {
-            0L
+            val fullChunkStorage = ChunkedCipherStream.CHUNK_HEADER_SIZE + chunkSize + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES
+            val payloadStorage = (fileLength - headerSize).coerceAtLeast(0L)
+            val numFullChunks = payloadStorage / fullChunkStorage
+            val remainder = payloadStorage % fullChunkStorage
+            val overhead = ChunkedCipherStream.CHUNK_HEADER_SIZE + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES
+            val lastChunkPlain = if (remainder > overhead) remainder - overhead else 0L
+            this.totalPlaintextSize = (numFullChunks * chunkSize) + lastChunkPlain
         }
-        this.totalPlaintextSize = (numFullChunks * chunkSize) + lastChunkPlain
-
         if (dataSpec.position > totalPlaintextSize) {
             throw IllegalArgumentException("Position ${dataSpec.position} exceeds total size $totalPlaintextSize")
         }
@@ -140,14 +145,25 @@ class EncryptedMediaDataSource(
         }
 
         val chunkFilePos = cipherStream.calculateChunkOffset(chunkIndex, chunkSize, headerSize)
+        streamFooter?.let {
+            if (chunkIndex >= it.chunkCount) throw GeneralSecurityException("Chunk is outside authenticated stream")
+        }
         if (chunkFilePos + 4 > fileRaf.length()) {
+            if (streamFooter != null) throw GeneralSecurityException("Missing authenticated chunk")
             return null
         }
 
         fileRaf.seek(chunkFilePos)
         val chunkLen = fileRaf.readInt()
         if (chunkLen <= ChunkedCipherStream.GCM_TAG_LENGTH_BYTES || chunkLen > chunkSize + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES || chunkFilePos + 4 + chunkLen > fileRaf.length()) {
+            if (streamFooter != null) throw GeneralSecurityException("Invalid authenticated chunk length")
             return null
+        }
+        streamFooter?.let { footer ->
+            val expectedPlainSize = minOf(chunkSize.toLong(), footer.plaintextSize - chunkIndex.toLong() * chunkSize).toInt()
+            if (chunkLen != expectedPlainSize + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES) {
+                throw GeneralSecurityException("Chunk length does not match authenticated stream size")
+            }
         }
 
         val cipherBuffer = ByteArray(chunkLen)
@@ -183,6 +199,7 @@ class EncryptedMediaDataSource(
             raf = null
             dataSpec = null
             masterKey = null
+            streamFooter = null
             cachedChunkData?.let { SecureMemory.wipe(it) }
             cachedChunkData = null
             cachedChunkIndex = -1
