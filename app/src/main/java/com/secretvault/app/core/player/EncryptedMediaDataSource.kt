@@ -36,66 +36,71 @@ class EncryptedMediaDataSource(
     private var cachedChunkData: ByteArray? = null
 
     override fun open(dataSpec: DataSpec): Long {
+        if (opened) close()
+        clearState()
         this.dataSpec = dataSpec
-        transferInitializing(dataSpec)
+        try {
+            transferInitializing(dataSpec)
 
-        val uriString = dataSpec.uri.toString()
-        val targetFile = if (uriString.startsWith("file://")) {
-            File(java.net.URI(uriString).path)
-        } else {
-            File(dataSpec.uri.path ?: dataSpec.uri.schemeSpecificPart)
+            val uriString = dataSpec.uri.toString()
+            val targetFile = if (uriString.startsWith("file://")) {
+                File(java.net.URI(uriString).path)
+            } else {
+                File(dataSpec.uri.path ?: dataSpec.uri.schemeSpecificPart)
+            }
+            if (!targetFile.exists()) {
+                throw IllegalArgumentException("Encrypted media file not found: " + targetFile.absolutePath)
+            }
+
+            val fileLength = targetFile.length()
+            val randomAccessFile = RandomAccessFile(targetFile, "r")
+            raf = randomAccessFile
+            if (fileLength < ChunkedCipherStream.HEADER_SIZE) {
+                throw GeneralSecurityException("File too short for header")
+            }
+            randomAccessFile.seek(0)
+            val header = cipherStream.readHeader(randomAccessFile)
+            chunkSize = header.chunkSize
+            headerSize = header.headerSize
+            baseIv = header.baseIv
+            val fileKey = cryptoEngine.getFileKey(header)
+            masterKey = fileKey
+            val footer = if (header.version == ChunkedCipherStream.COMPLETION_VERSION) {
+                cipherStream.readFooter(randomAccessFile, header, fileKey)
+            } else null
+            streamFooter = footer
+
+            totalPlaintextSize = footer?.plaintextSize ?: run {
+                val overhead = ChunkedCipherStream.CHUNK_HEADER_SIZE + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES
+                val fullChunkStorage = chunkSize + overhead
+                val payloadStorage = (fileLength - headerSize).coerceAtLeast(0L)
+                val numFullChunks = payloadStorage / fullChunkStorage
+                val remainder = payloadStorage % fullChunkStorage
+                val lastChunkPlain = if (remainder > overhead) remainder - overhead else 0L
+                numFullChunks * chunkSize + lastChunkPlain
+            }
+            if (dataSpec.position > totalPlaintextSize) {
+                throw IllegalArgumentException(
+                    "Position " + dataSpec.position + " exceeds total size " + totalPlaintextSize
+                )
+            }
+
+            currentPosition = dataSpec.position
+            bytesRemaining = if (dataSpec.length != C.LENGTH_UNSET.toLong()) {
+                dataSpec.length
+            } else {
+                totalPlaintextSize - dataSpec.position
+            }
+
+            transferStarted(dataSpec)
+            opened = true
+            return bytesRemaining
+        } catch (failure: Throwable) {
+            opened = false
+            clearState()
+            throw failure
         }
-
-        if (!targetFile.exists()) {
-            throw IllegalArgumentException("Encrypted media file not found: ${targetFile.absolutePath}")
-        }
-
-        val fileLength = targetFile.length()
-        val randomAccessFile = RandomAccessFile(targetFile, "r")
-        this.raf = randomAccessFile
-
-        if (fileLength < ChunkedCipherStream.HEADER_SIZE) {
-            throw GeneralSecurityException("File too short for header")
-        }
-        randomAccessFile.seek(0)
-        val header = cipherStream.readHeader(randomAccessFile)
-        this.chunkSize = header.chunkSize
-        this.headerSize = header.headerSize
-        this.baseIv = header.baseIv
-        val fileKey = cryptoEngine.getFileKey(header)
-        this.masterKey = fileKey
-        val footer = if (header.version == ChunkedCipherStream.COMPLETION_VERSION) {
-            cipherStream.readFooter(randomAccessFile, header, fileKey)
-        } else null
-        this.streamFooter = footer
-
-        if (footer != null) {
-            this.totalPlaintextSize = footer.plaintextSize
-        } else {
-            val fullChunkStorage = ChunkedCipherStream.CHUNK_HEADER_SIZE + chunkSize + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES
-            val payloadStorage = (fileLength - headerSize).coerceAtLeast(0L)
-            val numFullChunks = payloadStorage / fullChunkStorage
-            val remainder = payloadStorage % fullChunkStorage
-            val overhead = ChunkedCipherStream.CHUNK_HEADER_SIZE + ChunkedCipherStream.GCM_TAG_LENGTH_BYTES
-            val lastChunkPlain = if (remainder > overhead) remainder - overhead else 0L
-            this.totalPlaintextSize = (numFullChunks * chunkSize) + lastChunkPlain
-        }
-        if (dataSpec.position > totalPlaintextSize) {
-            throw IllegalArgumentException("Position ${dataSpec.position} exceeds total size $totalPlaintextSize")
-        }
-
-        this.currentPosition = dataSpec.position
-        this.bytesRemaining = if (dataSpec.length != C.LENGTH_UNSET.toLong()) {
-            dataSpec.length
-        } else {
-            totalPlaintextSize - dataSpec.position
-        }
-
-        this.opened = true
-        transferStarted(dataSpec)
-        return bytesRemaining
     }
-
     override fun read(targetBuffer: ByteArray, offset: Int, length: Int): Int {
         if (length == 0) return 0
         if (bytesRemaining <= 0) return C.RESULT_END_OF_INPUT
@@ -189,24 +194,31 @@ class EncryptedMediaDataSource(
     override fun getUri(): Uri? = dataSpec?.uri
 
     override fun close() {
-        if (opened) {
-            opened = false
-            try {
-                raf?.close()
-            } catch (e: Exception) {
-                // Ignore close error
-            }
-            raf = null
-            dataSpec = null
-            masterKey = null
-            streamFooter = null
-            cachedChunkData?.let { SecureMemory.wipe(it) }
-            cachedChunkData = null
-            cachedChunkIndex = -1
-            baseIv?.let { SecureMemory.wipe(it) }
-            baseIv = null
-            transferEnded()
+        val wasOpened = opened
+        opened = false
+        clearState()
+        if (wasOpened) transferEnded()
+    }
+
+    private fun clearState() {
+        try {
+            raf?.close()
+        } catch (_: Exception) {
         }
+        raf = null
+        dataSpec = null
+        masterKey = null
+        streamFooter = null
+        chunkSize = ChunkedCipherStream.DEFAULT_CHUNK_SIZE
+        headerSize = ChunkedCipherStream.HEADER_SIZE
+        cachedChunkData?.let { SecureMemory.wipe(it) }
+        cachedChunkData = null
+        cachedChunkIndex = -1
+        baseIv?.let { SecureMemory.wipe(it) }
+        baseIv = null
+        totalPlaintextSize = 0L
+        currentPosition = 0L
+        bytesRemaining = 0L
     }
 
     class Factory(

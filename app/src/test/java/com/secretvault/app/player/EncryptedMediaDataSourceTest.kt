@@ -2,14 +2,18 @@ package com.secretvault.app.player
 
 import android.net.Uri
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.TransferListener
 import com.secretvault.app.core.crypto.KeyStoreManager
 import com.secretvault.app.core.crypto.VaultCryptoEngine
 import com.secretvault.app.core.player.EncryptedMediaDataSource
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -60,6 +64,8 @@ class EncryptedMediaDataSourceTest {
         cryptoEngine.encryptFile(inputFile, encFile)
 
         val dataSource = EncryptedMediaDataSource(cryptoEngine)
+        val listener = mockk<TransferListener>(relaxed = true)
+        dataSource.addTransferListener(listener)
         val dataSpec = DataSpec(Uri.fromFile(encFile))
 
         val length = dataSource.open(dataSpec)
@@ -74,6 +80,8 @@ class EncryptedMediaDataSourceTest {
         assertArrayEquals(expectedSlice, readBuffer)
 
         dataSource.close()
+        dataSource.close()
+        verify(exactly = 1) { listener.onTransferEnd(dataSource, any(), false) }
     }
 
     @Test
@@ -103,5 +111,20 @@ class EncryptedMediaDataSourceTest {
         assertArrayEquals(expectedSlice, readBuffer)
 
         dataSource.close()
+    }
+    @Test
+    fun failedOpenClosesFileAndDoesNotSendTransferEnd() {
+        val corruptFile = tempFolder.newFile("truncated.enc").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val dataSource = EncryptedMediaDataSource(cryptoEngine)
+        val listener = mockk<TransferListener>(relaxed = true)
+        dataSource.addTransferListener(listener)
+
+        assertThrows(java.security.GeneralSecurityException::class.java) {
+            dataSource.open(DataSpec(Uri.fromFile(corruptFile)))
+        }
+        val rafField = EncryptedMediaDataSource::class.java.getDeclaredField("raf").apply { isAccessible = true }
+        assertNull(rafField.get(dataSource))
+        dataSource.close()
+        verify(exactly = 0) { listener.onTransferEnd(dataSource, any(), false) }
     }
 }
