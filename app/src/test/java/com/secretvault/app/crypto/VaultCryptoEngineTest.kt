@@ -17,6 +17,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.RandomAccessFile
 import java.security.GeneralSecurityException
+import java.security.KeyStoreException
 import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
 import kotlin.random.Random
@@ -160,5 +161,25 @@ class VaultCryptoEngineTest {
         val damaged = empty.clone().apply { this[30] = (this[30].toInt() xor 1).toByte() }
         assertThrows(GeneralSecurityException::class.java) { cryptoEngine.decryptBytes(damaged, key) }
         assertThrows(java.io.EOFException::class.java) { cryptoEngine.decryptBytes(encoded.copyOf(50), key) }
+    }
+
+    @Test
+    fun keystoreFailureLeavesSourceRecordingAvailableAndWritesNoCiphertext() {
+        val sourceFile = tempFolder.newFile("temp_rec.mp4")
+        val destination = File(tempFolder.root, "saved.enc")
+        val original = ByteArray(256) { it.toByte() }
+        sourceFile.writeBytes(original)
+        val engine = VaultCryptoEngine(
+            keyStoreManager = KeyStoreManager(keyStoreName = "MissingKeyStoreProvider"),
+            chunkSize = 64 * 1024
+        )
+
+        assertThrows(KeyStoreException::class.java) {
+            engine.encryptFile(sourceFile, destination)
+        }
+
+        assertTrue(sourceFile.exists())
+        assertArrayEquals(original, sourceFile.readBytes())
+        assertFalse(destination.exists())
     }
 }
