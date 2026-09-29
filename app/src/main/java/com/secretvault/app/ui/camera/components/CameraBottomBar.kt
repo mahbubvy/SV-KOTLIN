@@ -1,0 +1,237 @@
+package com.secretvault.app.ui.camera.components
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cameraswitch
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import com.secretvault.app.core.image.EncryptedMediaUri
+import com.secretvault.app.core.model.MediaItem
+import com.secretvault.app.core.camera.CameraMode
+import com.secretvault.app.ui.theme.TextMuted
+import com.secretvault.app.ui.theme.TextPrimary
+import com.secretvault.app.ui.theme.VaultAccent
+import com.secretvault.app.ui.theme.VaultError
+
+@Composable
+fun CameraBottomBar(
+    cameraMode: CameraMode,
+    isRecording: Boolean,
+    recordingDurationSeconds: Int,
+    latestMediaItem: MediaItem? = null,
+    onModeSelect: (CameraMode) -> Unit,
+    onShutterClick: () -> Unit,
+    onFlipCamera: () -> Unit,
+    onGalleryClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(bottom = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Recording Time Counter
+        AnimatedVisibility(
+            visible = isRecording,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            val minutes = recordingDurationSeconds / 60
+            val seconds = recordingDurationSeconds % 60
+            val formattedTime = String.format("%02d:%02d", minutes, seconds)
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(VaultError.copy(alpha = 0.8f))
+                    .padding(horizontal = 14.dp, vertical = 6.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(Color.White)
+                )
+                Text(
+                    text = formattedTime,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
+        }
+
+        // Mode Switcher (Photo / Video)
+        if (!isRecording) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ModePill(
+                    title = "PHOTO",
+                    isSelected = cameraMode == CameraMode.PHOTO,
+                    onClick = { onModeSelect(CameraMode.PHOTO) }
+                )
+                ModePill(
+                    title = "VIDEO",
+                    isSelected = cameraMode == CameraMode.VIDEO,
+                    onClick = { onModeSelect(CameraMode.VIDEO) }
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Main Shutter Action Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 32.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Gallery Shortcut / Recent Media Preview
+            Box(
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.4f))
+                    .border(1.5.dp, VaultAccent.copy(alpha = 0.6f), CircleShape)
+                    .clickable(enabled = !isRecording, onClick = onGalleryClick),
+                contentAlignment = Alignment.Center
+            ) {
+                val thumb = latestMediaItem?.thumbnailPath ?: latestMediaItem?.encryptedPath
+                if (thumb != null) {
+                    AsyncImage(
+                        model = EncryptedMediaUri(thumb),
+                        contentDescription = "Recent Media",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(CircleShape)
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.PhotoLibrary,
+                        contentDescription = "Vault Gallery",
+                        tint = TextPrimary
+                    )
+                }
+            }
+
+            // Shutter Button
+            ShutterButton(
+                cameraMode = cameraMode,
+                isRecording = isRecording,
+                onClick = onShutterClick
+            )
+
+            // Flip Camera Button
+            IconButton(
+                onClick = onFlipCamera,
+                enabled = !isRecording,
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.4f))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Cameraswitch,
+                    contentDescription = "Flip Camera",
+                    tint = TextPrimary
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModePill(
+    title: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Text(
+        text = title,
+        fontSize = 14.sp,
+        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+        color = if (isSelected) VaultAccent else TextMuted,
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    )
+}
+
+@Composable
+private fun ShutterButton(
+    cameraMode: CameraMode,
+    isRecording: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(80.dp)
+            .border(4.dp, Color.White, CircleShape)
+            .padding(6.dp)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        val innerShape = if (cameraMode == CameraMode.VIDEO && isRecording) {
+            RoundedCornerShape(8.dp)
+        } else {
+            CircleShape
+        }
+
+        val innerColor = if (cameraMode == CameraMode.VIDEO) {
+            VaultError
+        } else {
+            Color.White
+        }
+
+        val innerSize = if (cameraMode == CameraMode.VIDEO && isRecording) {
+            32.dp
+        } else {
+            60.dp
+        }
+
+        Box(
+            modifier = Modifier
+                .size(innerSize)
+                .clip(innerShape)
+                .background(innerColor)
+        )
+    }
+}

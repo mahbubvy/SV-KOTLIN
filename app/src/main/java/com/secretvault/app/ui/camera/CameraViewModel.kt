@@ -1,0 +1,83 @@
+package com.secretvault.app.ui.camera
+
+import androidx.compose.ui.geometry.Offset
+import androidx.lifecycle.ViewModel
+import com.secretvault.app.core.camera.CameraMode
+import com.secretvault.app.core.camera.FlashMode
+import com.secretvault.app.core.camera.LensFacing
+import com.secretvault.app.core.camera.VideoMode
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+data class CameraUiState(
+    val cameraMode: CameraMode = CameraMode.PHOTO,
+    val flashMode: FlashMode = FlashMode.AUTO,
+    val lensFacing: LensFacing = LensFacing.BACK,
+    val autoFaceBlur: Boolean = true,
+    val recordAudio: Boolean = true,
+    val videoMode: VideoMode = VideoMode.UHD_30,
+    val supportedVideoModes: List<VideoMode> = emptyList(),
+    val isRecording: Boolean = false,
+    val recordingDurationSeconds: Int = 0,
+    val focusPoint: Offset? = null,
+    val isSaving: Boolean = false
+)
+
+class CameraViewModel : ViewModel() {
+
+    private val _uiState = MutableStateFlow(CameraUiState())
+    val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
+
+    fun toggleFlashMode() {
+        val nextMode = when (_uiState.value.flashMode) {
+            FlashMode.AUTO -> FlashMode.ON
+            FlashMode.ON -> FlashMode.OFF
+            FlashMode.OFF -> FlashMode.AUTO
+        }
+        _uiState.value = _uiState.value.copy(flashMode = nextMode)
+    }
+
+    fun toggleFaceBlur() {
+        _uiState.value = _uiState.value.copy(autoFaceBlur = !_uiState.value.autoFaceBlur)
+    }
+
+    fun toggleRecordAudio() {
+        _uiState.value = _uiState.value.copy(recordAudio = !_uiState.value.recordAudio)
+    }
+
+    fun toggleLensFacing() {
+        if (_uiState.value.isRecording) return
+        val nextLens = if (_uiState.value.lensFacing == LensFacing.BACK) {
+            LensFacing.FRONT
+        } else {
+            LensFacing.BACK
+        }
+        _uiState.value = _uiState.value.copy(lensFacing = nextLens)
+    }
+
+    fun setCameraMode(mode: CameraMode) {
+        if (_uiState.value.isRecording) return
+        _uiState.value = _uiState.value.copy(cameraMode = mode)
+    }
+
+    fun setVideoMode(mode: VideoMode) {
+        if (_uiState.value.isRecording || mode !in _uiState.value.supportedVideoModes) return
+        _uiState.value = _uiState.value.copy(videoMode = mode)
+    }
+
+    fun setSupportedVideoModes(modes: List<VideoMode>, selectedMode: VideoMode) {
+        _uiState.value = _uiState.value.copy(supportedVideoModes = modes, videoMode = selectedMode)
+    }
+
+    fun setFocusPoint(offset: Offset?) {
+        _uiState.value = _uiState.value.copy(focusPoint = offset)
+    }
+
+    fun setRecordingState(isRecording: Boolean, durationSeconds: Int = 0) {
+        _uiState.value = _uiState.value.copy(
+            isRecording = isRecording,
+            recordingDurationSeconds = durationSeconds
+        )
+    }
+}

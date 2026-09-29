@@ -1,0 +1,88 @@
+package com.secretvault.app.ui.viewer.components
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.secretvault.app.core.model.MediaItem
+import com.secretvault.app.ui.theme.TextMuted
+import com.secretvault.app.ui.theme.TextPrimary
+
+@Composable
+fun MediaViewerTopBar(
+    item: MediaItem,
+    currentIndex: Int,
+    totalCount: Int,
+    onBack: () -> Unit,
+    onInfoClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(Color.Black.copy(alpha = 0.8f), Color.Transparent)
+                )
+            )
+            .statusBarsPadding()
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back",
+                    tint = TextPrimary
+                )
+            }
+
+            Column(modifier = Modifier.padding(start = 4.dp)) {
+                Text(
+                    text = item.filename,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "${currentIndex + 1} of $totalCount",
+                    fontSize = 12.sp,
+                    color = TextMuted
+                )
+            }
+        }
+
+        IconButton(onClick = onInfoClick) {
+            Icon(
+                imageVector = Icons.Default.Info,
+                contentDescription = "Details",
+                tint = TextPrimary
+            )
+        }
+    }
+}

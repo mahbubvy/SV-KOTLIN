@@ -1,0 +1,16 @@
+/local.properties
+/.gradle/
+/.kotlin/
+/build/
+/app/build/
+*.enc
+*.apk
+*.aab
+*.jks
+*.keystore
+*.pem
+*.key
+/scratch/
+/design-plans/
+/.agents/
+/.codex/

@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Weather Today</string>
+    <string name="vault_title">SecretVault</string>
+    <string name="album_camera">Camera</string>
+    <string name="album_imports">Imports</string>
+    <string name="album_unsorted">Unsorted</string>
+</resources>
