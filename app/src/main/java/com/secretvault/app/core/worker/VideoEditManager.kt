@@ -21,6 +21,7 @@ import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.player.EncryptedMediaDataSource
 import com.secretvault.app.core.processing.VideoEditPlan
 import com.secretvault.app.core.processing.VideoSegment
+import com.secretvault.app.data.repository.MediaRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -30,6 +31,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
@@ -52,6 +54,7 @@ sealed interface VideoEditState {
 class VideoEditManager(
     private val context: Context,
     private val cryptoEngine: VaultCryptoEngine,
+    private val mediaRepository: MediaRepository,
     private val mediaSaveQueue: MediaSaveQueue
 ) {
     // Transformer must be driven from a Looper thread; Main is the simplest one we have.
@@ -91,7 +94,10 @@ class VideoEditManager(
                     tempFile = temp,
                     durationMs = result.durationMs.takeIf { it > 0 } ?: segments.sumOf { it.durationMs },
                     albumId = item.albumId,
-                    originalName = VideoEditPlan.editedName(item.originalName)
+                    name = VideoEditPlan.editedFileName(
+                        item.filename,
+                        mediaRepository.getMedia().first().mapTo(HashSet()) { it.filename }
+                    )
                 ) { progress -> _state.value = VideoEditState.Running(VideoEditState.Stage.ENCRYPTING, progress) }
                 _state.value = VideoEditState.Done(saved)
             } catch (e: CancellationException) {

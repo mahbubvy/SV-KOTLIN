@@ -228,12 +228,12 @@ class MediaSaveQueue(
         tempFile: File,
         durationMs: Long,
         albumId: String = AlbumEntity.ALBUM_CAMERA_ID,
-        originalName: String? = null,
+        name: String? = null,
         onProgress: (Float) -> Unit = {}
     ): MediaItem = withContext(Dispatchers.IO) {
         val id = "video_" + UUID.randomUUID().toString().take(8)
         val timestamp = System.currentTimeMillis()
-        val filename = VaultFileNameGenerator.generateFileName(MediaType.VIDEO, timestamp)
+        val filename = name ?: VaultFileNameGenerator.generateFileName(MediaType.VIDEO, timestamp)
 
         var width = 1920
         var height = 1080
@@ -279,7 +279,7 @@ class MediaSaveQueue(
         val item = MediaItem(
             id = id,
             filename = filename,
-            originalName = originalName ?: filename,
+            originalName = filename,
             mediaType = MediaType.VIDEO,
             mimeType = "video/mp4",
             encryptedPath = encFile.absolutePath,

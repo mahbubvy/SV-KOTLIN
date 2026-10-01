@@ -76,7 +76,7 @@ class SecretVaultApp : Application(), ImageLoaderFactory {
 
         // 5. Initialize Media Workers & Managers
         mediaSaveQueue = com.secretvault.app.core.worker.MediaSaveQueue(this, cryptoEngine, mediaRepository)
-        videoEditManager = com.secretvault.app.core.worker.VideoEditManager(this, cryptoEngine, mediaSaveQueue)
+        videoEditManager = com.secretvault.app.core.worker.VideoEditManager(this, cryptoEngine, mediaRepository, mediaSaveQueue)
         batchImportManager = com.secretvault.app.core.worker.BatchImportManager(this, cryptoEngine, mediaRepository)
         ephemeralShareManager = com.secretvault.app.core.share.EphemeralShareManager(this, cryptoEngine)
         backupImportManager = com.secretvault.app.core.backup.BackupImportManager(this, cryptoEngine, database)
