@@ -1,20 +1,20 @@
 # Tasks: Local camera streaming test
 
-Status: Planned, not implemented. See [plan.md](plan.md) and
-[spec](../SPEC-camera-stream-test.md). Review the plan before building.
+Status: Build authorized by the user. Implementation in progress. See
+[plan.md](plan.md) and [spec](../SPEC-camera-stream-test.md).
 
 Paths below are relative to `app/src/main/java/com/secretvault/app/` unless
 explicitly marked. Filenames are proposed; reuse an existing equivalent if found.
 
 ## Task 1: Define a bounded stream format
 
-- [ ] Implement invitation parsing and authenticated media framing.
+- [x] Implement invitation parsing and authenticated media framing.
 
 Acceptance:
-- [ ] Valid invitation/configuration/access-unit messages round-trip.
-- [ ] Wrong versions, invalid endpoints, oversized/truncated data and invalid
+- [x] Valid invitation/configuration/access-unit messages round-trip.
+- [x] Wrong versions, invalid endpoints, oversized/truncated data and invalid
   codec/orientation fields fail before unbounded allocation.
-- [ ] Token and certificate fingerprint comparisons use fixed-length checks;
+- [x] Token comparisons use fixed-length checks;
   secrets are absent from errors/logs.
 
 Verify: `& .\gradlew.bat :app:testDebugUnitTest --tests '*StreamProtocolTest' :app:assembleDebug`.
