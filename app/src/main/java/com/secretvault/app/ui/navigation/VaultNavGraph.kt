@@ -133,8 +133,19 @@ fun VaultNavGraph(
             }
             com.secretvault.app.ui.settings.SettingsScreen(
                 pinManager = app.pinManager,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onCameraStreamTest = if (com.secretvault.app.BuildConfig.DEBUG) {
+                    { navController.navigate(Screen.CameraStream.route) }
+                } else null
             )
+        }
+
+        composable(Screen.CameraStream.route) {
+            if (!isUnlocked || !com.secretvault.app.BuildConfig.DEBUG) {
+                Box(modifier = Modifier.fillMaxSize().background(VaultDarkBg))
+                return@composable
+            }
+            com.secretvault.app.ui.stream.CameraStreamScreen(onBack = { navController.popBackStack() })
         }
 
         composable(Screen.Camera.route) {

@@ -20,6 +20,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            versionNameSuffix = "-camera-stream-test"
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -39,6 +42,7 @@ android {
         )
     }
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 

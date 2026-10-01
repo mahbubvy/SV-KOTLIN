@@ -63,7 +63,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun SettingsScreen(pinManager: PinManager, onBack: () -> Unit) {
+fun SettingsScreen(pinManager: PinManager, onBack: () -> Unit, onCameraStreamTest: (() -> Unit)? = null) {
     val context = LocalContext.current
     val biometricAvailable = remember(context) { BiometricAuthHelper.isBiometricAvailable(context) }
     var fingerprintEnabled by remember { mutableStateOf(pinManager.isBiometricEnabled()) }
@@ -84,6 +84,20 @@ fun SettingsScreen(pinManager: PinManager, onBack: () -> Unit) {
             Text("Settings", color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
         Column(Modifier.verticalScroll(rememberScrollState())) {
+            if (onCameraStreamTest != null) {
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                        .clickable(role = Role.Button, onClick = onCameraStreamTest)
+                        .padding(horizontal = 24.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Camera stream test", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        Text("Send a live view to another SV phone", color = TextSecondary, fontSize = 14.sp)
+                    }
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = TextSecondary)
+                }
+            }
             Row(
                 Modifier.fillMaxWidth().heightIn(min = 64.dp)
                     .clickable(role = Role.Button) { showChangePin = true }
