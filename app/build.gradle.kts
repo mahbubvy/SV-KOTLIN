@@ -13,17 +13,13 @@ android {
         applicationId = "com.secretvault.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
-        debug {
-            // Installs beside a release vault instead of clashing with its signature or touching its data.
-            applicationIdSuffix = ".debug"
-        }
         release {
             isMinifyEnabled = false
             proguardFiles(

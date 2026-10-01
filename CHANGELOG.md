@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.1.1 - 2026-10-01
+
+### Added
+- Video editing from the viewer: trim a range or remove up to ten sections, saving a new encrypted copy in the original album.
+- Edited copies use `_edited`, `_edited_1`, and subsequent suffixes; the original remains unchanged.
+
+### Fixed
+- Unreadable editor previews show an error with Retry and Back instead of loading indefinitely.
+- Disable Media3 1.5.1's incompatible fast-trim metadata probe for encrypted input; exports use the decrypting reader.
+- Preserve the existing application ID so the debug APK updates the current vault installation.
+
+### Build and validation
+- APK: `SecretVault-v1.1.1-debug.apk` (debug signed; Android 8.0 or newer).
+- 85 unit tests passed. CMF Phone 1 device tests passed for trim, one/multiple removed sections, cancellation, output playback decoding, original preservation, and incremented output names.
+- Saves use a bounded wake lock; Android may still stop a background process during long edits. Edited plaintext output is temporary in the private cache and is deleted after saving or on the next app start.
+
 ## 1.1.0 - 2026-10-01
 
 ### Added
