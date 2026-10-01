@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
+import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Share
@@ -34,6 +35,7 @@ import com.secretvault.app.ui.theme.VaultError
 @Composable
 fun MediaViewerBottomBar(
     onShare: () -> Unit,
+    onEdit: (() -> Unit)?,
     onSetCover: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
@@ -57,6 +59,13 @@ fun MediaViewerBottomBar(
             label = "Share",
             onClick = onShare
         )
+        if (onEdit != null) {
+            ViewerActionItem(
+                icon = Icons.Default.ContentCut,
+                label = "Edit",
+                onClick = onEdit
+            )
+        }
         ViewerActionItem(
             icon = Icons.Default.Image,
             label = "Set Cover",

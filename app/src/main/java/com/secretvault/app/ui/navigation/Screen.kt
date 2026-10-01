@@ -12,4 +12,7 @@ sealed class Screen(val route: String) {
             return "media_viewer/$encodedAlbum/$initialMediaId"
         }
     }
+    object VideoEditor : Screen("video_editor/{mediaId}") {
+        fun createRoute(mediaId: String): String = "video_editor/$mediaId"
+    }
 }

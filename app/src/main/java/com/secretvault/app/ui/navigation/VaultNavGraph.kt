@@ -201,8 +201,37 @@ fun VaultNavGraph(
                 viewModel = viewerViewModel,
                 onBack = {
                     navController.popBackStack()
+                },
+                onEditVideo = { mediaId ->
+                    navController.navigate(Screen.VideoEditor.createRoute(mediaId))
                 }
             )
+        }
+
+        composable(
+            route = Screen.VideoEditor.route,
+            arguments = listOf(
+                androidx.navigation.navArgument("mediaId") { type = androidx.navigation.NavType.StringType }
+            )
+        ) { backStackEntry ->
+            if (!isUnlocked) {
+                Box(modifier = Modifier.fillMaxSize().background(VaultDarkBg))
+                return@composable
+            }
+            val mediaId = backStackEntry.arguments?.getString("mediaId") ?: ""
+            val item by androidx.compose.runtime.produceState<com.secretvault.app.core.model.MediaItem?>(null, mediaId) {
+                value = app.mediaRepository.getMediaById(mediaId)
+            }
+            val loaded = item
+            if (loaded == null) {
+                Box(modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black))
+            } else {
+                com.secretvault.app.ui.editor.VideoEditorScreen(
+                    app = app,
+                    item = loaded,
+                    onBack = { navController.popBackStack() }
+                )
+            }
         }
     }
 }
