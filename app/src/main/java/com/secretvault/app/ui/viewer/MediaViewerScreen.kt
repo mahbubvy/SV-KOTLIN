@@ -43,6 +43,7 @@ fun MediaViewerScreen(
     app: SecretVaultApp,
     viewModel: MediaViewerViewModel,
     onBack: () -> Unit,
+    onEditVideo: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -160,6 +161,9 @@ fun MediaViewerScreen(
                             app.ephemeralShareManager.shareItem(act, currentItem)
                         }
                     },
+                    onEdit = if (currentItem.mediaType == MediaType.VIDEO) {
+                        { onEditVideo(currentItem.id) }
+                    } else null,
                     onSetCover = { showSetCoverDialog = true },
                     onMove = { viewModel.setMoveDialogOpen(true) },
                     onDelete = { showDeleteDialog = true }
