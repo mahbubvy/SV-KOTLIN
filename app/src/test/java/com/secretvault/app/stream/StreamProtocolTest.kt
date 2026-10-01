@@ -6,6 +6,19 @@ import org.junit.Test
 import java.io.*
 
 class StreamProtocolTest {
+    @Test fun frameQueueRejectsBacklogAndReleasesCapacityAfterPolling() {
+        val queue = StreamFrameQueue()
+        repeat(6) { queue.offer(StreamFrame(it.toLong(), it.toLong(), 0, byteArrayOf(1))) }
+        assertThrows(IOException::class.java) { queue.offer(StreamFrame(6, 6, 0, byteArrayOf(1))) }
+        assertEquals(0, queue.poll()!!.sequence)
+        queue.offer(StreamFrame(6, 6, 0, byteArrayOf(1)))
+        queue.clear()
+        repeat(2) { queue.offer(StreamFrame(it.toLong(), it.toLong(), 1, ByteArray(StreamProtocol.MAX_FRAME))) }
+        assertThrows(IOException::class.java) { queue.offer(StreamFrame(2, 2, 0, byteArrayOf(1))) }
+        assertEquals(0, queue.poll()!!.sequence)
+        queue.offer(StreamFrame(2, 2, 0, byteArrayOf(1)))
+    }
+
     @Test fun invitationRejectsPublicHostsAndNeverPrintsCredentials() {
         val invitation = StreamInvitation("192.168.0.143", 40000, ByteArray(32) { 7 }, ByteArray(16) { 9 })
         val encoded = invitation.encode()

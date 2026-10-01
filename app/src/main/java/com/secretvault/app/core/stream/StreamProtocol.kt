@@ -34,6 +34,18 @@ data class StreamConfig(val width: Int, val height: Int, val fps: Int, val rotat
     val csd0: ByteArray, val csd1: ByteArray)
 data class StreamFrame(val sequence: Long, val ptsUs: Long, val flags: Int, val bytes: ByteArray)
 
+class StreamFrameQueue {
+    private val frames = ArrayDeque<StreamFrame>()
+    private var bytes = 0
+    @Synchronized fun offer(frame: StreamFrame) {
+        if (frame.bytes.isEmpty() || frame.bytes.size > StreamProtocol.MAX_FRAME || frames.size >= 6 ||
+            bytes.toLong() + frame.bytes.size > 2 * 1024 * 1024) throw IOException("Video connection is too slow")
+        frames.addLast(frame); bytes += frame.bytes.size
+    }
+    @Synchronized fun poll(): StreamFrame? = frames.removeFirstOrNull()?.also { bytes -= it.bytes.size }
+    @Synchronized fun clear() { frames.clear(); bytes = 0 }
+}
+
 object StreamProtocol {
     const val MAX_FRAME = 1024 * 1024
     const val MAX_CONFIG = 64 * 1024
