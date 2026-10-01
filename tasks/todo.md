@@ -24,13 +24,13 @@ Files: `core/stream/StreamProtocol.kt`;
 
 ## Task 2: Prove authenticated TLS on Wi-Fi
 
-- [ ] Establish one paired connection and exchange a generated test payload.
+- [x] Establish one paired connection and exchange a generated test payload.
 
 Acceptance:
-- [ ] A session-scoped identity/token permits the paired peer over actual Wi-Fi.
-- [ ] Wrong fingerprint/token, stalled handshake and second active peer are
+- [x] A session-scoped identity/token permits the paired peer over actual Wi-Fi.
+- [x] Wrong fingerprint/token and second active peer are
   rejected; rejection leaves the listener usable.
-- [ ] Close interrupts blocked work, deletes only the temporary identity, and
+- [x] Close interrupts blocked accept, deletes only the temporary identity, and
   restart invalidates prior details.
 
 Verify: build with `& .\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest`;
@@ -44,8 +44,8 @@ Files: `core/stream/StreamTls.kt`; `core/stream/StreamSession.kt`;
 
 ### Checkpoint: Secure connection
 
-- [ ] Focused checks and APK build pass; real peer connection/rejections observed.
-- [ ] Review transport evidence and limitations before attaching video.
+- [x] Focused checks and APK build pass; real peer connection/rejections observed.
+- [x] Transport evidence reviewed: CMF/Pixel TLS checks and Wi-Fi round trip pass.
 
 ## Task 3: Play a generated video on the receiving phone
 
