@@ -20,6 +20,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Installs beside a release vault instead of clashing with its signature or touching its data.
+            applicationIdSuffix = ".debug"
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
