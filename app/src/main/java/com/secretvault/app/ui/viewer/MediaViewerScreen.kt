@@ -16,6 +16,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -89,6 +90,7 @@ fun MediaViewerScreen(
     }
 
     val currentItem = uiState.mediaList.getOrNull(uiState.currentIndex)
+    val mediaRotationById = remember { mutableStateMapOf<String, Int>() }
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showSetCoverDialog by remember { mutableStateOf(false) }
@@ -109,6 +111,7 @@ fun MediaViewerScreen(
                 if (item.mediaType == MediaType.PHOTO) {
                     ZoomablePhotoView(
                         item = item,
+                        rotationDegrees = mediaRotationById[item.id] ?: 0,
                         onTap = { viewModel.toggleControls() }
                     )
                 } else {
@@ -117,6 +120,7 @@ fun MediaViewerScreen(
                         cryptoEngine = app.cryptoEngine,
                         controlsVisible = uiState.isControlsVisible,
                         isActivePage = pagerState.currentPage == page,
+                        rotationDegrees = mediaRotationById[item.id] ?: 0,
                         onToggleControls = { viewModel.toggleControls() }
                     )
                 }
@@ -136,7 +140,10 @@ fun MediaViewerScreen(
                     currentIndex = uiState.currentIndex,
                     totalCount = uiState.mediaList.size,
                     onBack = onBack,
-                    onInfoClick = { viewModel.setInfoDialogOpen(true) }
+                    onInfoClick = { viewModel.setInfoDialogOpen(true) },
+                    onRotateMedia = {
+                        mediaRotationById[currentItem.id] = ((mediaRotationById[currentItem.id] ?: 0) + 90) % 360
+                    }
                 )
             }
 

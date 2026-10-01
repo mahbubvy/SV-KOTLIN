@@ -6,10 +6,12 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.exifinterface.media.ExifInterface
 import com.secretvault.app.core.camera.VaultFileNameGenerator
 import com.secretvault.app.core.crypto.SecureMemory
 import com.secretvault.app.core.crypto.VaultCryptoEngine
 import com.secretvault.app.core.database.entity.AlbumEntity
+import com.secretvault.app.core.image.applyExifOrientation
 import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.model.MediaType
 import com.secretvault.app.core.processing.ExifSanitizer
@@ -146,13 +148,20 @@ class BatchImportManager(
             // 3. Extract dimensions & micro-thumbnail (200x200)
             val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(tempFile.absolutePath, boundsOptions)
-            val width = boundsOptions.outWidth.coerceAtLeast(1080)
-            val height = boundsOptions.outHeight.coerceAtLeast(1080)
+            val orientation = runCatching {
+                ExifInterface(tempFile).let { it.rotationDegrees to it.isFlipped }
+            }.getOrNull()
+            val rawWidth = boundsOptions.outWidth.coerceAtLeast(1)
+            val rawHeight = boundsOptions.outHeight.coerceAtLeast(1)
+            val rotation = orientation?.first ?: 0
+            val width = if (rotation == 90 || rotation == 270) rawHeight else rawWidth
+            val height = if (rotation == 90 || rotation == 270) rawWidth else rawHeight
 
             // Generate thumbnail with sample size
             val sampleSize = (width / 200).coerceAtLeast(1)
             val thumbOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-            val rawThumb = BitmapFactory.decodeFile(tempFile.absolutePath, thumbOptions)
+            val decodedThumb = BitmapFactory.decodeFile(tempFile.absolutePath, thumbOptions)
+            val rawThumb = decodedThumb?.let { applyExifOrientation(it, orientation) }
             val thumbBitmap = if (rawThumb != null) {
                 val scaled = Bitmap.createScaledBitmap(rawThumb, 200, (200f * height / width).toInt().coerceAtLeast(1), true)
                 if (scaled != rawThumb) rawThumb.recycle()

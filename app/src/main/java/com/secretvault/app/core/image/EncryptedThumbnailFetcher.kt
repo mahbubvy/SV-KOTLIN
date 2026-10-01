@@ -2,6 +2,7 @@ package com.secretvault.app.core.image
 
 import android.graphics.BitmapFactory
 import android.graphics.drawable.BitmapDrawable
+import androidx.exifinterface.media.ExifInterface
 import coil.ImageLoader
 import coil.decode.DataSource
 import coil.fetch.DrawableResult
@@ -12,6 +13,7 @@ import coil.request.Options
 import com.secretvault.app.core.crypto.VaultCryptoEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 import java.io.File
 
 data class EncryptedMediaUri(val filePath: String)
@@ -46,6 +48,11 @@ class EncryptedThumbnailFetcher(
 
         val encryptedBytes = file.readBytes()
         val decryptedBytes = cryptoEngine.decryptBytes(encryptedBytes)
+        val exifOrientation = runCatching {
+            ExifInterface(ByteArrayInputStream(decryptedBytes)).let {
+                it.rotationDegrees to it.isFlipped
+            }
+        }.getOrNull()
 
         val bitmap: android.graphics.Bitmap = try {
             // First pass: decode bounds
@@ -54,8 +61,9 @@ class EncryptedThumbnailFetcher(
             }
             BitmapFactory.decodeByteArray(decryptedBytes, 0, decryptedBytes.size, decodeOptions)
 
-            val rawWidth = decodeOptions.outWidth
-            val rawHeight = decodeOptions.outHeight
+            val rotation = exifOrientation?.first ?: 0
+            val rawWidth = if (rotation == 90 || rotation == 270) decodeOptions.outHeight else decodeOptions.outWidth
+            val rawHeight = if (rotation == 90 || rotation == 270) decodeOptions.outWidth else decodeOptions.outHeight
 
             if (rawWidth > 0 && rawHeight > 0) {
                 // Calculate appropriate sample size for screen/display
@@ -79,7 +87,8 @@ class EncryptedThumbnailFetcher(
                     decodeOptions.inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
                     decoded = BitmapFactory.decodeByteArray(decryptedBytes, 0, decryptedBytes.size, decodeOptions)
                 }
-                decoded ?: createFallbackBitmap(options, isVideo = file.name.startsWith("video_"))
+                decoded?.let { applyExifOrientation(it, exifOrientation) }
+                    ?: createFallbackBitmap(options, isVideo = file.name.startsWith("video_"))
             } else {
                 createFallbackBitmap(options, isVideo = file.name.startsWith("video_"))
             }

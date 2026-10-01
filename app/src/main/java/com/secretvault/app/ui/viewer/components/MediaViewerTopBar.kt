@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Rotate90DegreesCw
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -23,6 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.secretvault.app.core.model.MediaItem
+import com.secretvault.app.core.model.MediaType
 import com.secretvault.app.ui.theme.TextMuted
 import com.secretvault.app.ui.theme.TextPrimary
 
@@ -33,6 +35,7 @@ fun MediaViewerTopBar(
     totalCount: Int,
     onBack: () -> Unit,
     onInfoClick: () -> Unit,
+    onRotateMedia: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -77,12 +80,27 @@ fun MediaViewerTopBar(
             }
         }
 
-        IconButton(onClick = onInfoClick) {
-            Icon(
-                imageVector = Icons.Default.Info,
-                contentDescription = "Details",
-                tint = TextPrimary
-            )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (item.mediaType == MediaType.PHOTO || item.mediaType == MediaType.VIDEO) {
+                IconButton(onClick = onRotateMedia) {
+                    Icon(
+                        imageVector = Icons.Default.Rotate90DegreesCw,
+                        contentDescription = if (item.mediaType == MediaType.PHOTO) {
+                            "Rotate photo 90 degrees clockwise"
+                        } else {
+                            "Rotate video 90 degrees clockwise"
+                        },
+                        tint = TextPrimary
+                    )
+                }
+            }
+            IconButton(onClick = onInfoClick) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = "Details",
+                    tint = TextPrimary
+                )
+            }
         }
     }
 }

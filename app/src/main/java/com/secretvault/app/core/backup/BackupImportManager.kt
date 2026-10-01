@@ -5,18 +5,21 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import androidx.exifinterface.media.ExifInterface
 import androidx.room.withTransaction
 import com.secretvault.app.core.crypto.SecureMemory
 import com.secretvault.app.core.crypto.VaultCryptoEngine
 import com.secretvault.app.core.database.VaultDatabase
 import com.secretvault.app.core.database.entity.AlbumEntity
 import com.secretvault.app.core.database.entity.MediaEntity
+import com.secretvault.app.core.image.applyExifOrientation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
@@ -85,6 +88,7 @@ class BackupImportManager(
 
         val createdEncFiles = mutableListOf<File>()
         val createdThumbFiles = mutableListOf<File>()
+        val replacedThumbBackups = mutableMapOf<File, File?>()
         val stagedItems = mutableMapOf<String, StagedMediaEntry>()
 
         _progress.value = BackupImportProgress(
@@ -243,16 +247,25 @@ class BackupImportManager(
                             cryptoEngine.decryptStream(encIn, memStream)
                             val photoBytes = memStream.toByteArray()
                             try {
+                                val orientation = runCatching {
+                                    ExifInterface(ByteArrayInputStream(photoBytes)).let {
+                                        it.rotationDegrees to it.isFlipped
+                                    }
+                                }.getOrNull()
                                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                                 BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size, bounds)
-                                val w = bounds.outWidth.coerceAtLeast(1080)
-                                val h = bounds.outHeight.coerceAtLeast(1080)
+                                val rawWidth = bounds.outWidth.coerceAtLeast(1)
+                                val rawHeight = bounds.outHeight.coerceAtLeast(1)
+                                val rotation = orientation?.first ?: 0
+                                val w = if (rotation == 90 || rotation == 270) rawHeight else rawWidth
+                                val h = if (rotation == 90 || rotation == 270) rawWidth else rawHeight
                                 entry.width = w
                                 entry.height = h
 
                                 val sampleSize = (w / 200).coerceAtLeast(1)
                                 val thumbOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-                                val rawThumb = BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size, thumbOpts)
+                                val decodedThumb = BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size, thumbOpts)
+                                val rawThumb = decodedThumb?.let { applyExifOrientation(it, orientation) }
                                 val thumbBitmap = if (rawThumb != null) {
                                     Bitmap.createScaledBitmap(rawThumb, 200, (200f * h / w).toInt().coerceAtLeast(1), true).also {
                                         if (it != rawThumb) rawThumb.recycle()
@@ -321,6 +334,7 @@ class BackupImportManager(
             )
 
             val existingMedia = database.mediaDao().getAllList()
+            val existingMediaById = existingMedia.associateBy { it.id }
             val existingFingerprintMap = mutableMapOf<String, String>()
 
             val candidateList = stagedItems.values.toList()
@@ -351,8 +365,25 @@ class BackupImportManager(
                 val duplicateId = existingFingerprintMap[identity]
 
                 if (duplicateId != null) {
-                    // Duplicate found: skip inserting and resolve to the existing item ID
+                    // Refresh duplicate photo thumbnails from the source in case their orientation was lost before.
                     resolvedItemMap[item.id] = duplicateId
+                    val existingThumb = if (item.mediaType.equals("photo", ignoreCase = true)) {
+                        existingMediaById[duplicateId]?.thumbnailPath?.let(::File)
+                    } else {
+                        null
+                    }
+                    if (existingThumb != null && staged.thumbFile.exists()) {
+                        if (existingThumb !in replacedThumbBackups) {
+                            val backup = if (existingThumb.exists()) {
+                                File(stagingDir, "thumb_backup_${existingThumb.name}").also {
+                                    existingThumb.copyTo(it, overwrite = true)
+                                }
+                            } else null
+                            replacedThumbBackups[existingThumb] = backup
+                        }
+                        existingThumb.parentFile?.mkdirs()
+                        staged.thumbFile.copyTo(existingThumb, overwrite = true)
+                    }
                     staged.encFile.delete()
                     staged.thumbFile.delete()
                 } else {
@@ -457,6 +488,13 @@ class BackupImportManager(
             }
             for (file in createdThumbFiles) {
                 if (file.exists()) file.delete()
+            }
+            for ((thumbnail, backup) in replacedThumbBackups) {
+                if (backup?.exists() == true) {
+                    backup.copyTo(thumbnail, overwrite = true)
+                } else {
+                    thumbnail.delete()
+                }
             }
 
             _progress.value = BackupImportProgress(isImporting = false)

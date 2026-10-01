@@ -4,11 +4,15 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -32,11 +36,17 @@ import com.secretvault.app.ui.theme.VaultAccent
 @Composable
 fun ZoomablePhotoView(
     item: MediaItem,
+    rotationDegrees: Int,
     onTap: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
+    var scale by remember(item.id) { mutableFloatStateOf(1f) }
+    var offset by remember(item.id) { mutableStateOf(Offset.Zero) }
+
+    LaunchedEffect(rotationDegrees) {
+        scale = 1f
+        offset = Offset.Zero
+    }
 
     val transformState = rememberTransformableState { zoomChange, offsetChange, _ ->
         val newScale = (scale * zoomChange).coerceIn(1f, 5f)
@@ -53,7 +63,7 @@ fun ZoomablePhotoView(
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .pointerInput(Unit) {
@@ -72,6 +82,9 @@ fun ZoomablePhotoView(
             .transformable(state = transformState, enabled = scale > 1.05f),
         contentAlignment = Alignment.Center
     ) {
+        val quarterTurn = rotationDegrees % 180 != 0
+        val imageWidth = if (quarterTurn) maxHeight else maxWidth
+        val imageHeight = if (quarterTurn) maxWidth else maxHeight
         SubcomposeAsyncImage(
             model = EncryptedMediaUri(item.encryptedPath),
             contentDescription = item.filename,
@@ -110,8 +123,10 @@ fun ZoomablePhotoView(
                 }
             },
             modifier = Modifier
-                .fillMaxSize()
+                .width(imageWidth)
+                .height(imageHeight)
                 .graphicsLayer(
+                    rotationZ = rotationDegrees.toFloat(),
                     scaleX = scale,
                     scaleY = scale,
                     translationX = offset.x,

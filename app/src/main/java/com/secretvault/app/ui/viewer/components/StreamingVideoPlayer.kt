@@ -2,6 +2,7 @@ package com.secretvault.app.ui.viewer.components
 
 import android.net.Uri
 import android.view.ViewGroup
+import android.view.LayoutInflater
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -11,12 +12,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
@@ -41,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -51,7 +56,9 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.secretvault.app.R
 import com.secretvault.app.core.crypto.VaultCryptoEngine
 import com.secretvault.app.core.player.EncryptedMediaDataSource
 import com.secretvault.app.ui.theme.VaultAccent
@@ -65,6 +72,7 @@ fun StreamingVideoPlayer(
     cryptoEngine: VaultCryptoEngine,
     controlsVisible: Boolean,
     isActivePage: Boolean = true,
+    rotationDegrees: Int = 0,
     onToggleControls: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -79,8 +87,6 @@ fun StreamingVideoPlayer(
             .build().apply {
                 val mediaUri = Uri.fromFile(File(item.encryptedPath))
                 setMediaItem(MediaItem.fromUri(mediaUri))
-                prepare()
-                playWhenReady = isActivePage
             }
     }
 
@@ -92,11 +98,17 @@ fun StreamingVideoPlayer(
     var isDraggingSlider by remember { mutableStateOf(false) }
     var sliderValue by remember { mutableFloatStateOf(0f) }
 
-    LaunchedEffect(isActivePage) {
+    LaunchedEffect(exoPlayer, isActivePage) {
         if (isActivePage) {
+            if (exoPlayer.playbackState == Player.STATE_IDLE) {
+                exoPlayer.prepare()
+                if (currentPositionMs > 0) exoPlayer.seekTo(currentPositionMs)
+            }
             exoPlayer.play()
         } else {
+            currentPositionMs = exoPlayer.currentPosition
             exoPlayer.pause()
+            exoPlayer.stop()
         }
     }
 
@@ -144,22 +156,38 @@ fun StreamingVideoPlayer(
             ),
         contentAlignment = Alignment.Center
     ) {
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    player = exoPlayer
-                    useController = false
-                    isClickable = false
-                    isFocusable = false
-                    setOnTouchListener { _, _ -> false }
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                    )
-                }
-            },
-            modifier = Modifier.fillMaxSize()
-        )
+        BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            val quarterTurn = rotationDegrees % 180 != 0
+            AndroidView(
+                factory = { ctx ->
+                    (LayoutInflater.from(ctx).inflate(R.layout.streaming_player_view, null) as PlayerView).apply {
+                        player = exoPlayer
+                        useController = false
+                        resizeMode = if (quarterTurn) {
+                            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                        } else {
+                            AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        }
+                        isClickable = false
+                        isFocusable = false
+                        setOnTouchListener { _, _ -> false }
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                    }
+                },
+                update = { playerView ->
+                    playerView.resizeMode = if (quarterTurn) {
+                        AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    } else {
+                        AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
+                },
+                modifier = (if (quarterTurn) Modifier.width(maxHeight).height(maxWidth) else Modifier.fillMaxSize())
+                    .graphicsLayer { rotationZ = rotationDegrees.toFloat() }
+            )
+        }
 
         // Buffering Indicator
         if (isBuffering) {
@@ -208,13 +236,19 @@ fun StreamingVideoPlayer(
                     )
                 }
 
-                // Bottom Scrubber Bar (Offset above bottom action bar)
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, bottom = 88.dp, top = 8.dp)
-                ) {
+                // Keep the controls aligned to the video's rotated viewing area.
+                BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    val quarterTurn = rotationDegrees % 180 != 0
+                    Box(
+                        modifier = (if (quarterTurn) Modifier.width(maxHeight).height(maxWidth) else Modifier.fillMaxSize())
+                            .graphicsLayer { rotationZ = rotationDegrees.toFloat() }
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .padding(start = 16.dp, end = 16.dp, bottom = 88.dp, top = 8.dp)
+                        ) {
                     val progress = if (totalDurationMs > 0) {
                         (currentPositionMs.toFloat() / totalDurationMs.toFloat()).coerceIn(0f, 1f)
                     } else 0f
@@ -265,11 +299,13 @@ fun StreamingVideoPlayer(
                                 contentDescription = if (isMuted) "Unmute" else "Mute",
                                 tint = Color.White,
                                 modifier = Modifier.size(20.dp)
-                            )
-                        }
+                        )
+                    }
+                }
                     }
                 }
             }
+        }
         }
     }
 }
