@@ -101,4 +101,19 @@ class PinManagerTest {
         // Even with correct PIN, verification fails during lockout
         assertFalse(pinManager.verifyPin("7777"))
     }
+
+    @Test
+    fun changingPinRequiresCurrentPinAndFingerprintPreferencePersists() {
+        assertTrue(pinManager.setupPin("1357"))
+        assertFalse(pinManager.changePin("0000", "2468"))
+        assertTrue(pinManager.verifyPin("1357"))
+        assertFalse(pinManager.changePin("1357", "12"))
+        assertTrue(pinManager.verifyPin("1357"))
+
+        pinManager.setBiometricEnabled(true)
+        val reopened = PinManager(mockContext, mockPrefs)
+        assertTrue(reopened.isBiometricEnabled())
+        reopened.setBiometricEnabled(false)
+        assertFalse(pinManager.isBiometricEnabled())
+    }
 }

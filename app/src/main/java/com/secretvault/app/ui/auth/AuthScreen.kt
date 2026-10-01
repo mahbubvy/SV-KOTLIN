@@ -18,8 +18,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,13 +33,11 @@ import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
 import com.secretvault.app.ui.auth.components.PinDotsIndicator
 import com.secretvault.app.ui.auth.components.PinKeypad
-import com.secretvault.app.ui.theme.TextMuted
 import com.secretvault.app.ui.theme.TextPrimary
 import com.secretvault.app.ui.theme.TextSecondary
 import com.secretvault.app.ui.theme.VaultAccent
 import com.secretvault.app.ui.theme.VaultDarkBg
 import com.secretvault.app.ui.theme.VaultError
-import com.secretvault.app.ui.theme.VaultSurface
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import android.util.Log
@@ -161,41 +157,6 @@ fun AuthScreen(
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = VaultError
-                    )
-                }
-            }
-
-            // Keep Unlocked Switch (Only in UNLOCK mode)
-            if (state.mode == AuthMode.UNLOCK_PIN) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "Keep Vault Unlocked",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = TextPrimary
-                        )
-                        Text(
-                            text = "Bypass PIN while app is running",
-                            fontSize = 12.sp,
-                            color = TextMuted
-                        )
-                    }
-
-                    Switch(
-                        checked = state.isKeepUnlocked,
-                        onCheckedChange = { viewModel.toggleKeepUnlocked(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = VaultDarkBg,
-                            checkedTrackColor = VaultAccent,
-                            uncheckedTrackColor = VaultSurface
-                        )
                     )
                 }
             }

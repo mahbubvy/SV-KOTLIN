@@ -1,6 +1,11 @@
 package com.secretvault.app
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import com.secretvault.app.core.crypto.KeyStoreManager
@@ -44,7 +49,21 @@ class SecretVaultApp : Application(), ImageLoaderFactory {
         keyStoreManager = KeyStoreManager()
         cryptoEngine = VaultCryptoEngine(keyStoreManager)
         pinManager = PinManager(this)
-        sessionManager = SessionManager()
+        sessionManager = SessionManager(
+            preferences = getSharedPreferences("vault_session_prefs", Context.MODE_PRIVATE),
+            clock = android.os.SystemClock::elapsedRealtime,
+            bootCount = android.provider.Settings.Global.getInt(contentResolver, android.provider.Settings.Global.BOOT_COUNT, -1)
+        )
+        ContextCompat.registerReceiver(
+            this,
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    if (intent.action == Intent.ACTION_SCREEN_OFF) sessionManager.onScreenOff()
+                }
+            },
+            IntentFilter(Intent.ACTION_SCREEN_OFF),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
 
         // 3. Initialize Database with Hardware-derived Passphrase
         val dbPassphrase = DatabaseKeyManager(this, keyStoreManager).getOrCreatePassphrase()
@@ -61,7 +80,7 @@ class SecretVaultApp : Application(), ImageLoaderFactory {
         backupImportManager = com.secretvault.app.core.backup.BackupImportManager(this, cryptoEngine, database)
         backupExportManager = com.secretvault.app.core.backup.BackupExportManager(this, cryptoEngine, database)
 
-        // Purge any residual decrypted shared files from previous sessions
+        // Remove expired share files and restore timers for shares still in progress.
         ephemeralShareManager.purgeAllSharedFiles()
 
         // 6. Ensure vault media directories exist in app-private storage

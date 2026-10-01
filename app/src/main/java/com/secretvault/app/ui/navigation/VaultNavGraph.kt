@@ -9,6 +9,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -24,9 +27,20 @@ import com.secretvault.app.ui.theme.VaultDarkBg
 fun VaultNavGraph(
     app: SecretVaultApp,
     modifier: Modifier = Modifier,
-    navController: NavHostController = rememberNavController()
+    navController: NavHostController = rememberNavController(),
+    cameraEntryRequest: Int = 0
 ) {
     val isUnlocked by app.sessionManager.isUnlocked.collectAsState()
+
+    LaunchedEffect(cameraEntryRequest) {
+        if (cameraEntryRequest > 0 && app.sessionManager.keepUnlocked.value && app.sessionManager.isUnlocked.value) {
+            navController.navigate(Screen.VaultHome.route) {
+                popUpTo(navController.graph.id)
+                launchSingleTop = true
+            }
+            navController.navigate(Screen.Camera.route) { launchSingleTop = true }
+        }
+    }
 
     LaunchedEffect(isUnlocked) {
         if (!isUnlocked) {
@@ -80,8 +94,16 @@ fun VaultNavGraph(
                 Box(modifier = Modifier.fillMaxSize().background(VaultDarkBg))
                 return@composable
             }
-            val galleryViewModel = remember { com.secretvault.app.ui.gallery.GalleryViewModel(app.mediaRepository) }
-            val albumsViewModel = remember { com.secretvault.app.ui.gallery.AlbumsViewModel(app.albumRepository) }
+            val galleryViewModel = viewModel<com.secretvault.app.ui.gallery.GalleryViewModel>(
+                factory = viewModelFactory {
+                    initializer { com.secretvault.app.ui.gallery.GalleryViewModel(app.mediaRepository) }
+                }
+            )
+            val albumsViewModel = viewModel<com.secretvault.app.ui.gallery.AlbumsViewModel>(
+                factory = viewModelFactory {
+                    initializer { com.secretvault.app.ui.gallery.AlbumsViewModel(app.albumRepository) }
+                }
+            )
             com.secretvault.app.ui.gallery.GalleryScreen(
                 app = app,
                 galleryViewModel = galleryViewModel,
@@ -93,8 +115,9 @@ fun VaultNavGraph(
                 onCameraClick = {
                     navController.navigate(Screen.Camera.route)
                 },
+                onSettingsClick = { navController.navigate(Screen.Settings.route) },
                 onLockClick = {
-                    app.ephemeralShareManager.purgeAllSharedFiles()
+                    app.ephemeralShareManager.purgeAllSharedFiles(force = true)
                     app.sessionManager.lock()
                     navController.navigate(Screen.DecoyWeather.route) {
                         popUpTo(Screen.DecoyWeather.route) { inclusive = true }
@@ -103,12 +126,33 @@ fun VaultNavGraph(
             )
         }
 
+        composable(Screen.Settings.route) {
+            if (!isUnlocked) {
+                Box(modifier = Modifier.fillMaxSize().background(VaultDarkBg))
+                return@composable
+            }
+            com.secretvault.app.ui.settings.SettingsScreen(
+                pinManager = app.pinManager,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
         composable(Screen.Camera.route) {
             if (!isUnlocked) {
                 Box(modifier = Modifier.fillMaxSize().background(VaultDarkBg))
                 return@composable
             }
-            val cameraViewModel = androidx.lifecycle.viewmodel.compose.viewModel<com.secretvault.app.ui.camera.CameraViewModel>()
+            val cameraViewModel = viewModel<com.secretvault.app.ui.camera.CameraViewModel>(
+                factory = viewModelFactory {
+                    initializer {
+                        com.secretvault.app.ui.camera.CameraViewModel(
+                            com.secretvault.app.core.camera.defaultVideoMode(
+                                android.os.Build.MANUFACTURER, android.os.Build.MODEL, android.os.Build.DEVICE
+                            )
+                        )
+                    }
+                }
+            )
             val returnToGallery: () -> Unit = {
                 val popped = navController.popBackStack(Screen.VaultHome.route, false)
                 if (!popped) {

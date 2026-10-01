@@ -137,18 +137,21 @@ class AuthViewModelTest {
     }
 
     @Test
-    fun testKeepUnlockedToggle() = runTest(testDispatcher) {
+    fun unlockingPreservesKeepOpenChoiceFromHome() = runTest(testDispatcher) {
         every { mockPinManager.isPinSet() } returns true
         every { mockPinManager.isLockedOut() } returns false
 
         viewModel = AuthViewModel(mockPinManager, sessionManager)
         viewModel.initialize(isBiometricAvailable = false)
 
-        assertFalse(viewModel.uiState.value.isKeepUnlocked)
         assertFalse(sessionManager.keepUnlocked.value)
 
-        viewModel.toggleKeepUnlocked(true)
-        assertTrue(viewModel.uiState.value.isKeepUnlocked)
+        sessionManager.unlock()
+        sessionManager.setKeepUnlocked(true)
+        every { mockPinManager.verifyPin("1234") } returns true
+        "1234".forEach { viewModel.onDigit(it) }
+        advanceUntilIdle()
+        assertTrue(sessionManager.isUnlocked.value)
         assertTrue(sessionManager.keepUnlocked.value)
     }
 
@@ -156,6 +159,7 @@ class AuthViewModelTest {
     fun testBiometricSuccessUnlocksSession() = runTest(testDispatcher) {
         every { mockPinManager.isPinSet() } returns true
         every { mockPinManager.isLockedOut() } returns false
+        every { mockPinManager.isBiometricEnabled() } returns true
 
         viewModel = AuthViewModel(mockPinManager, sessionManager)
         viewModel.initialize(isBiometricAvailable = true)
@@ -171,5 +175,38 @@ class AuthViewModelTest {
         assertTrue(sessionManager.isUnlocked.value)
         assertEquals(AuthEvent.UnlockSuccess, emittedEvent)
         job.cancel()
+    }
+
+    @Test
+    fun fingerprintPreferenceControlsPromptAndLateUnlockCallback() = runTest(testDispatcher) {
+        every { mockPinManager.isPinSet() } returns true
+        every { mockPinManager.isLockedOut() } returns false
+        every { mockPinManager.isBiometricEnabled() } returns false
+        viewModel = AuthViewModel(mockPinManager, sessionManager)
+        var emittedEvent: AuthEvent? = null
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.events.collect { emittedEvent = it }
+        }
+
+        viewModel.initialize(isBiometricAvailable = true)
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.isBiometricAvailable)
+        assertEquals(null, emittedEvent)
+        viewModel.onBiometricSuccess()
+        assertFalse(sessionManager.isUnlocked.value)
+
+        every { mockPinManager.isBiometricEnabled() } returns true
+        viewModel.initialize(isBiometricAvailable = true)
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.isBiometricAvailable)
+        assertEquals(AuthEvent.TriggerBiometric, emittedEvent)
+
+        every { mockPinManager.isBiometricEnabled() } returns false
+        viewModel.onBiometricSuccess()
+        assertFalse(sessionManager.isUnlocked.value)
+        every { mockPinManager.isBiometricEnabled() } returns true
+        every { mockPinManager.isLockedOut() } returns true
+        viewModel.onBiometricSuccess()
+        assertFalse(sessionManager.isUnlocked.value)
     }
 }

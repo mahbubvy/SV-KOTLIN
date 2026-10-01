@@ -28,7 +28,6 @@ data class AuthUiState(
     val subtitle: String = "Access SecretVault",
     val errorMessage: String? = null,
     val hasError: Boolean = false,
-    val isKeepUnlocked: Boolean = false,
     val isBiometricAvailable: Boolean = false,
     val remainingLockoutSeconds: Int = 0
 )
@@ -67,8 +66,7 @@ class AuthViewModel(
             pinLength = 0,
             title = getTitleForMode(initialMode),
             subtitle = getSubtitleForMode(initialMode),
-            isBiometricAvailable = false,
-            isKeepUnlocked = sessionManager.keepUnlocked.value
+            isBiometricAvailable = false
         )
         if (isLocked) {
             startLockoutCountdown()
@@ -85,6 +83,7 @@ class AuthViewModel(
             !isPinConfigured -> AuthMode.SETUP_ENTER_PIN
             else -> AuthMode.UNLOCK_PIN
         }
+        val biometricAllowed = isBiometricAvailable && pinManager.isBiometricEnabled() && isPinConfigured && !isLocked
 
         _uiState.value = _uiState.value.copy(
             mode = mode,
@@ -93,13 +92,12 @@ class AuthViewModel(
             errorMessage = null,
             title = getTitleForMode(mode),
             subtitle = getSubtitleForMode(mode),
-            isBiometricAvailable = isBiometricAvailable && isPinConfigured && !isLocked,
-            isKeepUnlocked = sessionManager.keepUnlocked.value
+            isBiometricAvailable = biometricAllowed
         )
 
         if (isLocked) {
             startLockoutCountdown()
-        } else if (isBiometricAvailable && isPinConfigured) {
+        } else if (biometricAllowed) {
             viewModelScope.launch {
                 _events.emit(AuthEvent.TriggerBiometric)
             }
@@ -134,13 +132,8 @@ class AuthViewModel(
         }
     }
 
-    fun toggleKeepUnlocked(checked: Boolean) {
-        _uiState.value = _uiState.value.copy(isKeepUnlocked = checked)
-        sessionManager.setKeepUnlocked(checked)
-    }
-
     fun onBiometricSuccess() {
-        sessionManager.setKeepUnlocked(_uiState.value.isKeepUnlocked)
+        if (!_uiState.value.isBiometricAvailable || !pinManager.isBiometricEnabled() || pinManager.isLockedOut()) return
         sessionManager.unlock()
         viewModelScope.launch {
             _events.emit(AuthEvent.UnlockSuccess)
@@ -163,7 +156,6 @@ class AuthViewModel(
                 AuthMode.SETUP_CONFIRM_PIN -> {
                     if (pin == setupFirstPin) {
                         pinManager.setupPin(pin)
-                        sessionManager.setKeepUnlocked(_uiState.value.isKeepUnlocked)
                         sessionManager.unlock()
                         _events.emit(AuthEvent.SetupSuccess)
                     } else {
@@ -181,7 +173,6 @@ class AuthViewModel(
                 }
                 AuthMode.UNLOCK_PIN -> {
                     if (pinManager.verifyPin(pin)) {
-                        sessionManager.setKeepUnlocked(_uiState.value.isKeepUnlocked)
                         sessionManager.unlock()
                         _events.emit(AuthEvent.UnlockSuccess)
                     } else {

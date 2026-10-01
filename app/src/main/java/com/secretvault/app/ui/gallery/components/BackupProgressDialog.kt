@@ -1,5 +1,6 @@
 package com.secretvault.app.ui.gallery.components
 
+import android.os.SystemClock
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +18,11 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -29,6 +35,7 @@ import com.secretvault.app.ui.theme.TextPrimary
 import com.secretvault.app.ui.theme.VaultAccent
 import com.secretvault.app.ui.theme.VaultDarkBg
 import com.secretvault.app.ui.theme.VaultError
+import kotlinx.coroutines.delay
 
 @Composable
 fun BackupProgressDialog(
@@ -36,6 +43,21 @@ fun BackupProgressDialog(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var elapsedSeconds by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        val startedAt = SystemClock.elapsedRealtime()
+        while (true) {
+            elapsedSeconds = (SystemClock.elapsedRealtime() - startedAt) / 1_000L
+            delay(1_000L)
+        }
+    }
+
+    val elapsedText = if (elapsedSeconds >= 3_600L) {
+        String.format("%d:%02d:%02d", elapsedSeconds / 3_600, (elapsedSeconds / 60) % 60, elapsedSeconds % 60)
+    } else {
+        String.format("%02d:%02d", elapsedSeconds / 60, elapsedSeconds % 60)
+    }
+
     AlertDialog(
         onDismissRequest = { /* Modal while restoring */ },
         containerColor = VaultDarkBg,
@@ -96,6 +118,12 @@ fun BackupProgressDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(6.dp)
+                )
+
+                Text(
+                    text = "Elapsed $elapsedText",
+                    color = TextMuted,
+                    fontSize = 12.sp
                 )
 
                 if (progress.activeFileName.isNotBlank()) {

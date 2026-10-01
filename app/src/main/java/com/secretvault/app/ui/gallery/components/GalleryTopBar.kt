@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.SettingsBackupRestore
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -50,6 +51,7 @@ fun GalleryTopBar(
     onCloseSelectionClick: () -> Unit,
     onLockClick: () -> Unit,
     onBackupRestoreClick: (() -> Unit)? = null,
+    onSettingsClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -88,6 +90,7 @@ fun GalleryTopBar(
             }
         } else {
             Row(
+                modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
@@ -105,6 +108,8 @@ fun GalleryTopBar(
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     modifier = Modifier.padding(start = if (showBackButton) 0.dp else 12.dp)
                 )
             }
@@ -120,6 +125,12 @@ fun GalleryTopBar(
                             contentDescription = "Backup & Restore",
                             tint = TextSecondary
                         )
+                    }
+                }
+
+                if (onSettingsClick != null) {
+                    IconButton(onClick = onSettingsClick) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = TextSecondary)
                     }
                 }
 

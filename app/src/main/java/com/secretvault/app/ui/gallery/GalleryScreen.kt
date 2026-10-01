@@ -9,9 +9,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -24,6 +28,8 @@ import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -56,6 +62,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.font.FontWeight
 import com.secretvault.app.ui.theme.TextMuted
 import com.secretvault.app.ui.theme.TextPrimary
+import com.secretvault.app.ui.theme.TextSecondary
 import com.secretvault.app.ui.theme.VaultAccent
 import com.secretvault.app.ui.theme.VaultBorder
 import com.secretvault.app.ui.theme.VaultDarkBg
@@ -71,6 +78,7 @@ fun GalleryScreen(
     onMediaClick: (MediaItem) -> Unit,
     onCameraClick: () -> Unit,
     onLockClick: () -> Unit,
+    onSettingsClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val uiState by galleryViewModel.uiState.collectAsState()
@@ -79,6 +87,7 @@ fun GalleryScreen(
     val isSharing by app.ephemeralShareManager.isSharing.collectAsState()
     val shareProgress by app.ephemeralShareManager.shareProgress.collectAsState()
     val shareStatusText by app.ephemeralShareManager.shareStatusText.collectAsState()
+    val keepOpen by app.sessionManager.keepUnlocked.collectAsState()
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -94,6 +103,7 @@ fun GalleryScreen(
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
     ) { uris ->
+        app.sessionManager.setExternalPickerInProgress(false)
         if (uris.isNotEmpty()) {
             coroutineScope.launch {
                 val targetAlbum = uiState.activeAlbumId ?: com.secretvault.app.core.database.entity.AlbumEntity.ALBUM_IMPORTS_ID
@@ -160,6 +170,7 @@ fun GalleryScreen(
                 },
                 onCloseSelectionClick = { galleryViewModel.clearSelection() },
                 onLockClick = onLockClick,
+                onSettingsClick = if (uiState.activeAlbumId == null) onSettingsClick else null,
                 onBackupRestoreClick = if (uiState.activeAlbumId == null && !uiState.isSelectionMode) {
                     { showBackupRestoreScreen = true }
                 } else null
@@ -167,6 +178,30 @@ fun GalleryScreen(
 
             // Main Content Area: Albums View (Root) vs Album Media Grid
             if (uiState.activeAlbumId == null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 64.dp)
+                        .toggleable(keepOpen, role = Role.Switch, onValueChange = app.sessionManager::setKeepUnlocked)
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Keep vault open", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        Text("Open straight to camera. Turns off after 10 minutes outside the vault.", color = TextSecondary, fontSize = 12.sp)
+                    }
+                    Switch(
+                        checked = keepOpen,
+                        onCheckedChange = null,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = VaultDarkBg,
+                            checkedTrackColor = VaultAccent,
+                            uncheckedTrackColor = VaultSurface,
+                            uncheckedBorderColor = TextSecondary
+                        )
+                    )
+                }
                 AlbumsTab(
                     viewModel = albumsViewModel,
                     onAlbumClick = { album ->
@@ -266,6 +301,7 @@ fun GalleryScreen(
                 // Import from Device Button
                 SmallFloatingActionButton(
                     onClick = {
+                        app.sessionManager.setExternalPickerInProgress(true)
                         photoPickerLauncher.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
                         )

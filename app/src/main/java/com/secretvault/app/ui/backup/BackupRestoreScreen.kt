@@ -94,9 +94,13 @@ fun BackupRestoreScreen(
 
     var currentSubScreen by remember { mutableStateOf(BackupSubScreen.MAIN) }
 
-    // Intercept back to pop sub-screens first
-    BackHandler(enabled = currentSubScreen != BackupSubScreen.MAIN) {
-        currentSubScreen = BackupSubScreen.MAIN
+    // Return to the backup menu before leaving the backup screen.
+    BackHandler {
+        if (currentSubScreen != BackupSubScreen.MAIN) {
+            currentSubScreen = BackupSubScreen.MAIN
+        } else {
+            onBack()
+        }
     }
 
     // Vault Summary state
@@ -114,6 +118,7 @@ fun BackupRestoreScreen(
     val backupExportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
+        app.sessionManager.setExternalPickerInProgress(false)
         if (uri != null && exportPasswordToUse != null) {
             val password = exportPasswordToUse!!
             val scope = pendingExportScope
@@ -151,6 +156,7 @@ fun BackupRestoreScreen(
     val backupPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
+        app.sessionManager.setExternalPickerInProgress(false)
         if (uri != null) {
             selectedRestoreUri = uri
             val cursor = context.contentResolver.query(uri, null, null, null, null)
@@ -332,7 +338,10 @@ fun BackupRestoreScreen(
                                     }
 
                                     Button(
-                                        onClick = { backupPickerLauncher.launch(arrayOf("*/*")) },
+                                        onClick = {
+                                            app.sessionManager.setExternalPickerInProgress(true)
+                                            backupPickerLauncher.launch(arrayOf("*/*"))
+                                        },
                                         colors = ButtonDefaults.buttonColors(containerColor = VaultAccent),
                                         shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier
@@ -368,6 +377,7 @@ fun BackupRestoreScreen(
                     is BackupScope.SelectedAlbums -> "SecretVault_AlbumsBackup_$timestamp.svbackup"
                     is BackupScope.SelectedMedia -> "SecretVault_MediaBackup_$timestamp.svbackup"
                 }
+                app.sessionManager.setExternalPickerInProgress(true)
                 backupExportLauncher.launch(filename)
             }
         )
