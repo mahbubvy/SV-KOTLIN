@@ -16,11 +16,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Face
-import androidx.compose.material.icons.filled.FlashAuto
-import androidx.compose.material.icons.filled.FlashOff
-import androidx.compose.material.icons.filled.FlashOn
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.DropdownMenu
@@ -45,8 +40,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.secretvault.app.core.camera.CameraMode
-import com.secretvault.app.core.camera.FlashMode
 import com.secretvault.app.core.camera.VideoMode
+import com.secretvault.app.core.camera.VideoOrientation
 import com.secretvault.app.ui.theme.TextMuted
 import com.secretvault.app.ui.theme.TextPrimary
 import com.secretvault.app.ui.theme.VaultAccent
@@ -55,16 +50,14 @@ import com.secretvault.app.ui.theme.VaultSurface
 @Composable
 fun CameraTopBar(
     cameraMode: CameraMode,
-    flashMode: FlashMode,
     autoFaceBlur: Boolean,
-    recordAudio: Boolean,
     videoMode: VideoMode,
+    videoOrientation: VideoOrientation,
     supportedVideoModes: List<VideoMode>,
     isRecording: Boolean,
     onVideoModeSelect: (VideoMode) -> Unit,
-    onFlashToggle: () -> Unit,
+    onVideoOrientationSelect: (VideoOrientation) -> Unit,
     onFaceBlurToggle: () -> Unit,
-    onAudioToggle: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -110,7 +103,7 @@ fun CameraTopBar(
                             .background(Color.Black.copy(alpha = 0.8f))
                             .semantics { contentDescription = "Video quality: ${videoMode.label}" }
                     ) {
-                        Text("${if (videoMode == VideoMode.UHD_30) "4K" else "1080p"} · ${videoMode.fps}", fontSize = 14.sp)
+                        Text("${videoMode.resolutionLabel} \u00B7 ${videoMode.fps}", fontSize = 14.sp)
                     }
                     DropdownMenu(
                         expanded = menuExpanded && !isRecording,
@@ -142,27 +135,47 @@ fun CameraTopBar(
                         }
                     }
                 }
-            }
-            // Flash Mode Toggle
-            IconButton(
-                onClick = onFlashToggle,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.4f))
-            ) {
-                val icon = when (flashMode) {
-                    FlashMode.AUTO -> Icons.Default.FlashAuto
-                    FlashMode.ON -> Icons.Default.FlashOn
-                    FlashMode.OFF -> Icons.Default.FlashOff
+                var orientationMenuExpanded by remember { mutableStateOf(false) }
+                Box {
+                    TextButton(
+                        onClick = { orientationMenuExpanded = true },
+                        enabled = !isRecording,
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = TextPrimary,
+                            disabledContentColor = TextMuted
+                        ),
+                        modifier = Modifier
+                            .widthIn(max = 112.dp)
+                            .heightIn(min = 48.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.Black.copy(alpha = 0.8f))
+                            .semantics { contentDescription = "Video orientation: ${videoOrientation.label}" }
+                    ) {
+                        Text(videoOrientation.label, fontSize = 14.sp)
+                    }
+                    DropdownMenu(
+                        expanded = orientationMenuExpanded && !isRecording,
+                        onDismissRequest = { orientationMenuExpanded = false },
+                        containerColor = VaultSurface
+                    ) {
+                        VideoOrientation.entries.forEach { orientation ->
+                            DropdownMenuItem(
+                                text = { Text(orientation.label) },
+                                leadingIcon = {
+                                    if (orientation == videoOrientation) Icon(Icons.Default.Check, contentDescription = null)
+                                },
+                                onClick = {
+                                    orientationMenuExpanded = false
+                                    onVideoOrientationSelect(orientation)
+                                },
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .semantics { selected = orientation == videoOrientation }
+                            )
+                        }
+                    }
                 }
-                Icon(
-                    imageVector = icon,
-                    contentDescription = "Flash Mode",
-                    tint = if (flashMode != FlashMode.OFF) VaultAccent else TextPrimary
-                )
             }
-
             if (cameraMode == CameraMode.PHOTO) {
                 // Face Blur Toggle
                 Box(
@@ -190,21 +203,6 @@ fun CameraTopBar(
                             color = if (autoFaceBlur) VaultAccent else TextMuted
                         )
                     }
-                }
-            } else {
-                // Video Mode: Mic Toggle
-                IconButton(
-                    onClick = onAudioToggle,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.4f))
-                ) {
-                    Icon(
-                        imageVector = if (recordAudio) Icons.Default.Mic else Icons.Default.MicOff,
-                        contentDescription = "Microphone Toggle",
-                        tint = if (recordAudio) VaultAccent else Color.Red
-                    )
                 }
             }
         }

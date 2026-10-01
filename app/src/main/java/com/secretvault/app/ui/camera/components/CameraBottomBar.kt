@@ -13,11 +13,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FlashAuto
+import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.FlashOff
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
+import com.secretvault.app.core.camera.FlashMode
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.Icon
@@ -28,6 +36,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -36,6 +47,7 @@ import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import com.secretvault.app.core.image.EncryptedMediaUri
 import com.secretvault.app.core.model.MediaItem
+import com.secretvault.app.core.camera.CameraLensOption
 import com.secretvault.app.core.camera.CameraMode
 import com.secretvault.app.ui.theme.TextMuted
 import com.secretvault.app.ui.theme.TextPrimary
@@ -46,8 +58,15 @@ import com.secretvault.app.ui.theme.VaultError
 fun CameraBottomBar(
     cameraMode: CameraMode,
     isRecording: Boolean,
+    flashMode: FlashMode,
+    recordAudio: Boolean,
+    onFlashToggle: () -> Unit,
+    onAudioToggle: () -> Unit,
     recordingDurationSeconds: Int,
     latestMediaItem: MediaItem? = null,
+    rearLensOptions: List<CameraLensOption>,
+    selectedRearLensId: String?,
+    onRearLensSelect: (String?) -> Unit,
     onModeSelect: (CameraMode) -> Unit,
     onShutterClick: () -> Unit,
     onFlipCamera: () -> Unit,
@@ -109,6 +128,77 @@ fun CameraBottomBar(
                     title = "VIDEO",
                     isSelected = cameraMode == CameraMode.VIDEO,
                     onClick = { onModeSelect(CameraMode.VIDEO) }
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (cameraMode == CameraMode.VIDEO) {
+                IconButton(
+                    onClick = onAudioToggle,
+                    enabled = !isRecording,
+                    modifier = Modifier.size(48.dp).clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.8f))
+                ) {
+                    Icon(
+                        imageVector = if (recordAudio) Icons.Default.Mic else Icons.Default.MicOff,
+                        contentDescription = if (recordAudio) "Microphone on" else "Microphone off",
+                        tint = if (recordAudio) VaultAccent else TextPrimary
+                    )
+                }
+            } else {
+                Spacer(Modifier.size(48.dp))
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (!isRecording && rearLensOptions.size > 1) {
+                rearLensOptions.forEach { lens ->
+                    val isSelected = lens.id == selectedRearLensId
+                    Box(
+                        modifier = Modifier
+                            .heightIn(min = 44.dp)
+                            .clip(CircleShape)
+                            .background(if (isSelected) VaultAccent.copy(alpha = 0.24f) else Color.Black.copy(alpha = 0.55f))
+                            .selectable(
+                                selected = isSelected,
+                                role = Role.RadioButton,
+                                onClick = { onRearLensSelect(lens.id) }
+                            )
+                            .semantics(mergeDescendants = true) {
+                                contentDescription = "${lens.label} camera lens"
+                            }
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = lens.label,
+                            fontSize = 14.sp,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (isSelected) VaultAccent else TextPrimary
+                        )
+                    }
+                }
+                }
+            }
+            IconButton(
+                onClick = onFlashToggle,
+                modifier = Modifier.size(48.dp).clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.8f))
+            ) {
+                Icon(
+                    imageVector = when (flashMode) {
+                        FlashMode.AUTO -> Icons.Default.FlashAuto
+                        FlashMode.ON -> Icons.Default.FlashOn
+                        FlashMode.OFF -> Icons.Default.FlashOff
+                    },
+                    contentDescription = "Flash ${flashMode.name.lowercase()}",
+                    tint = if (flashMode != FlashMode.OFF) VaultAccent else TextPrimary
                 )
             }
         }

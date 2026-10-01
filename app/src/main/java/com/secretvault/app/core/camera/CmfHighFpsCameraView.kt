@@ -35,8 +35,7 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
         private const val VIDEO_FPS = 60
         private const val VIDEO_BIT_RATE = 16_000_000
         private const val SESSION_OPERATION_MODE = 0xF008
-        fun isCmfPhone1(): Boolean = Build.MANUFACTURER.equals("Nothing", true) &&
-            Build.MODEL.equals("A015", true) && Build.DEVICE.equals("Tetris", true)
+        fun isCmfPhone1(): Boolean = isCmfPhone1(Build.MANUFACTURER, Build.MODEL, Build.DEVICE)
     }
 
     private val cameraManager = context.getSystemService(CameraManager::class.java)
@@ -53,6 +52,7 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
     private var recording = false
     private var recordingStartedAt = 0L
     private var includeAudio = false
+    private var orientationHint = 90
     private var onReady: (() -> Unit)? = null
     private var onError: ((String) -> Unit)? = null
     private var focusReset: Runnable? = null
@@ -62,9 +62,10 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
         surfaceTextureListener = this
     }
 
-    fun start(includeAudio: Boolean, onReady: () -> Unit, onError: (String) -> Unit) {
+    fun start(includeAudio: Boolean, orientationHint: Int, onReady: () -> Unit, onError: (String) -> Unit) {
         stopCamera()
         this.includeAudio = includeAudio
+        this.orientationHint = orientationHint
         this.onReady = onReady
         this.onError = onError
         active = true
@@ -274,7 +275,7 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
             recorder.setAudioSamplingRate(48_000)
             recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
         }
-        recorder.setOrientationHint(90)
+        recorder.setOrientationHint(orientationHint)
         recorder.prepare()
         recorderSurface = recorder.surface
     }

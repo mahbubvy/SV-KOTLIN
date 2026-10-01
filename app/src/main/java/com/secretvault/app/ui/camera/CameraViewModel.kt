@@ -2,10 +2,12 @@ package com.secretvault.app.ui.camera
 
 import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.ViewModel
+import com.secretvault.app.core.camera.CameraLensOption
 import com.secretvault.app.core.camera.CameraMode
 import com.secretvault.app.core.camera.FlashMode
 import com.secretvault.app.core.camera.LensFacing
 import com.secretvault.app.core.camera.VideoMode
+import com.secretvault.app.core.camera.VideoOrientation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,16 +19,19 @@ data class CameraUiState(
     val autoFaceBlur: Boolean = true,
     val recordAudio: Boolean = true,
     val videoMode: VideoMode = VideoMode.UHD_30,
+    val videoOrientation: VideoOrientation = VideoOrientation.PORTRAIT,
     val supportedVideoModes: List<VideoMode> = emptyList(),
+    val rearLensOptions: List<CameraLensOption> = listOf(CameraLensOption(null, "1×")),
+    val selectedRearLensId: String? = null,
     val isRecording: Boolean = false,
     val recordingDurationSeconds: Int = 0,
     val focusPoint: Offset? = null,
     val isSaving: Boolean = false
 )
 
-class CameraViewModel : ViewModel() {
+class CameraViewModel(initialVideoMode: VideoMode = VideoMode.UHD_30) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(CameraUiState())
+    private val _uiState = MutableStateFlow(CameraUiState(videoMode = initialVideoMode))
     val uiState: StateFlow<CameraUiState> = _uiState.asStateFlow()
 
     fun toggleFlashMode() {
@@ -66,8 +71,25 @@ class CameraViewModel : ViewModel() {
         _uiState.value = _uiState.value.copy(videoMode = mode)
     }
 
+    fun setVideoOrientation(orientation: VideoOrientation) {
+        if (_uiState.value.isRecording) return
+        _uiState.value = _uiState.value.copy(videoOrientation = orientation)
+    }
+
     fun setSupportedVideoModes(modes: List<VideoMode>, selectedMode: VideoMode) {
         _uiState.value = _uiState.value.copy(supportedVideoModes = modes, videoMode = selectedMode)
+    }
+
+    fun setRearLensOptions(options: List<CameraLensOption>) {
+        val available = options.ifEmpty { listOf(CameraLensOption(null, "1×")) }
+        val selected = _uiState.value.selectedRearLensId
+            ?.takeIf { id -> available.any { it.id == id } }
+        _uiState.value = _uiState.value.copy(rearLensOptions = available, selectedRearLensId = selected)
+    }
+
+    fun selectRearLens(physicalCameraId: String?) {
+        if (_uiState.value.isRecording || _uiState.value.rearLensOptions.none { it.id == physicalCameraId }) return
+        _uiState.value = _uiState.value.copy(selectedRearLensId = physicalCameraId)
     }
 
     fun setFocusPoint(offset: Offset?) {

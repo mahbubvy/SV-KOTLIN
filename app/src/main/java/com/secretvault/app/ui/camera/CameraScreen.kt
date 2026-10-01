@@ -141,13 +141,17 @@ fun CameraScreen(
     var previewViewInstance by remember { mutableStateOf<PreviewView?>(null) }
     var cmfHighFpsViewInstance by remember { mutableStateOf<CmfHighFpsCameraView?>(null) }
     val shutterFlashAlpha = remember { Animatable(0f) }
+    var cameraGeneration by remember { mutableStateOf(0) }
+    val selectedRearOption = uiState.rearLensOptions.firstOrNull { it.id == uiState.selectedRearLensId }
+    val selectedPhysicalId = selectedRearOption?.physicalCameraId
     val useCmfHighFps = uiState.cameraMode == CameraMode.VIDEO &&
         uiState.lensFacing == LensFacing.BACK &&
         uiState.videoMode == VideoMode.FHD_60 &&
+        uiState.selectedRearLensId == null &&
         CmfHighFpsCameraView.isCmfPhone1()
 
     // Start / Restart Camera when permission is granted, camera mode changes, lens facing changes, or preview ready
-    LaunchedEffect(hasCameraPermission, uiState.cameraMode, uiState.lensFacing, uiState.videoMode, uiState.recordAudio, previewViewInstance, cmfHighFpsViewInstance) {
+    LaunchedEffect(hasCameraPermission, uiState.cameraMode, uiState.lensFacing, selectedPhysicalId, uiState.videoMode, uiState.videoOrientation, uiState.recordAudio, previewViewInstance, cmfHighFpsViewInstance) {
         if (hasCameraPermission) {
             val pv = previewViewInstance ?: return@LaunchedEffect
             val cmfView = cmfHighFpsViewInstance ?: return@LaunchedEffect
@@ -159,13 +163,24 @@ fun CameraScreen(
                 lensFacing = uiState.lensFacing,
                 flashMode = uiState.flashMode,
                 videoMode = uiState.videoMode,
+                videoOrientation = uiState.videoOrientation,
                 recordAudio = uiState.recordAudio,
+                selectedRearLensId = selectedPhysicalId,
+                onRearLensOptions = viewModel::setRearLensOptions,
                 onVideoConfigured = { modes, selected -> viewModel.setSupportedVideoModes(modes, selected) },
-                onCameraReady = { },
+                onCameraReady = { cameraGeneration++ },
                 onCameraError = { error ->
                     Toast.makeText(context, error, Toast.LENGTH_LONG).show()
                 }
             )
+        }
+    }
+
+    LaunchedEffect(cameraGeneration, uiState.selectedRearLensId, uiState.lensFacing) {
+        val ratio = if (uiState.lensFacing == LensFacing.BACK) selectedRearOption?.zoomRatio ?: 1f else 1f
+        cameraManager.setZoomRatio(ratio) { error ->
+            viewModel.selectRearLens(null)
+            Toast.makeText(context, error, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -303,16 +318,14 @@ fun CameraScreen(
             // Top Bar
             CameraTopBar(
                 cameraMode = uiState.cameraMode,
-                flashMode = uiState.flashMode,
                 autoFaceBlur = uiState.autoFaceBlur,
-                recordAudio = uiState.recordAudio,
                 videoMode = uiState.videoMode,
+                videoOrientation = uiState.videoOrientation,
                 supportedVideoModes = uiState.supportedVideoModes,
                 isRecording = uiState.isRecording,
                 onVideoModeSelect = viewModel::setVideoMode,
-                onFlashToggle = { viewModel.toggleFlashMode() },
+                onVideoOrientationSelect = viewModel::setVideoOrientation,
                 onFaceBlurToggle = { viewModel.toggleFaceBlur() },
-                onAudioToggle = { viewModel.toggleRecordAudio() },
                 onClose = onClose,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -321,6 +334,10 @@ fun CameraScreen(
 
             // Bottom Bar
             CameraBottomBar(
+                flashMode = uiState.flashMode,
+                recordAudio = uiState.recordAudio,
+                onFlashToggle = viewModel::toggleFlashMode,
+                onAudioToggle = viewModel::toggleRecordAudio,
                 cameraMode = uiState.cameraMode,
                 isRecording = uiState.isRecording,
                 recordingDurationSeconds = uiState.recordingDurationSeconds,
@@ -355,6 +372,9 @@ fun CameraScreen(
                 },
                 onFlipCamera = { viewModel.toggleLensFacing() },
                 latestMediaItem = latestMediaItem,
+                rearLensOptions = if (uiState.lensFacing == LensFacing.BACK) uiState.rearLensOptions else emptyList(),
+                selectedRearLensId = uiState.selectedRearLensId,
+                onRearLensSelect = viewModel::selectRearLens,
                 onGalleryClick = {
                     val item = latestMediaItem
                     if (item != null) {
