@@ -1,7 +1,8 @@
 # Spec: Local camera streaming test
 
-Status: Scope carried forward into the build plan at the user's request.
-Implementation has not started. Proposed targets remain subject to plan review.
+Status: Debug prototype built. Authenticated Wi-Fi and generated-video decoding
+verified on CMF/Pixel. Live-camera and performance checks are pending; the user
+requested finishing the build before positioning the phones.
 
 ## Objective
 

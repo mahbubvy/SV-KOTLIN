@@ -1,6 +1,7 @@
 # Tasks: Local camera streaming test
 
-Status: Build authorized by the user. Implementation in progress. See
+Status: Debug prototype built and installed as an update on both phones. Live
+camera, UI and sustained-performance checks remain pending at the user's request. See
 [plan.md](plan.md) and [spec](../SPEC-camera-stream-test.md).
 
 Paths below are relative to `app/src/main/java/com/secretvault/app/` unless
@@ -49,11 +50,11 @@ Files: `core/stream/StreamTls.kt`; `core/stream/StreamSession.kt`;
 
 ## Task 3: Play a generated video on the receiving phone
 
-- [ ] Stream the existing nonprivate fixture through TLS into a decoder Surface.
+- [x] Stream the existing nonprivate fixture through TLS into a decoder Surface.
 
 Acceptance:
 - [ ] Pixel displays the fixture in correct order with supplied codec initialization.
-- [ ] First decode starts from configuration plus a keyframe; access-unit offsets,
+- [x] First decode starts from configuration plus a keyframe; access-unit offsets,
   sizes and presentation timestamps remain correct.
 - [ ] Buffering is bounded and decoder/surface/EOF errors close cleanly.
 
@@ -67,7 +68,7 @@ Reuse: `app/src/androidTest/assets/video-edit-fixture.mp4`.
 
 ## Task 4: Substitute the live CMF camera
 
-- [ ] Feed preview and an H.264 encoder from one rear-main-camera session.
+- [x] Implement preview and an H.264 encoder in one rear-main-camera session.
 
 Acceptance:
 - [ ] CMF exposes a local preview and the Pixel receives the actual live camera.
@@ -90,7 +91,7 @@ Files: `core/stream/CameraStreamEncoder.kt`; `core/stream/StreamSession.kt`;
 
 ## Task 5: Expose the temporary SV test screen
 
-- [ ] Add a debug-only entry in unlocked Settings with Send/View roles.
+- [x] Add a debug-only entry in unlocked Settings with Send/View roles.
 
 Acceptance:
 - [ ] Entry and destination both enforce debug/unlocked state; no broadcast starts
@@ -109,7 +110,8 @@ Files: `ui/stream/CameraStreamScreen.kt`; `core/stream/StreamSession.kt`;
 
 ## Task 6: Verify termination and bounded delay behavior
 
-- [ ] Connect lifecycle cleanup and exercise interrupted/slow sessions.
+- [x] Connect lifecycle cleanup; fixture-viewer disconnect and bounded queues verified.
+- [ ] Exercise live interrupted/slow sessions on both phones.
 
 Acceptance:
 - [ ] Back, Stop, Disconnect, background, screen lock, explicit vault lock,
@@ -155,6 +157,10 @@ Files: `tasks/camera-stream-validation.md`; `tasks/todo.md`.
 
 - [ ] Required targets and security/lifecycle checks verified, or limitations reviewed.
 - [ ] Existing camera/vault regressions assessed and test APK ready for review.
+
+The live-media checkpoint and device UI gate are deferred per the user's
+"Build first; I'll position them later" instruction. Implementation checkboxes
+above do not mark their unchecked hardware acceptance criteria as passed.
 - [ ] Decide separately whether to add a permanent option, pairing QR/discovery,
   remote capture controls, or simultaneous recording.
 
