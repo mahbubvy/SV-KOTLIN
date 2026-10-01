@@ -13,8 +13,8 @@ android {
         applicationId = "com.secretvault.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -45,7 +45,7 @@ android {
     applicationVariants.all {
         outputs.all {
             val output = this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl
-            output?.outputFileName = "SecretVault_Phase6_v0.6.0_${name}.apk"
+            output?.outputFileName = "SecretVault-v${versionName}-${name}.apk"
         }
     }
 }
