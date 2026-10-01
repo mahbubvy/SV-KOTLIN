@@ -6,15 +6,17 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
-import com.secretvault.app.core.crypto.SecureMemory
 import com.secretvault.app.core.crypto.VaultCryptoEngine
 import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.model.MediaType
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,7 +30,7 @@ import java.util.UUID
  * Manages ephemeral, single-use sharing of encrypted media.
  * Temporarily decrypts media files into a private cache directory exposed via FileProvider,
  * launches the Android Share Chooser, and automatically wipes and deletes decrypted files
- * after an auto-destruction timeout or when the app is backgrounded/locked.
+ * after an auto-destruction timeout or an explicit lock.
  */
 class EphemeralShareManager(
     private val context: Context,
@@ -104,17 +106,17 @@ class EphemeralShareManager(
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
 
+                scheduleAutoDestruction(decryptedFile, System.currentTimeMillis() + autoDestructDelayMs)
                 withContext(Dispatchers.Main) {
                     _isSharing.value = false
                     _shareProgress.value = 0f
                     try {
                         activity.startActivity(chooser)
                     } catch (e: Exception) {
+                        secureWipeAndDelete(decryptedFile)
                         e.printStackTrace()
                     }
                 }
-
-                scheduleAutoDestruction(decryptedFile, autoDestructDelayMs)
             } finally {
                 if (currentShareJob?.isCancelled == true) {
                     _isSharing.value = false
@@ -189,18 +191,19 @@ class EphemeralShareManager(
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
 
+                val expiresAt = System.currentTimeMillis() + autoDestructDelayMs
+                for (file in decryptedFiles) {
+                    scheduleAutoDestruction(file, expiresAt)
+                }
                 withContext(Dispatchers.Main) {
                     _isSharing.value = false
                     _shareProgress.value = 0f
                     try {
                         activity.startActivity(chooser)
                     } catch (e: Exception) {
+                        decryptedFiles.forEach { secureWipeAndDelete(it) }
                         e.printStackTrace()
                     }
-                }
-
-                for (file in decryptedFiles) {
-                    scheduleAutoDestruction(file, autoDestructDelayMs)
                 }
             } finally {
                 if (currentShareJob?.isCancelled == true) {
@@ -231,15 +234,21 @@ class EphemeralShareManager(
         } else {
             "SV_${item.id.take(8)}"
         }
-        val tempName = "${baseName}.$extension"
+        val tempName = "${baseName}_${UUID.randomUUID()}.$extension"
         val destFile = File(sharedDir, tempName)
 
         try {
-            cryptoEngine.decryptFile(encFile, destFile, onProgress = onProgress)
+            val shareContext = currentCoroutineContext()
+            cryptoEngine.decryptFile(encFile, destFile, onProgress = {
+                shareContext.ensureActive()
+                onProgress?.invoke(it)
+            })
+            shareContext.ensureActive()
             destFile
         } catch (e: Exception) {
+            secureWipeAndDelete(destFile)
+            if (e is CancellationException) throw e
             e.printStackTrace()
-            if (destFile.exists()) destFile.delete()
             null
         }
     }
@@ -252,29 +261,36 @@ class EphemeralShareManager(
         )
     }
 
-    private fun scheduleAutoDestruction(file: File, delayMs: Long) {
-        val job = scope.launch {
-            delay(delayMs)
-            secureWipeAndDelete(file)
-        }
+    private fun scheduleAutoDestruction(file: File, expiresAtMs: Long) {
         synchronized(activeAutoDestructJobs) {
+            // Persist expiry so a restarted FileProvider can still serve an active share.
+            if (!file.setLastModified(expiresAtMs)) {
+                secureWipeAndDelete(file)
+                error("Could not set shared file expiry")
+            }
+            val job = scope.launch {
+                delay((expiresAtMs - System.currentTimeMillis()).coerceAtLeast(0))
+                synchronized(activeAutoDestructJobs) { secureWipeAndDelete(file) }
+            }
             activeAutoDestructJobs.add(job)
         }
     }
 
-    /**
-     * Instantly and cryptographically purges all temporary shared files,
-     * zeroing out their contents on disk before deleting.
-     */
-    fun purgeAllSharedFiles() {
-        scope.launch {
-            val files = sharedDir.listFiles() ?: return@launch
-            for (file in files) {
-                secureWipeAndDelete(file)
-            }
+    // Background locking must leave exported files readable until their expiry.
+    fun purgeAllSharedFiles(force: Boolean = false): Job {
+        if (force) currentShareJob?.cancel()
+        return scope.launch {
             synchronized(activeAutoDestructJobs) {
                 activeAutoDestructJobs.forEach { it.cancel() }
                 activeAutoDestructJobs.clear()
+                for (file in sharedDir.listFiles().orEmpty()) {
+                    val expiresAt = file.lastModified()
+                    if (!force && expiresAt > System.currentTimeMillis()) {
+                        scheduleAutoDestruction(file, expiresAt)
+                    } else if (force || !_isSharing.value) {
+                        secureWipeAndDelete(file)
+                    }
+                }
             }
         }
     }
