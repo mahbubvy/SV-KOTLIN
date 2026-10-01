@@ -152,9 +152,8 @@ class VideoEditManager(
                     DataSourceBitmapLoader(context)
                 )
             )
-            // Re-encodes only the frames around the cut instead of the whole clip. Media3 supports
-            // it for a single clip, so removing a middle section re-encodes the full video.
-            .experimentalSetTrimOptimizationEnabled(clips.size == 1)
+            // Media3 1.5.1's trim optimization probes the URI outside our decrypting asset loader.
+            .experimentalSetTrimOptimizationEnabled(false)
             .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                     done.complete(exportResult)

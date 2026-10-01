@@ -71,6 +71,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -114,12 +115,12 @@ fun VideoEditorScreen(
             .build()
             .apply {
                 setMediaItem(androidx.media3.common.MediaItem.fromUri(Uri.fromFile(File(item.encryptedPath))))
-                prepare()
             }
     }
     var durationMs by remember { mutableLongStateOf(0L) }
     var positionMs by remember { mutableLongStateOf(0L) }
     var isPlaying by remember { mutableStateOf(false) }
+    var previewError by remember(item.id) { mutableStateOf<String?>(null) }
     var mode by remember { mutableStateOf(VideoEditMode.TRIM) }
     var trimRange by remember { mutableStateOf(VideoSegment(0L, 0L)) }
     // Remove mode: the slider edits sections[activeSection]; the others stay drawn on the strip.
@@ -138,8 +139,14 @@ fun VideoEditorScreen(
                     trimRange = VideoSegment(0L, durationMs)
                 }
             }
+
+            override fun onPlayerError(error: PlaybackException) {
+                isPlaying = false
+                previewError = "Could not open this video. It may be unavailable, damaged, or unsupported by this phone."
+            }
         }
         player.addListener(listener)
+        player.prepare()
         onDispose {
             player.removeListener(listener)
             player.release()
@@ -193,7 +200,7 @@ fun VideoEditorScreen(
         else -> VideoEditPlan.withSectionsRemoved(durationMs, sections)
     }
     val resultMs = segments.sumOf { it.durationMs }
-    val canSave = segments.isNotEmpty() && resultMs < durationMs
+    val canSave = previewError == null && segments.isNotEmpty() && resultMs < durationMs
 
     val onTimelineTap: (Long) -> Unit = { tapMs ->
         player.pause()
@@ -239,7 +246,7 @@ fun VideoEditorScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .clickable {
+                .clickable(enabled = previewError == null && durationMs > 0) {
                     if (player.isPlaying) {
                         player.pause()
                     } else {
@@ -258,7 +265,21 @@ fun VideoEditorScreen(
                 },
                 modifier = Modifier.fillMaxSize()
             )
-            if (durationMs == 0L) {
+            if (previewError != null) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(previewError!!, color = TextPrimary, fontSize = 14.sp)
+                    TextButton(onClick = {
+                        previewError = null
+                        player.prepare()
+                    }) {
+                        Text("Retry", color = VaultAccent)
+                    }
+                }
+            } else if (durationMs == 0L) {
                 CircularProgressIndicator(color = VaultAccent, modifier = Modifier.size(48.dp))
             } else if (!isPlaying) {
                 Box(
@@ -330,7 +351,7 @@ fun VideoEditorScreen(
                     player.seekTo(moved)
                 },
                 valueRange = 0f..durationMs.toFloat().coerceAtLeast(1f),
-                enabled = durationMs > 0 && editState !is VideoEditState.Running,
+                enabled = previewError == null && durationMs > 0 && editState !is VideoEditState.Running,
                 colors = SliderDefaults.colors(
                     thumbColor = trackColor,
                     activeTrackColor = trackColor,
@@ -377,6 +398,7 @@ fun VideoEditorScreen(
             Spacer(Modifier.height(8.dp))
             Text(
                 text = when {
+                    previewError != null -> "Retry the preview or go back to the gallery."
                     durationMs == 0L -> "Loading video…"
                     segments.isEmpty() -> "The new video must be at least 1 second long."
                     !canSave -> if (removing) "Drag the handles to choose the part to remove." else "Drag the handles to choose the part to keep."
