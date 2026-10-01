@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -63,6 +64,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -350,11 +352,15 @@ fun VideoEditorScreen(
                         },
                         enabled = sections.size > 1 && editState !is VideoEditState.Running
                     ) {
-                        Text(
-                            "Delete section",
-                            color = if (sections.size > 1) VaultError else TextMuted,
-                            fontSize = 12.sp
+                        val tint = if (sections.size > 1) VaultError else TextMuted
+                        Icon(
+                            painter = painterResource(R.drawable.ic_delete_section),
+                            contentDescription = null,
+                            tint = tint,
+                            modifier = Modifier.size(18.dp)
                         )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Delete section", color = tint, fontSize = 12.sp)
                     }
                 }
                 Text("End ${formatTime(selected.endMs)}", color = TextSecondary, fontSize = 12.sp)
