@@ -33,6 +33,7 @@ class SecretVaultApp : Application(), ImageLoaderFactory {
     lateinit var mediaRepository: MediaRepository private set
     lateinit var albumRepository: AlbumRepository private set
     lateinit var mediaSaveQueue: com.secretvault.app.core.worker.MediaSaveQueue private set
+    lateinit var videoEditManager: com.secretvault.app.core.worker.VideoEditManager private set
     lateinit var batchImportManager: com.secretvault.app.core.worker.BatchImportManager private set
     lateinit var ephemeralShareManager: com.secretvault.app.core.share.EphemeralShareManager private set
     lateinit var backupImportManager: com.secretvault.app.core.backup.BackupImportManager private set
@@ -75,6 +76,7 @@ class SecretVaultApp : Application(), ImageLoaderFactory {
 
         // 5. Initialize Media Workers & Managers
         mediaSaveQueue = com.secretvault.app.core.worker.MediaSaveQueue(this, cryptoEngine, mediaRepository)
+        videoEditManager = com.secretvault.app.core.worker.VideoEditManager(this, cryptoEngine, mediaSaveQueue)
         batchImportManager = com.secretvault.app.core.worker.BatchImportManager(this, cryptoEngine, mediaRepository)
         ephemeralShareManager = com.secretvault.app.core.share.EphemeralShareManager(this, cryptoEngine)
         backupImportManager = com.secretvault.app.core.backup.BackupImportManager(this, cryptoEngine, database)

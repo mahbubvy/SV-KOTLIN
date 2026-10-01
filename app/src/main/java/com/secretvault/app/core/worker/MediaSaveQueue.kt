@@ -127,7 +127,9 @@ class MediaSaveQueue(
         acquireWakeLock()
         scope.launch {
             try {
-                val mediaItem = processAndSaveVideo(tempVideoFile, durationMs)
+                val mediaItem = saveVideo(tempVideoFile, durationMs) { progress ->
+                    _videoSaveProgress.value = (0.05f + progress * 0.95f).coerceIn(0f, 1f)
+                }
                 onComplete?.invoke(mediaItem)
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -218,7 +220,17 @@ class MediaSaveQueue(
         item
     }
 
-    private suspend fun processAndSaveVideo(tempFile: File, durationMs: Long): MediaItem = withContext(Dispatchers.IO) {
+    /**
+     * Thumbnails, encrypts and stores a plaintext video, then deletes [tempFile].
+     * [onProgress] reports encryption progress from 0 to 1.
+     */
+    suspend fun saveVideo(
+        tempFile: File,
+        durationMs: Long,
+        albumId: String = AlbumEntity.ALBUM_CAMERA_ID,
+        originalName: String? = null,
+        onProgress: (Float) -> Unit = {}
+    ): MediaItem = withContext(Dispatchers.IO) {
         val id = "video_" + UUID.randomUUID().toString().take(8)
         val timestamp = System.currentTimeMillis()
         val filename = VaultFileNameGenerator.generateFileName(MediaType.VIDEO, timestamp)
@@ -257,9 +269,7 @@ class MediaSaveQueue(
         // 2. Encrypt Video File
         val encFile = File(context.filesDir, "vault_media/$id.enc")
         encFile.parentFile?.mkdirs()
-        cryptoEngine.encryptFile(tempFile, encFile) { progress ->
-            _videoSaveProgress.value = (0.05f + progress * 0.95f).coerceIn(0f, 1f)
-        }
+        cryptoEngine.encryptFile(tempFile, encFile, onProgress = onProgress)
 
         // 3. Delete raw unencrypted temp file
         if (tempFile.exists()) {
@@ -269,7 +279,7 @@ class MediaSaveQueue(
         val item = MediaItem(
             id = id,
             filename = filename,
-            originalName = filename,
+            originalName = originalName ?: filename,
             mediaType = MediaType.VIDEO,
             mimeType = "video/mp4",
             encryptedPath = encFile.absolutePath,
@@ -279,7 +289,7 @@ class MediaSaveQueue(
             width = width,
             height = height,
             createdAt = timestamp,
-            albumId = AlbumEntity.ALBUM_CAMERA_ID
+            albumId = albumId
         )
 
         mediaRepository.insertMedia(item)
