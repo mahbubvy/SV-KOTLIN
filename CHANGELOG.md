@@ -13,7 +13,7 @@
 
 ### Build and validation
 - APK: `SecretVault-v1.1.1-debug.apk` (debug signed; Android 8.0 or newer).
-- 85 unit tests passed. CMF Phone 1 device tests passed for trim, one/multiple removed sections, cancellation, output playback decoding, original preservation, and incremented output names.
+- 85 unit tests passed. CMF Phone 1 device tests passed for trim, one/multiple removed sections, cancellation, output playback decoding, original preservation, incremented output names, sharing-provider reads, and preview error/Retry/Back recovery.
 - Saves use a bounded wake lock; Android may still stop a background process during long edits. Edited plaintext output is temporary in the private cache and is deleted after saving or on the next app start.
 
 ## 1.1.0 - 2026-10-01
