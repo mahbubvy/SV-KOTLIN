@@ -1,14 +1,16 @@
-# Spec: Local camera streaming test
+# Spec: Discoverable SV camera streaming
 
-Status: Debug prototype built. Authenticated Wi-Fi and generated-video decoding
-verified on CMF/Pixel. Live-camera and performance checks are pending; the user
-requested finishing the build before positioning the phones.
+Status: Scope revised for camera/home integration, persistent streaming PIN and
+optional Bluetooth-assisted discovery. Planning only. The existing debug
+prototype passed generated-video Wi-Fi checks, but the user reports live-camera
+failure; that failure is not diagnosed yet. Active backlog: tasks R1–R14.
 
 ## Objective
 
-Prove that the CMF Phone 1 can send a usable live rear-camera preview to
-SecretVault on the Pixel 5 over their shared Wi-Fi network. Test the transport
-and viewing experience before adding a permanent camera option or remote controls.
+Send the active SV camera view from CMF Phone 1 to SV on Pixel 5 over their shared
+Wi-Fi, with native discovery and separate PIN pairing. Stream starts inside the
+normal camera; View stream sits on vault home directly above Import. Optional
+BLE helps find nearby senders and obtain setup metadata; video remains on Wi-Fi.
 
 Confirmed by the user: CMF is the sender; Pixel 5 is the viewer.
 
@@ -16,20 +18,28 @@ Assumptions for review:
 - One sender and one viewer, both running a test build of SV.
 - Live video only. No microphone, media saving, remote shutter, or simultaneous recording.
 - Both apps stay in the foreground during the test.
-- A temporary test entry is acceptable; a permanent home/camera option comes later.
-- Manual connection details are acceptable for this first test. Automatic discovery
-  and QR pairing are deferred.
+- The requested camera Stream and home View stream entries replace manual
+  connection-string entry in the user-facing flow. The existing debug route may
+  remain diagnostic while implementation is verified.
+- QR pairing, hotspot/Wi-Fi Direct and cloud services remain out of scope.
+- Proposed defaults: six-digit sender streaming PIN, five failed attempts then
+  a 30-second sender-wide cooldown. PIN length/retry policy need review.
 
 ## Scope and behavior
 
-1. The unlocked sender starts a session deliberately and shows its local preview,
-   connection details, waiting/connected state, and a Stop action.
-2. The unlocked viewer enters the connection details and pairs with that session.
-   Joining the same Wi-Fi alone must not grant access.
+1. The unlocked sender taps Stream inside the normal camera. It configures a
+   separate persistent streaming PIN if missing, advertises its availability,
+   and shows waiting/connected state plus Stop.
+2. The unlocked viewer taps View stream above Import on root home, chooses an
+   available camera, enters its streaming PIN and pairs. Discovery alone must
+   not grant access; no pairing secret is included in advertisements.
 3. The viewer displays the live image with correct orientation and aspect ratio,
    fits the available screen, supports display rotation, and offers Disconnect.
-4. The connection carries encrypted video and authenticated session establishment.
-   Generate a fresh session secret; never use or transmit a vault PIN or vault key.
+4. The connection carries encrypted video and mutually confirmed PIN-based
+   authentication. Use a reviewed PAKE, fresh attempts/session secrets and actual
+   TLS identity binding; never send the PIN or a reusable PIN proof. A configured
+   sender PIN persists separately, encrypted by its own Keystore key. Viewer PIN
+   is not saved. Vault PIN/key/storage are outside this flow.
 5. Leaving the test screen, explicitly locking the vault, backgrounding the app,
    or ending the session releases the camera/network resources. Existing
    keep-vault-open behavior must not silently restart broadcasting.
@@ -37,6 +47,15 @@ Assumptions for review:
    do not keep displaying an old image as though it were live.
 7. No internet service or cloud upload is required. Test with internet unavailable
    while the local Wi-Fi link remains available.
+8. A single camera owner supplies preview and streaming. Selected lens, zoom,
+   crop, orientation and mirroring match; camera UI controls are not streamed.
+   Stream quality is independent of saved recording defaults. Recording is
+   unavailable while streaming in this increment; Stop restores normal controls.
+9. Wi-Fi/BLE sightings share a fresh session ID and appear once. Bluetooth is
+   optional; denied/off/unsupported states preserve Wi-Fi discovery. A BLE sighting
+   on another Wi-Fi cannot itself establish a video route or bypass authentication.
+10. PIN change ends the active session. Restart rejects stale authorization and
+    never silently downgrades to the debug random-invitation protocol.
 
 ## Performance targets
 
@@ -54,7 +73,10 @@ Assumptions for review:
 - Kotlin 2.1.0, Android SDK 26 minimum / 35 target, Compose, coroutines 1.10.1.
 - CameraX 1.4.1 handles normal camera sessions.
 - CMF 1080p60 uses a custom Camera2/MediaRecorder path.
-- No streaming dependency or INTERNET permission is currently declared.
+- Native TLS/H.264 streaming helpers and INTERNET/ACCESS_NETWORK_STATE permissions
+  now exist. No PAKE or Bluetooth/discovery implementation is installed yet.
+- Preserve generated-fixture evidence in tasks/camera-stream-validation.md;
+  diagnose live camera before promoting the revised UX.
 
 Relevant source:
 - `app/src/main/java/com/secretvault/app/core/camera/`: camera ownership and configuration.
@@ -65,7 +87,8 @@ Relevant source:
 - `app/src/androidTest/`: Android integration tests.
 - `SPEC-camera-stream-test.md`: this specification.
 
-The requested implementation plan proposes the transport for review.
+The revised implementation plan proposes camera integration, discovery and
+PIN-authentication details for review.
 Prefer existing/native facilities when they meet these criteria. Any new
 dependency must have a stated need, authoritative documentation, and a pinned
 version. The sender must have one camera owner; do not open competing sessions.
@@ -134,7 +157,8 @@ Always: protect pairing/session secrets, bound network input and buffering, repo
 errors, release resources, preserve vault data, and verify on both phones.
 
 Ask first: changes to this scope/performance targets, external services,
-simultaneous recording, permanent navigation options, or release publication.
+simultaneous recording, or release publication. The camera Stream and root-home
+View stream placement are requested in this conversation and need no repeat approval.
 Transport/dependency choices are presented in the technical plan for review.
 
 Never: broadcast automatically, expose media files/keys/PINs, accept an unpaired
@@ -146,14 +170,16 @@ uninstall the vault, or claim hardware support without a device test.
 - The CMF live camera image is visibly received inside SV on the Pixel over Wi-Fi.
 - The measured quality, startup, sustained-viewing, and delay targets above pass,
   or revised targets have been reviewed explicitly.
-- Pairing rejects incorrect session details; restarting invalidates the old session.
+- Device discovery leads to PIN-authenticated viewing; wrong PIN, impersonation,
+  replay and stale sessions fail before any media is sent.
 - Orientation, disconnect, error display, and lifecycle cleanup checks pass.
 - Existing vault contents and normal camera behavior remain intact.
 - A test APK and a short evidence-backed validation report are available.
 
 ## Open questions
 
-- User review of the implementation plan and proposed targets before building.
-- Pixel connection details for installation/testing; only the CMF is currently
-  present in ADB (two connections to the same physical device).
-- Proposed transport and ordered work: `tasks/plan.md` and `tasks/todo.md`.
+- Exact stage/error of the reported live-camera failure; device logs still needed.
+- Proposed PIN length/retry policy and a reviewed PAKE dependency/transcript.
+- Current ADB connections, nonprivate camera positioning and BLE capability
+  must be observed again when implementing; earlier addresses are not assumed valid.
+- Active plan and dependencies: `tasks/plan.md` and `tasks/todo.md`, R1–R14.

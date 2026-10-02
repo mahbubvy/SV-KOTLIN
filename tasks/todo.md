@@ -1,4 +1,240 @@
-# Tasks: Local camera streaming test
+# Tasks: Discoverable SV camera streaming
+
+Updated: 2026-10-02. R1–R14 are the active revised backlog; app changes are not
+started by this planning request. The prior checklist is retained below as
+prototype evidence. Unfinished prototype acceptance is carried into these tasks.
+
+See [plan.md](plan.md) and [spec](../SPEC-camera-stream-test.md).
+Source paths are relative to app/src/main/java/com/secretvault/app/ unless
+prefixed by another root. New file/class names are proposals: reuse equivalents.
+
+## Verification commands
+
+Run from K:\gemini with Android Studio's JBR configured as in the spec.
+
+- U: `& .\gradlew.bat :app:testDebugUnitTest` (use a focused --tests filter during a slice).
+- B: `& .\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest`.
+- L: `& .\gradlew.bat :app:lintDebug`; compare changed-code findings with the recorded baseline.
+- D: install with `adb -s <observed serial> install -r <built APK>`, then
+  `adb -s <observed serial> shell am instrument -w -r -e class <implemented class> com.secretvault.app.test/androidx.test.runner.AndroidJUnitRunner`.
+
+Every device verification below uses D when its test class exists, plus the
+specified manual check. Observe serials first. No vault-data clear, uninstall,
+private-media fixture, PIN in chat or release/push. Physical camera checks wait
+until the user positions the phones; build/fixture results are not a substitute.
+
+## R1: Reproduce and fix the current live-camera failure
+
+- [ ] Capture the failing stage on CMF and repair the cause before changing discovery or UI.
+
+Acceptance:
+- [ ] Record camera/codec capability results and the exact failure stage; no speculative cause is marked confirmed.
+- [ ] CMF rear-camera frames encode and visibly render on Pixel through the existing diagnostic flow.
+- [ ] A focused regression check catches the cause; the ordinary camera reopens after Stop.
+
+Verification: U/B; reproduce and rerun on the positioned phones with scoped logcat and a nonprivate scene.
+Dependencies: None. Estimated scope: Medium (at most five listed files).
+Likely files: core/stream/CameraStreamEncoder.kt; core/stream/StreamSession.kt; androidTest/.../StreamCodecDeviceTest.kt; tasks/camera-stream-validation.md.
+
+## R2: Separate encoding from camera ownership
+
+- [ ] Make the encoder consume an input Surface without independently opening a camera.
+
+Acceptance:
+- [ ] Encoder exposes its input Surface/configuration/frames and owns only codec resources.
+- [ ] Existing debug capture remains usable for comparison; the production source has one camera owner.
+- [ ] Stop, constructor failure and late callbacks release codec/input Surface and preserve queue limits.
+
+Verification: U/B; generated Surface-input encoding/decoding check and the R1 live diagnostic.
+Dependencies: R1. Estimated scope: Small/medium (at most five listed files).
+Likely files: core/stream/CameraStreamEncoder.kt; core/stream/StreamSession.kt; androidTest/.../StreamCodecDeviceTest.kt.
+
+## R3: Share the CameraX preview
+
+- [ ] Prove GPU rendering of one CameraX camera texture to the local preview and stream encoder.
+
+Acceptance:
+- [ ] Native CameraEffect/SurfaceProcessor feeds preview and encoder with no second camera acquisition.
+- [ ] Initial 720p30 output renders on Pixel while the local preview remains usable.
+- [ ] SurfaceRequest/SurfaceOutput release and rebind callbacks cannot leak or render a stale source.
+
+Verification: U/B; proposed StreamPreviewDeviceTest with a checkerboard/timer; inspect actual output size/FPS.
+Dependencies: R2. Estimated scope: Medium (at most five listed files).
+Likely files: core/stream/StreamPreviewRenderer.kt (proposed); core/camera/CameraManager.kt; core/stream/CameraStreamEncoder.kt; ui/camera/components/CameraPreviewView.kt; androidTest/.../StreamPreviewDeviceTest.kt (proposed).
+
+## R4: Share the CMF native preview
+
+- [ ] Connect the existing CMF 1080p60 vendor session to the renderer without opening a second camera.
+
+Acceptance:
+- [ ] CMF native local preview and 720p stream derive from the same sensor frames.
+- [ ] The verified session/output combination is preserved or any necessary change is explicitly device-tested.
+- [ ] Stream Stop restores the prior ordinary 1080p60 recording path and releases renderer outputs.
+
+Verification: U/B; CMF native-path instrumentation, Pixel receive check and short nonprivate recording regression.
+Dependencies: R3. Estimated scope: Medium (at most five listed files).
+Likely files: core/camera/CmfHighFpsCameraView.kt; core/stream/StreamPreviewRenderer.kt; core/camera/CameraManager.kt; androidTest/.../StreamPreviewDeviceTest.kt.
+
+## R5: Preserve the actual camera view through changes
+
+- [ ] Match camera content and handle configuration changes in an ordered, bounded stream.
+
+Acceptance:
+- [ ] Selected rear/front lens, live zoom, crop, mirroring and orientation match local camera content; controls are not sent.
+- [ ] Lens/rebind/orientation changes deliver valid ordered configuration and a fresh keyframe before dependent frames; stale camera callbacks are ignored.
+- [ ] Receiver preserves aspect ratio through rotation; errors are visible instead of displaying a different lens or an old frame.
+
+Verification: U/B; transform boundary checks plus two-phone asymmetric test chart, lens/zoom and portrait/landscape rebinds.
+Dependencies: R3, R4. Estimated scope: Medium (at most five listed files).
+Likely files: core/stream/StreamPreviewRenderer.kt; core/stream/StreamProtocol.kt; core/stream/StreamSession.kt; core/stream/StreamDecoder.kt; androidTest/.../StreamPreviewDeviceTest.kt.
+
+### Checkpoint after R5: Active camera proof
+
+- [ ] Relevant build/checks and actual-device acceptance pass; findings are recorded.
+- [ ] Review the evidence before promoting the next slice; unresolved hardware/security results remain pending.
+
+## R6: Store a separate streaming PIN
+
+- [ ] Add persistent sender configuration without touching the vault unlock PIN or media key.
+
+Acceptance:
+- [ ] Streaming PIN is set/changeable while unlocked and persists across process restart; proposed policy is six numeric digits.
+- [ ] PIN/secret is encrypted with a dedicated Keystore AES-GCM key and random IV; values are absent from logs/backups/discovery.
+- [ ] Malformed/missing/corrupt configuration fails explicitly; changing the PIN ends an active stream and invalidates old pairing.
+
+Verification: U/B; proposed StreamPinDeviceTest covering restart, change, invalid input and storage corruption.
+Dependencies: None; camera work does not depend on PIN storage. Estimated scope: Medium (at most five listed files).
+Likely files: core/stream/StreamPinManager.kt (proposed); ui/stream/StreamPinDialog.kt (proposed); androidTest/.../StreamPinDeviceTest.kt (proposed).
+
+## R7: Prove secure PIN pairing
+
+- [ ] Select a reviewed PAKE implementation and integrate certificate-bound mutual confirmation into native TLS before exposing public discovery.
+
+Acceptance:
+- [ ] Chosen library/version/license/advisories/size and exact transcript are documented; measured pairing succeeds on both phones with the same PIN.
+- [ ] Wrong PIN, altered TLS identity/transcript, replay/reflection, malformed input and protocol downgrade fail before media; the PIN/reusable proof is never sent.
+- [ ] Pairing input/attempts/time are bounded, sender-wide retry cooldown survives restart, only one viewer is authorized, and session restart requires fresh proofs.
+
+Verification: B; expanded StreamTlsDeviceTest plus PAKE negative cases, two-phone handshake timings and explicit security review before R8.
+Dependencies: R6. Estimated scope: Medium (at most five listed files).
+Likely files: gradle/libs.versions.toml; app/build.gradle.kts; core/stream/StreamPairing.kt (proposed); core/stream/StreamTls.kt; androidTest/.../StreamTlsDeviceTest.kt.
+
+### Checkpoint after R7: Authenticated pairing
+
+- [ ] Relevant build/checks and actual-device acceptance pass; findings are recorded.
+- [ ] Review the evidence before promoting the next slice; unresolved hardware/security results remain pending.
+
+## R8: Discover and pair over Wi-Fi
+
+- [ ] Build a debug end-to-end device list using NSD and the verified PIN handshake.
+
+Acceptance:
+- [ ] CMF appears on Pixel over the shared Wi-Fi with conflict-safe names and a fresh session identifier.
+- [ ] Only bounded public metadata is advertised; endpoints/fingerprints are treated as untrusted and authenticated by R7 before video.
+- [ ] Service loss, stale details, second-viewer/busy, client isolation and registration/resolve failure produce usable states; Stop removes the service.
+
+Verification: U/B; proposed StreamDiscoveryDeviceTest over actual Wi-Fi, duplicate names, restart and no internet; protocol validation tests.
+Dependencies: R5, R7. Estimated scope: Medium (at most five listed files).
+Likely files: core/stream/StreamDiscovery.kt (proposed); core/stream/StreamSession.kt; ui/stream/CameraStreamScreen.kt; test/.../StreamProtocolTest.kt; androidTest/.../StreamDiscoveryDeviceTest.kt (proposed).
+
+## R9: Add Stream inside the normal camera
+
+- [ ] Expose the sender through the existing camera UI and active owner.
+
+Acceptance:
+- [ ] A labeled Stream action configures the PIN if missing, starts intentionally and shows Waiting/Viewer connected/Stop without navigating to a separate camera.
+- [ ] Record is disabled while streaming with a reason; camera settings/defaults are restored after Stop.
+- [ ] Close, failure or PIN change stops broadcast; reopening with keep-vault-open never automatically starts it.
+
+Verification: U/B; actual camera UI walkthrough on CMF and Pixel, permission/error states and ordinary camera reopen.
+Dependencies: R8. Estimated scope: Medium (at most five listed files).
+Likely files: ui/camera/CameraScreen.kt; ui/camera/components/CameraTopBar.kt; ui/camera/CameraViewModel.kt; core/stream/StreamSession.kt; core/camera/CameraManager.kt.
+
+## R10: Add Home View stream above Import
+
+- [ ] Expose the receiver with the placement specified by the user and a device-list/PIN/view flow.
+
+Acceptance:
+- [ ] Root home shows labeled View stream directly above Import; it is absent in folders/selection mode and inaccessible when the vault is locked.
+- [ ] Tap opens available cameras; select → masked PIN dialog → encrypted live view. Receiver never opens its camera/microphone.
+- [ ] Search/empty/busy/PIN failure/live/disconnected states, cancel/back/Disconnect and rotated fit are reachable with keyboard and large text.
+
+Verification: U/B; click through both roles, locked navigation, folder/selection state, keyboard/landscape and PIN retry using actual phones.
+Dependencies: R9. Estimated scope: Medium (at most five listed files).
+Likely files: ui/gallery/GalleryScreen.kt; ui/navigation/Screen.kt; ui/navigation/VaultNavGraph.kt; ui/stream/CameraStreamScreen.kt; ui/stream/StreamPinDialog.kt.
+
+### Checkpoint after R10: Complete Wi-Fi UX
+
+- [ ] Relevant build/checks and actual-device acceptance pass; findings are recorded.
+- [ ] Review the evidence before promoting the next slice; unresolved hardware/security results remain pending.
+
+## R11: Advertise optional Bluetooth assistance
+
+- [ ] Provide public setup metadata using native BLE advertisement and bounded read-only GATT.
+
+Acceptance:
+- [ ] Advertising/peripheral capability is checked on both phones; permission denial or unsupported hardware leaves Wi-Fi working.
+- [ ] Legacy advertising payload fits its limit; longer public metadata is read through bounded GATT and contains no secret/PIN.
+- [ ] Bluetooth advertising/GATT exist only during an explicit stream, use the same rotating session ID as NSD and stop on exit.
+
+Verification: U/B; proposed StreamBleDeviceTest on CMF and Pixel with Bluetooth off, permissions denied/revoked and oversized metadata.
+Dependencies: R10. Estimated scope: Medium (at most five listed files).
+Likely files: core/stream/StreamBleDiscovery.kt (proposed); core/stream/StreamSession.kt; ui/camera/CameraScreen.kt; app/src/main/AndroidManifest.xml; androidTest/.../StreamBleDeviceTest.kt (proposed).
+
+## R12: Merge Bluetooth discoveries into the viewer list
+
+- [ ] Add a filtered short BLE scan to the existing list and retain the same PIN-authenticated Wi-Fi transport.
+
+Acceptance:
+- [ ] Wi-Fi/BLE sightings for the same session produce one list entry and share the R7 pairing path.
+- [ ] Scan is bounded, stops after selection/exit, and supports Refresh; Bluetooth denial/off falls back to NSD.
+- [ ] Different-network/unreachable sightings explain the Wi-Fi requirement; no video or PIN travels in BLE advertisements/GATT.
+
+Verification: U/B; BLE-only discovery, dual sightings, repeated Refresh/rotation, denial and phones on different Wi-Fi; compare discovery timing.
+Dependencies: R11. Estimated scope: Medium (at most five listed files).
+Likely files: core/stream/StreamBleDiscovery.kt; core/stream/StreamDiscovery.kt; ui/stream/CameraStreamScreen.kt; core/stream/StreamSession.kt; androidTest/.../StreamBleDeviceTest.kt.
+
+### Checkpoint after R12: Bluetooth comparison
+
+- [ ] Relevant build/checks and actual-device acceptance pass; findings are recorded.
+- [ ] Review the evidence before promoting the next slice; unresolved hardware/security results remain pending.
+
+## R13: Verify termination and restart
+
+- [ ] Exercise resource ownership across camera, viewer, discovery, pairing and app lifecycle.
+
+Acceptance:
+- [ ] Stop/Disconnect/Back/lock/background/Surface loss/Wi-Fi loss/permission revocation close all media/network/NSD/BLE resources despite late callbacks.
+- [ ] Queue overflow and stalled peers end visibly; no indefinite delay/memory growth or automatic resume/reconnect occurs.
+- [ ] Fresh session IDs/proofs reject stale/replayed authorization; repeated start/stop and a second viewer do not leak resources or bypass cooldown.
+
+Verification: U/B/L; proposed StreamLifecycleDeviceTest, slow-peer/network interruption tests, real lock/background and repeated-cycle checks.
+Dependencies: R10, R12. Estimated scope: Medium (at most five listed files).
+Likely files: core/stream/StreamSession.kt; core/stream/StreamDiscovery.kt; core/stream/StreamBleDiscovery.kt; ui/stream/CameraStreamScreen.kt; androidTest/.../StreamLifecycleDeviceTest.kt (proposed).
+
+## R14: Measure performance and regressions
+
+- [ ] Produce evidence and a reviewable debug APK after the complete flow works.
+
+Acceptance:
+- [ ] Report actual coded size/profile, encoded/received/rendered FPS, discovery/PIN/first-frame timings, 20 visual-delay samples and five-minute stability; no unperformed target is marked passed.
+- [ ] After streaming, CMF 1080p60/Pixel supported defaults, photo/video capture, playback, sharing, backup navigation and keep-open behavior pass checks without touching private media.
+- [ ] Build/unit/relevant device checks and changed-code lint review pass; scoped accessibility/UI and security review results plus limitations are recorded.
+
+Verification: U/B/L and git diff --check; two-phone Wi-Fi test without internet/ADB relay, external timer measurement and installed APK hash.
+Dependencies: R13. Estimated scope: Medium (at most five listed files).
+Likely files: tasks/camera-stream-validation.md; tasks/todo.md; SPEC-camera-stream-test.md.
+
+### Checkpoint after R14: Complete stream validation
+
+- [ ] Relevant build/checks and actual-device acceptance pass; findings are recorded.
+- [ ] Review the evidence before promoting the next slice; unresolved hardware/security results remain pending.
+
+## Historical prototype checklist
+
+The original Task 1–7 status is retained below. Do not execute its old manual
+pairing/Settings UI plan as the active UX; use R1–R14 above. Existing unchecked
+live/lifecycle/performance items have not been marked completed.
 
 Status: Debug prototype built and installed as an update on both phones. Live
 camera, UI and sustained-performance checks remain pending at the user's request. See
