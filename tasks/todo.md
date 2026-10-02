@@ -69,11 +69,18 @@ Files: core/stream/StreamEncoder.kt; core/stream/CameraStreamEncoder.kt; android
 
 ## R3: Share the CameraX preview
 
-- [ ] Prove GPU rendering of one CameraX camera texture to the local preview and stream encoder.
+- [x] Prove GPU rendering of one CameraX camera texture to the local preview and stream encoder.
+
+Progress: the native EGL SurfaceProcessor is attached to the existing CameraManager
+Preview via CameraEffect. Shared-source 720p live encode/decode and local PreviewView
+STREAMING checks pass in both phone directions (minimum sampled 28 FPS).
+Photo-mode streaming requests 30 FPS; normal unstreamed capture is unchanged.
+Source release callbacks and current-input checks protect CameraX ownership.
+Lens/rebind geometry and real-image comparison remain R5 device checks.
 
 Acceptance:
-- [ ] Native CameraEffect/SurfaceProcessor feeds preview and encoder with no second camera acquisition.
-- [ ] Initial 720p30 output renders on Pixel while the local preview remains usable.
+- [x] Native CameraEffect/SurfaceProcessor feeds preview and encoder with no second camera acquisition.
+- [x] Initial 720p30 output renders on Pixel while the local preview remains usable.
 - [ ] SurfaceRequest/SurfaceOutput release and rebind callbacks cannot leak or render a stale source.
 
 Verification: U/B; proposed StreamPreviewDeviceTest with a checkerboard/timer; inspect actual output size/FPS.
@@ -84,9 +91,16 @@ Likely files: core/stream/StreamPreviewRenderer.kt (proposed); core/camera/Camer
 
 - [ ] Connect the existing CMF 1080p60 vendor session to the renderer without opening a second camera.
 
+Progress: the existing CMF session now feeds a GPU SurfaceTexture in place of
+its direct preview target, retaining the preview + MediaRecorder HAL outputs.
+The renderer supplies local preview and 720p30 encoder. CMF → Pixel shared native
+stream and disconnect pass (minimum sampled sender/viewer 28/28 FPS). Generated
+colour-chart codec/rotation checks pass on both phones. Ordinary recording after
+Stop and source rebind/lifecycle stress remain to verify before completing R4.
+
 Acceptance:
-- [ ] CMF native local preview and 720p stream derive from the same sensor frames.
-- [ ] The verified session/output combination is preserved or any necessary change is explicitly device-tested.
+- [x] CMF native local preview and 720p stream derive from the same sensor frames.
+- [x] The verified session/output combination is preserved or any necessary change is explicitly device-tested.
 - [ ] Stream Stop restores the prior ordinary 1080p60 recording path and releases renderer outputs.
 
 Verification: U/B; CMF native-path instrumentation, Pixel receive check and short nonprivate recording regression.

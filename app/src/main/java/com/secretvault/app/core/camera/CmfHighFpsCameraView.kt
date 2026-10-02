@@ -57,13 +57,18 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
     private var onError: ((String) -> Unit)? = null
     private var focusReset: Runnable? = null
     private var torchEnabled = false
+    private var streamRenderer: com.secretvault.app.core.stream.StreamPreviewRenderer? = null
+    private var renderedPreview: com.secretvault.app.core.stream.StreamPreviewRenderer.NativeInput? = null
+    private var cameraGeneration = 0
 
     init {
         surfaceTextureListener = this
     }
 
-    fun start(includeAudio: Boolean, orientationHint: Int, onReady: () -> Unit, onError: (String) -> Unit) {
+    fun start(includeAudio: Boolean, orientationHint: Int, onReady: () -> Unit, onError: (String) -> Unit,
+              streamRenderer: com.secretvault.app.core.stream.StreamPreviewRenderer? = null) {
         stopCamera()
+        this.streamRenderer = streamRenderer
         this.includeAudio = includeAudio
         this.orientationHint = orientationHint
         this.onReady = onReady
@@ -207,10 +212,22 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
             return
         }
         try {
+            val generation = cameraGeneration
             cameraManager.openCamera(CAMERA_ID, object : CameraDevice.StateCallback() {
-                override fun onOpened(camera: CameraDevice) { cameraDevice = camera; createCmfSession() }
-                override fun onDisconnected(camera: CameraDevice) { camera.close(); cameraDevice = null; reportError("CMF rear camera disconnected.") }
-                override fun onError(camera: CameraDevice, error: Int) { camera.close(); cameraDevice = null; reportError("CMF rear camera error $error.") }
+                override fun onOpened(camera: CameraDevice) {
+                    if (!active || generation != cameraGeneration) { camera.close(); return }
+                    cameraDevice = camera; createCmfSession()
+                }
+                override fun onDisconnected(camera: CameraDevice) {
+                    camera.close()
+                    if (generation != cameraGeneration) return
+                    cameraDevice = null; reportError("CMF rear camera disconnected.")
+                }
+                override fun onError(camera: CameraDevice, error: Int) {
+                    camera.close()
+                    if (generation != cameraGeneration) return
+                    cameraDevice = null; reportError("CMF rear camera error $error.")
+                }
             }, backgroundHandler)
         } catch (error: Exception) {
             reportError("Could not open CMF rear camera: ${error.message ?: error.javaClass.simpleName}")
@@ -223,9 +240,17 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
         val texture = surfaceTexture ?: return
         val handler = backgroundHandler ?: return
         try {
-            texture.setDefaultBufferSize(VIDEO_WIDTH, VIDEO_HEIGHT)
+            val renderer = streamRenderer
+            texture.setDefaultBufferSize(if (renderer == null) VIDEO_WIDTH else VIDEO_HEIGHT,
+                if (renderer == null) VIDEO_HEIGHT else VIDEO_WIDTH)
             previewSurface?.release()
-            previewSurface = Surface(texture)
+            val displaySurface = Surface(texture)
+            if (renderer != null) {
+                renderedPreview = renderer.nativePreview(displaySurface, android.util.Size(VIDEO_WIDTH, VIDEO_HEIGHT),
+                    android.util.Size(VIDEO_HEIGHT, VIDEO_WIDTH))
+                previewSurface = requireNotNull(renderedPreview).surface
+                displaySurface.release()
+            } else previewSurface = displaySurface
             prepareRecorder()
             val preview = requireNotNull(previewSurface)
             val recorder = requireNotNull(recorderSurface)
@@ -236,7 +261,7 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
                 executor,
                 object : CameraCaptureSession.StateCallback() {
                     override fun onConfigured(session: CameraCaptureSession) {
-                        if (!active || cameraDevice == null) { session.close(); return }
+                        if (!active || cameraDevice !== camera) { session.close(); return }
                         captureSession = session
                         sessionReady = true
                         applyRepeatingRequest()
@@ -317,6 +342,7 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
     }
 
     private fun stopCamera() {
+        cameraGeneration++
         sessionReady = false
         focusReset?.let { backgroundHandler?.removeCallbacks(it) }
         focusReset = null
@@ -328,7 +354,8 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
         mediaRecorder = null
         recorderSurface?.release()
         recorderSurface = null
-        previewSurface?.release()
+        if (renderedPreview != null) renderedPreview?.close() else previewSurface?.release()
+        renderedPreview = null
         previewSurface = null
         if (!recording) outputFile?.delete()
     }
@@ -346,6 +373,9 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
 
     override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) { configureTransform(width, height); if (active) openCamera() }
     override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = configureTransform(width, height)
-    override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean = true
+    override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+        stopCamera()
+        return true
+    }
     override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
 }

@@ -39,7 +39,8 @@ class StreamSession(private val context: Context) : Closeable {
     private var callback: ConnectivityManager.NetworkCallback? = null
     @Volatile private var host: StreamTls.Host? = null
     @Volatile private var socket: Socket? = null
-    @Volatile private var encoder: CameraStreamEncoder? = null
+    @Volatile private var encoder: Closeable? = null
+    @Volatile private var requestKeyFrame: (() -> Unit)? = null
     @Volatile private var decoder: StreamDecoder? = null
     private val mutableState = MutableStateFlow(StreamState())
     val state: StateFlow<StreamState> = mutableState.asStateFlow()
@@ -61,6 +62,24 @@ class StreamSession(private val context: Context) : Closeable {
     }
 
     fun send(preview: Surface, displayDegrees: Int) {
+        sendSource { onConfig, onFrame, onError ->
+            CameraStreamEncoder(context, preview, displayDegrees, onConfig, onFrame, onError).also {
+                requestKeyFrame = it::requestKeyFrame
+            }
+        }
+    }
+
+    fun sendShared(renderer: StreamPreviewRenderer, rotation: Int, viewAspect: Float) {
+        sendSource { onConfig, onFrame, onError ->
+            val video = StreamEncoder(rotation, onConfig, onFrame, onError)
+            try { renderer.attachEncoder(video.inputSurface, rotation, viewAspect) }
+            catch (error: Exception) { video.close(); throw error }
+            requestKeyFrame = video::requestKeyFrame
+            Closeable { try { renderer.detachEncoder() } finally { video.close() } }
+        }
+    }
+
+    private fun sendSource(startSource: ((StreamConfig) -> Unit, (StreamFrame) -> Unit, (Throwable) -> Unit) -> Closeable) {
         mutableState.value = StreamState("Starting camera…", busy = true)
         scope.launch {
             try {
@@ -71,18 +90,18 @@ class StreamSession(private val context: Context) : Closeable {
                     if (closed.get()) { listener.close(); return@launch }
                     host = listener
                 }
-                val camera = CameraStreamEncoder(context, preview, displayDegrees,
-                    onConfig = { config ->
+                val camera = startSource(
+                    { config ->
                         if (!closed.get()) {
                             configReady.complete(config)
                             mutableState.update { if (closed.get()) it else it.copy(config = config) }
                         }
-                    }, onFrame = { frame ->
+                    }, { frame ->
                         encoded.incrementAndGet()
                         if (publishing.get()) {
                             try { frames.offer(frame) } catch (error: Exception) { end(error.message ?: "Video connection failed") }
                         }
-                    }, onError = { end("Camera stream could not start. ${it.message ?: "Try again."}") })
+                    }, { end("Camera stream could not start. ${it.message ?: "Try again."}") })
                 synchronized(this@StreamSession) {
                     if (closed.get()) { camera.close(); return@launch }
                     encoder = camera
@@ -106,7 +125,7 @@ class StreamSession(private val context: Context) : Closeable {
                             writeStarted.set(SystemClock.elapsedRealtime())
                             StreamProtocol.writeConfig(output, config)
                             writeStarted.set(0)
-                            frames.clear(); publishing.set(true); camera.requestKeyFrame()
+                            frames.clear(); publishing.set(true); requestKeyFrame?.invoke()
                             var sequence = 0L
                             var waitingForKey = true
                             var lastFrame = SystemClock.elapsedRealtime()

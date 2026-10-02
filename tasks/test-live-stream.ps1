@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory)][string]$Sender,
     [Parameter(Mandatory)][string]$Viewer,
+    [string]$TestClass = 'com.secretvault.app.stream.StreamLiveUiDeviceTest#streamsActualCameraThroughUi',
+    [ValidateSet('camerax', 'native')][string]$CameraSource = 'camerax',
     [string]$Adb = "$env:LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe"
 )
 $ErrorActionPreference = 'Stop'
@@ -9,7 +11,6 @@ $logDirectory = Join-Path $workspace 'scratch'
 New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
 $hostLog = Join-Path $logDirectory 'stream-live-host.log'
 $viewerLog = Join-Path $logDirectory 'stream-live-viewer.log'
-$testClass = 'com.secretvault.app.stream.StreamLiveUiDeviceTest#streamsActualCameraThroughUi'
 $runner = 'com.secretvault.app.test/androidx.test.runner.AndroidJUnitRunner'
 $hostProcess = $null
 $passed = $false
@@ -18,7 +19,7 @@ try {
         & $Adb -s $device shell run-as com.secretvault.app rm -f cache/stream-test-invitation
         if ($LASTEXITCODE -ne 0) { throw 'Debug app is unavailable' }
     }
-    $arguments = @('-s', $Sender, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', $testClass, '-e', 'streamRole', 'send', $runner)
+    $arguments = @('-s', $Sender, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', $testClass, '-e', 'streamRole', 'send', '-e', 'cameraSource', $CameraSource, $runner)
     $hostProcess = Start-Process -FilePath $Adb -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $hostLog -RedirectStandardError (Join-Path $logDirectory 'stream-live-host-error.log')
     $pairingText = $null
     for ($attempt = 0; $attempt -lt 80; $attempt++) {

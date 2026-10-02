@@ -26,6 +26,8 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.MeteringPointFactory
 import androidx.camera.core.Preview
 import androidx.camera.core.SurfaceOrientedMeteringPointFactory
+import androidx.camera.core.UseCase
+import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FileOutputOptions
 import androidx.camera.video.QualitySelector
@@ -97,7 +99,8 @@ class CameraManager(
         onRearLensOptions: (List<CameraLensOption>) -> Unit,
         onVideoConfigured: (List<VideoMode>, VideoMode) -> Unit,
         onCameraReady: () -> Unit,
-        onCameraError: (String) -> Unit
+        onCameraError: (String) -> Unit,
+        streamRenderer: com.secretvault.app.core.stream.StreamPreviewRenderer? = null
     ) {
         if (activeRecording != null || _isRecording.value) return
         val session = ++cameraSession
@@ -115,6 +118,9 @@ class CameraManager(
             val physicalCameraId = selectedRearLensId
                 ?.takeIf { lensFacing == LensFacing.BACK && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P }
             val previewBuilder = Preview.Builder()
+            if (streamRenderer != null && cameraMode == CameraMode.PHOTO) {
+                previewBuilder.setTargetFrameRate(Range(30, 30))
+            }
             if (cameraMode == CameraMode.VIDEO) {
                 previewBuilder.setTargetRotation(videoOrientation.targetRotation)
             }
@@ -133,6 +139,12 @@ class CameraManager(
                 }.orEmpty()
                 onRearLensOptions(rearLensOptions)
                 val selectedCameraSelector = createCameraSelector(lensFacing, selectedRearLensId)
+                fun bind(capture: UseCase?): Camera? {
+                    val group = UseCaseGroup.Builder().addUseCase(requireNotNull(preview))
+                    capture?.let(group::addUseCase)
+                    streamRenderer?.let { group.addEffect(it.effect) }
+                    return cameraProvider?.bindToLifecycle(lifecycleOwner, selectedCameraSelector, group.build())
+                }
 
                 if (cameraMode == CameraMode.PHOTO) {
                     val imageCaptureBuilder = ImageCapture.Builder()
@@ -157,12 +169,7 @@ class CameraManager(
                     imageCapture = imageCaptureBuilder.build()
                     videoCapture = null
 
-                    camera = cameraProvider?.bindToLifecycle(
-                        lifecycleOwner,
-                        selectedCameraSelector,
-                        preview,
-                        imageCapture
-                    )
+                    camera = bind(imageCapture)
                 } else {
                     imageCapture = null
                     val cameraInfo = selectedCameraSelector.filter(availableInfos).first()
@@ -215,7 +222,8 @@ class CameraManager(
                             onError = { error ->
                                 cameraReady = false
                                 onCameraError(error)
-                            }
+                            },
+                            streamRenderer = streamRenderer
                         )
                         return@addListener
                     }
@@ -234,12 +242,7 @@ class CameraManager(
                     videoCapture = videoCaptureBuilder.build()
                     Log.i("VaultCamera", "Video target: $size, ${selectedMode.fps} fps; supported: $supportedModes")
 
-                    camera = cameraProvider?.bindToLifecycle(
-                        lifecycleOwner,
-                        selectedCameraSelector,
-                        preview,
-                        videoCapture
-                    )
+                    camera = bind(videoCapture)
                 }
                 if (lensFacing == LensFacing.BACK && selectedRearLensId == null) {
                     camera?.cameraInfo?.zoomState?.value?.let { state ->

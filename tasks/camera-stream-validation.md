@@ -225,3 +225,34 @@ The runner reopens SV after finishing so an unlocked phone remains awake in the 
   unchanged. No dependency or device-specific role rule was added.
 - APK SHA-256:
   `23989B17729897509641D4089AEF4555D2C91C91B856F83153781D519ACC58C3`.
+
+## Shared active camera source — 2026-10-02
+
+- StreamPreviewRenderer uses native EGL/GLES and CameraX's SurfaceProcessor /
+  CameraEffect hook. The existing CameraManager remains the camera owner.
+  CameraX output transforms are applied to the local preview and stream; the
+  stream applies the local view's centered crop and fits that content without
+  stretching. No screenshot copying, second camera or dependency was introduced.
+- CMF native 1080p60 uses a GPU input in place of its direct preview Surface,
+  retaining the vendor preview + MediaRecorder output combination. Native
+  source callbacks now reject stale camera generations after Stop/restart.
+- Shared-camera tests passed with local CameraX preview STREAMING, live H.264
+  rendering and disconnect cleanup:
+  Pixel CameraX → CMF and CMF CameraX → Pixel minimum sampled FPS 28/28;
+  CMF native 60 FPS → Pixel minimum sampled FPS 28/28 after the rotation fix.
+  Sender samples 10 seconds; viewer samples 15 seconds.
+- The first Pixel photo-mode source supplied 13 FPS. Requesting Preview's fixed
+  30 FPS target during photo-mode streaming brought both sampled counters to 28.
+  Normal nonstreamed capture settings remain unchanged.
+- A generated four-colour chart caught incorrect pre-rotation in the GPU encoder
+  path. Corrected the GL rotation direction. Both phones pass the same generated
+  Surface → GPU → H.264 → decoder → rotation-metadata colour-order check.
+  Bitmap reads in this test inspect only its generated pixels, never live camera
+  frames or private media; no screenshot protection was disabled.
+- 90 unit tests and APK builds pass. Lint before the CMF adapter change reported
+  the existing 41-error/113-warning baseline, with no renderer or session finding.
+  CMF source-loss callbacks/rebinds, real-image lens/crop comparison and ordinary
+  recording after Stop remain acceptance work. No production controls are exposed
+  yet; PIN pairing/discovery/home entry are still pending.
+- APK SHA-256:
+  `CAE968B829F3750CC2F7BB9DB9E8B03F8A0D5C7229B3CD895FAD1217B60BE2C3`.
