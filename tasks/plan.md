@@ -1,6 +1,7 @@
 # Implementation plan: Discoverable SV camera streaming
 
-Updated: 2026-10-02. Planning only; no application code/dependency changes.
+Updated: 2026-10-02. Implementation authorized; R1 capability diagnostics passed.
+Live reproduction is pending camera positioning/local unlock. No dependency change yet.
 Active tasks: R1–R14 in [todo.md](todo.md). This revises the same streaming work.
 The original prototype plan is retained below for its decisions and evidence.
 

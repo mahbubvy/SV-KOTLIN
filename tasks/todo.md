@@ -1,7 +1,7 @@
 # Tasks: Discoverable SV camera streaming
 
-Updated: 2026-10-02. R1–R14 are the active revised backlog; app changes are not
-started by this planning request. The prior checklist is retained below as
+Updated: 2026-10-02. R1–R14 are the active revised backlog. The user authorized
+implementation; R1 capability diagnostics passed on both phones. The prior checklist is retained below as
 prototype evidence. Unfinished prototype acceptance is carried into these tasks.
 
 See [plan.md](plan.md) and [spec](../SPEC-camera-stream-test.md).
@@ -26,6 +26,12 @@ until the user positions the phones; build/fixture results are not a substitute.
 ## R1: Reproduce and fix the current live-camera failure
 
 - [ ] Capture the failing stage on CMF and repair the cause before changing discovery or UI.
+
+Progress: StreamCameraDeviceTest passed on CMF/Pixel without opening a camera.
+Both advertise 720p30 preview/encoder outputs and Baseline AVC; native encoder
+configure/start passed. This does not prove the camera Surface combination,
+codec output or live Wi-Fi frames. Live reproduction waits for camera positioning
+and local phone unlock; CMF was locked at the connection check.
 
 Acceptance:
 - [ ] Record camera/codec capability results and the exact failure stage; no speculative cause is marked confirmed.

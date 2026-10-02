@@ -1,7 +1,8 @@
 # Spec: Discoverable SV camera streaming
 
 Status: Scope revised for camera/home integration, persistent streaming PIN and
-optional Bluetooth-assisted discovery. Planning only. The existing debug
+optional Bluetooth-assisted discovery. Implementation started with capture-free
+R1 capability checks on both phones. The existing debug
 prototype passed generated-video Wi-Fi checks, but the user reports live-camera
 failure; that failure is not diagnosed yet. Active backlog: tasks R1–R14.
 

@@ -3,6 +3,22 @@
 Debug prototype built on `codex/camera-stream-test`. Live-camera capture is pending:
 the user requested finishing the build before positioning the phones.
 
+## Revised implementation: R1 diagnostics, 2026-10-02
+
+- User authorized starting the revised plan. Wireless ADB connected to CMF A015
+  on Android 36 and Pixel 5 on Android 34 after restarting the restricted ADB
+  server outside the runner. No application data was cleared.
+- New capture-free StreamCameraDeviceTest passed on CMF (0.292 seconds) and
+  Pixel (0.230 seconds). Rear camera 0 advertises 1280 × 720 for preview and
+  encoder, an exposure range including 30 FPS and a sufficient minimum frame
+  duration. H.264 Surface-input configure/start/stop passed with Baseline:
+  CMF c2.mtk.avc.encoder; Pixel c2.qti.avc.encoder.
+- Test APK installed as an update on both; no camera or microphone opened.
+  This is capability/configuration evidence, not a live capture/session result.
+- Existing 90-test unit baseline and instrumentation APK build pass. The
+  reported live failure is still undiagnosed. CMF was locked; camera positioning
+  confirmation/local unlock remains needed before live reproduction.
+
 ## Protocol and secure connection
 
 - Unit suite and debug APK build passed after protocol implementation.
