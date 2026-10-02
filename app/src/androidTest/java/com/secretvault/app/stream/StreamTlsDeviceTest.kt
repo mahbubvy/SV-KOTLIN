@@ -30,13 +30,13 @@ class StreamTlsDeviceTest {
         val prefs = context.getSharedPreferences(name, android.content.Context.MODE_PRIVATE)
         val pins = com.secretvault.app.core.stream.StreamPinManager(context, prefs)
         val executor = Executors.newSingleThreadExecutor()
-        pins.setPin(charArrayOf('4', '7', '2', '9', '1', '6'))
+        pins.setPin(charArrayOf('4', '7', '2', '9'))
         try {
             StreamTls.listen(address, pins).use { host ->
                 val endpoint = requireNotNull(host.endpoint)
                 val first = executor.submit<javax.net.ssl.SSLSocket> { host.accept() }
                 val since = android.os.SystemClock.elapsedRealtime()
-                StreamTls.connect(endpoint, charArrayOf('4', '7', '2', '9', '1', '6'), network.socketFactory).use { client ->
+                StreamTls.connect(endpoint, charArrayOf('4', '7', '2', '9'), network.socketFactory).use { client ->
                     first.get(15, TimeUnit.SECONDS).use { server -> server.outputStream.write(42); assertEquals(42, client.inputStream.read()) }
                 }
                 instrumentation.sendStatus(0, android.os.Bundle().apply { putLong("streamPairingMs", android.os.SystemClock.elapsedRealtime() - since) })
@@ -45,7 +45,7 @@ class StreamTlsDeviceTest {
                     val rejection = executor.submit<Boolean> { try { host.accept().close(); false } catch (_: IOException) { true } }
                     val peer = if (changedSession) endpoint.copy(sessionId = "f".repeat(32)) else endpoint
                     assertThrows(IOException::class.java) { StreamTls.connect(peer,
-                        if (changedSession) charArrayOf('4', '7', '2', '9', '1', '6') else charArrayOf('4', '7', '2', '9', '1', '7'),
+                        if (changedSession) charArrayOf('4', '7', '2', '9') else charArrayOf('4', '7', '2', '8'),
                         network.socketFactory).close() }
                     assertTrue(rejection.get(15, TimeUnit.SECONDS))
                 }

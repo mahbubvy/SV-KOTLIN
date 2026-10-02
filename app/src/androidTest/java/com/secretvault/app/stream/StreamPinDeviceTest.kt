@@ -17,7 +17,7 @@ class StreamPinDeviceTest {
         val prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE)
         var now = 1_000_000L
         val manager = StreamPinManager(context, prefs) { now }
-        val pin = charArrayOf('4', '7', '2', '9', '1', '6')
+        val pin = charArrayOf('4', '7', '2', '9')
         try {
             assertNull(manager.readPin())
             manager.setPin(pin)
@@ -35,6 +35,18 @@ class StreamPinDeviceTest {
             prefs.edit().putString("pin", "broken").commit()
             assertThrows(java.io.IOException::class.java) { restarted.readPin() }
             assertThrows(IllegalArgumentException::class.java) { restarted.setPin(charArrayOf('1')) }
+            assertThrows(IllegalArgumentException::class.java) { restarted.setPin(charArrayOf('1', '2', '3', '4', '5', '6')) }
+            val legacy = byteArrayOf(49, 50, 51, 52, 53, 54)
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, com.secretvault.app.core.crypto.KeyStoreManager(masterKeyAlias = "sv_stream_pin_key").getOrCreateMasterKey())
+            cipher.updateAAD("SV streaming PIN v2".toByteArray(Charsets.US_ASCII))
+            prefs.edit().putString("pin", java.util.Base64.getEncoder().encodeToString(cipher.iv + cipher.doFinal(legacy))).commit()
+            legacy.fill(0)
+            assertNull("Old six-digit PIN must require explicit replacement", restarted.readPin())
+            assertFalse(restarted.isConfigured())
+            restarted.setPin(pin)
+            assertTrue(restarted.isConfigured())
+            assertArrayEquals(pin, restarted.readPin())
         } finally { pin.fill('\u0000'); context.deleteSharedPreferences(name) }
     }
 }

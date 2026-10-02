@@ -188,7 +188,7 @@ class StreamLiveUiDeviceTest {
                     var field = requireNotNull(find { it.isEditable })
                     assertTrue("PIN field is not masked", field.isPassword)
                     assertTrue(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
-                        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "000000")
+                        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "0000")
                     }))
                     tap("Connect"); waitFor("Could not receive camera. Check Wi-Fi and the streaming PIN, then try again.")
                     tap("Back to cameras"); waitFor(cameraName, 20000); tap(cameraName); waitFor("Enter streaming PIN")
@@ -197,6 +197,20 @@ class StreamLiveUiDeviceTest {
                         putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, FIXTURE_PIN)
                     }))
                     val connectAt = SystemClock.elapsedRealtime(); tap("Connect"); waitFor("Live camera", 20000)
+                    activity.onActivity { screen ->
+                        fun texture(view: android.view.View): android.view.TextureView? {
+                            if (view is android.view.TextureView) return view
+                            if (view is android.view.ViewGroup) for (index in 0 until view.childCount) texture(view.getChildAt(index))?.let { return it }
+                            return null
+                        }
+                        val view = requireNotNull(texture(screen.window.decorView))
+                        val matrix = FloatArray(9)
+                        view.getTransform(android.graphics.Matrix()).getValues(matrix)
+                        assertTrue("Portrait stream has no viewer quarter-turn: ${matrix.toList()}",
+                            kotlin.math.abs(matrix[android.graphics.Matrix.MSCALE_X]) < 0.001f &&
+                            kotlin.math.abs(matrix[android.graphics.Matrix.MSCALE_Y]) < 0.001f &&
+                            kotlin.math.abs(matrix[android.graphics.Matrix.MSKEW_X]) > 0.01f)
+                    }
                     instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: NSD discovery ${discoveryMs}ms; PIN to first-frame ${SystemClock.elapsedRealtime() - connectAt}ms") })
                     repeat(15) { SystemClock.sleep(1000); waitFor("Live camera", 500) }
                     tap("Disconnect"); waitFor("Refresh")
@@ -298,9 +312,9 @@ class StreamLiveUiDeviceTest {
                 tap("Stream"); waitFor("Set streaming PIN"); fillPin(FIXTURE_PIN); tap("Save PIN")
                 waitFor("Waiting for a viewer", 20000); assertTrue(pins.isConfigured())
                 tap("Stop stream"); waitFor("Stream")
-                tap("Streaming PIN"); waitFor("Set streaming PIN"); fillPin("742619"); tap("Save PIN"); waitFor("Stream")
+                tap("Streaming PIN"); waitFor("Set streaming PIN"); fillPin("7426"); tap("Save PIN"); waitFor("Stream")
                 val changed = requireNotNull(pins.readPin())
-                try { assertTrue(changed.concatToString() == "742619") } finally { changed.fill('\u0000') }
+                try { assertTrue(changed.concatToString() == "7426") } finally { changed.fill('\u0000') }
                 assertTrue("Changing PIN broadcast automatically", find { it.text?.toString() == "Stop stream" } == null)
                 tap("Stream"); waitFor("Waiting for a viewer", 20000)
                 activity.moveToState(Lifecycle.State.CREATED); SystemClock.sleep(1000)
@@ -321,5 +335,5 @@ class StreamLiveUiDeviceTest {
         }
     }
 
-    companion object { private const val FIXTURE_PIN = "916427" }
+    companion object { private const val FIXTURE_PIN = "9164" }
 }

@@ -2,6 +2,8 @@
 
 The existing TLS media connection remains in use. PIN authentication uses the
 Bouncy Castle lightweight J-PAKE API, not a PIN hash or home-made PAKE arithmetic.
+The configured PIN is four ASCII digits, as requested by the user. Previously
+stored six-digit PINs require explicit setup of a new PIN; they are not truncated.
 
 - Pinned artifact: org.bouncycastle:bcprov-jdk18on:1.86, downloaded by Gradle
   from Maven Central. JAR size 7,224,011 bytes; the complete streaming update adds

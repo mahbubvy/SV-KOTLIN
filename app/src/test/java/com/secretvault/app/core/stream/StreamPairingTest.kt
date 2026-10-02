@@ -13,7 +13,7 @@ class StreamPairingTest {
         val executor = Executors.newSingleThreadExecutor()
         val cameraRecord = ByteArrayOutputStream()
         val viewerRecord = ByteArrayOutputStream()
-        fun pin() = charArrayOf('4', '7', '2', '9', '1', '6')
+        fun pin() = charArrayOf('4', '7', '2', '9')
         fun recorded(output: OutputStream, record: ByteArrayOutputStream) = DataOutputStream(object : OutputStream() {
             override fun write(value: Int) { output.write(value); record.write(value) }
             override fun write(bytes: ByteArray, offset: Int, length: Int) { output.write(bytes, offset, length); record.write(bytes, offset, length) }
@@ -70,7 +70,7 @@ class StreamPairingTest {
                         socket.soTimeout = 5000
                         try {
                             StreamPairing.authenticate(DataInputStream(socket.getInputStream()), DataOutputStream(socket.getOutputStream()),
-                                charArrayOf('4', '7', '2', '9', '1', '6'), ByteArray(32) { 1 }, "0".repeat(32), true)
+                                charArrayOf('4', '7', '2', '9'), ByteArray(32) { 1 }, "0".repeat(32), true)
                             true
                         } catch (_: IOException) { false }
                     }
@@ -80,7 +80,7 @@ class StreamPairingTest {
                         socket.soTimeout = 5000
                         try {
                             StreamPairing.authenticate(DataInputStream(socket.getInputStream()), DataOutputStream(socket.getOutputStream()),
-                                if (wrongPin) charArrayOf('4', '7', '2', '9', '1', '7') else charArrayOf('4', '7', '2', '9', '1', '6'),
+                                if (wrongPin) charArrayOf('4', '7', '2', '8') else charArrayOf('4', '7', '2', '9'),
                                 ByteArray(32) { if (wrongCertificate) 2 else 1 }, "0".repeat(32), false)
                             true
                         } catch (_: IOException) { false }

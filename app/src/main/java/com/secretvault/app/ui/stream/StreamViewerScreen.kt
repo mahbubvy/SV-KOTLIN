@@ -114,7 +114,7 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                                 texture.setDefaultBufferSize(1280, 720); surface = Surface(texture)
                             }
                             override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {
-                                latestSession.state.value.config?.let { setTransform(streamPreviewTransform(width, height, it, false, 0)) }
+                                fitPreview(this@apply, latestSession.state.value.config, false)
                             }
                             override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
                                 latestSession.close(); surface?.release(); surface = null; return true
@@ -122,9 +122,7 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                             override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
                         }
                     }
-                }, update = { view -> if (view.width > 0 && view.height > 0) state.config?.let {
-                    view.setTransform(streamPreviewTransform(view.width, view.height, it, false, 0))
-                } }, modifier = Modifier.fillMaxSize())
+                }, update = { view -> fitPreview(view, state.config, false) }, modifier = Modifier.fillMaxSize())
             }
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(selected?.name.orEmpty(), color = TextPrimary)

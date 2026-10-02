@@ -180,5 +180,5 @@ class StreamSharedCameraDeviceTest {
         while (!condition() && SystemClock.elapsedRealtime() < end) SystemClock.sleep(50)
         assertTrue("Shared stream did not reach the expected state", condition())
     }
-    companion object { private const val FIXTURE_PIN = "916427" }
+    companion object { private const val FIXTURE_PIN = "9164" }
 }

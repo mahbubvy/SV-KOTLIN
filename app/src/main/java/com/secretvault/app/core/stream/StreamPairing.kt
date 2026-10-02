@@ -14,7 +14,7 @@ object StreamPairing {
 
     fun authenticate(input: DataInputStream, output: DataOutputStream, pin: CharArray,
                      certificateHash: ByteArray, sessionId: String, sender: Boolean) {
-        require(pin.size == 6 && pin.all { it in '0'..'9' })
+        require(pin.size == StreamPinManager.PIN_DIGITS && pin.all { it in '0'..'9' })
         require(certificateHash.size == 32 && sessionId.matches(Regex("[0-9a-f]{32}")))
         val binding = MessageDigest.getInstance("SHA-256").digest("SV-stream-v2:$sessionId:".toByteArray() + certificateHash)
             .joinToString("") { "%02x".format(it.toInt() and 255) }

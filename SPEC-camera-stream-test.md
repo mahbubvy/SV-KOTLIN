@@ -27,7 +27,7 @@ Assumptions for review:
   connection-string entry in the user-facing flow. The existing debug route may
   remain diagnostic while implementation is verified.
 - QR pairing, hotspot/Wi-Fi Direct and cloud services remain out of scope.
-- Proposed defaults: six-digit sender streaming PIN, five failed attempts then
+- User-selected policy: four-digit sender streaming PIN, five failed attempts then
   a 30-second sender-wide cooldown. PIN length/retry policy need review.
 
 ## Scope and behavior

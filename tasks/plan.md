@@ -21,9 +21,9 @@ The original prototype plan is retained below for its decisions and evidence.
   simultaneous recording, automatic broadcast or automatic reconnect.
 - The receiver sees the active lens, zoom, preview crop, rotation and mirroring.
   Streaming resolution is independent of the saved recording quality setting.
-- Proposed PIN policy: six numeric digits, configurable on the sending device,
-  remembered until changed. Viewer PIN is not saved. This is a planning default,
-  not a confirmed user requirement.
+- PIN policy: four numeric digits, as requested by the user, configurable on the
+  sending device and remembered until changed. Viewer PIN is not saved. Existing
+  six-digit configuration requires explicit replacement, never silent truncation.
 
 ## What exists and what has not passed
 

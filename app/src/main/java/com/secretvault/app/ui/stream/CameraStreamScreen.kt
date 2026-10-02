@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.view.doOnLayout
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -185,9 +186,12 @@ fun CameraStreamScreen(onBack: () -> Unit) {
     }
 }
 
-private fun fitPreview(view: TextureView, config: StreamConfig?, cameraPreview: Boolean) {
-    if (config == null || view.width == 0 || view.height == 0) return
-    view.setTransform(streamPreviewTransform(view.width, view.height, config, cameraPreview, view.display.rotation * 90))
+internal fun fitPreview(view: TextureView, config: StreamConfig?, cameraPreview: Boolean) {
+    if (config == null) return
+    view.doOnLayout {
+        if (view.width > 0 && view.height > 0)
+            view.setTransform(streamPreviewTransform(view.width, view.height, config, cameraPreview, view.display.rotation * 90))
+    }
 }
 
 internal fun streamPreviewTransform(viewWidth: Int, viewHeight: Int, config: StreamConfig,

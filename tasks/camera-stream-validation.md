@@ -375,3 +375,41 @@ user-reported prototype failure was not reproduced under the tested conditions.
 - Final debug APK: SecretVault-v1.1.1-camera-stream-test-debug.apk, 79,494,749 bytes.
   SHA-256: `B41CB4C3FAFC380775E1CDA31C9C9D5CE60C638EEB97EFF5749463C2F908B2A9`.
   Installed as an update on CMF and Pixel. No GitHub push/release was performed.
+
+## Viewer portrait regression and four-digit PIN — 2026-10-02
+
+- The user reported the production viewer remained sideways for an upright
+  sender on both phones. A regression check of the actual viewer TextureView
+  reproduced an identity matrix while Live camera was shown. The generated-chart
+  test above manually rotates its captured surface bitmap; it did not establish
+  the production viewer's on-screen rotation. Earlier visual/geometry evidence
+  therefore was insufficient for this startup layout race.
+- Stream configuration can arrive before AndroidView has measured the decoder
+  TextureView. The old update skipped a zero-size view, and its initial surface
+  callback had no configuration. Shared fitPreview now defers to doOnLayout,
+  retaining resize fitting and the same rotation/aspect math. Both production and
+  diagnostic viewers use this helper. The actual-view quarter-turn assertion
+  fails before the fix and passes after it; no camera pixels are read.
+  [Android's TextureView contract](https://developer.android.com/reference/android/view/TextureView#setTransform(android.graphics.Matrix))
+  distinguishes transforming content from changing the view's layout size.
+- PIN policy is now four ASCII digits throughout setup, encrypted storage and
+  J-PAKE validation. Ciphertext size is 32 bytes including IV and authentication
+  tag. An authenticated old six-digit record returns unconfigured, prompting
+  explicit new setup; the old PIN is never truncated or used for authentication.
+  The vault unlock PIN, media keys, retry budget and cooldown are unchanged.
+- Four-digit persistence/fresh-IV/corruption/retry-budget and legacy replacement
+  checks pass on CMF and Pixel. Four-digit masked setup/change and background
+  teardown checks also pass on both (6.639 / 8.719 seconds for two tests each).
+- Correct four-digit PIN, wrong PIN, changed session and v1 downgrade native TLS
+  tests pass on both phones (406 ms CMF / 488 ms Pixel for matching pairing).
+  All 93 unit tests and both APK builds pass. Lint remains at 41 existing errors /
+  116 warnings; it has not been suppressed or reported as passing.
+- Final APK SHA-256:
+  `60B698A3445E6EF7465C03E5AB2634542AD84F5D9D42115EBCEBF9B9B6C45E91`.
+  Both phones received the update without clearing vault data.
+- Final production-flow regression passes in both directions, inspecting the
+  actual viewer's portrait quarter-turn at first live frame, four-digit masked
+  PIN/wrong-PIN retry, fifteen seconds of live view, Disconnect and explicit
+  restart/Stop. CMF → Pixel PIN-to-first-frame 846 ms; Pixel → CMF 1050 ms.
+  Installed APK hashes on both phones match the final artifact. No private frames
+  were inspected, no test PIN was left configured and no broadcast remains active.

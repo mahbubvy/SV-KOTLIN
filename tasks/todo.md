@@ -137,7 +137,7 @@ Likely files: core/stream/StreamPreviewRenderer.kt; core/stream/StreamProtocol.k
 
 - [x] Add persistent sender configuration without touching the vault unlock PIN or media key.
 
-Progress: StreamPinManager stores six ASCII digits with Keystore AES-256-GCM,
+Progress: StreamPinManager stores four ASCII digits with Keystore AES-256-GCM,
 fresh IVs and dedicated sv_stream_pin_key alias. Persistence, IV uniqueness,
 corruption/invalid-input rejection and persisted five-attempt retry cooldown
 checks pass on CMF and Pixel. PIN set/change UI and active-session invalidation
@@ -145,7 +145,7 @@ are connected in R9 and pass on both phones. Tests restore the original streamin
 preferences; they do not leave the fixture PIN configured.
 
 Acceptance:
-- [x] Streaming PIN is set/changeable while unlocked and persists across manager recreation; policy is six numeric digits. Process-restart UI remains untested.
+- [x] Streaming PIN is set/changeable while unlocked and persists across manager recreation; user-requested policy is four numeric digits. Process-restart UI remains untested.
 - [x] PIN/secret is encrypted with a dedicated Keystore AES-GCM key and random IV; values are absent from logs/backups/discovery.
 - [ ] Malformed/missing/corrupt configuration fails explicitly; changing the PIN ends an active stream and invalidates old pairing.
 
