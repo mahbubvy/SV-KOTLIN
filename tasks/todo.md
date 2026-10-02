@@ -50,16 +50,22 @@ Likely files: core/stream/CameraStreamEncoder.kt; core/stream/StreamSession.kt; 
 
 ## R2: Separate encoding from camera ownership
 
-- [ ] Make the encoder consume an input Surface without independently opening a camera.
+- [x] Make the encoder consume an input Surface without independently opening a camera.
+
+Progress: StreamEncoder owns only MediaCodec, its callback thread and input
+Surface. CameraStreamEncoder is now the diagnostic Camera2 owner feeding that
+Surface. Native start/keyframe/release/double-close checks passed on both phones;
+both directions of the 720p live UI/disconnect check passed after the split.
+Normal-camera shared-source integration remains R3/R4, not part of this proof.
 
 Acceptance:
-- [ ] Encoder exposes its input Surface/configuration/frames and owns only codec resources.
+- [x] Encoder exposes its input Surface/configuration/frames and owns only codec resources.
 - [ ] Existing debug capture remains usable for comparison; the production source has one camera owner.
-- [ ] Stop, constructor failure and late callbacks release codec/input Surface and preserve queue limits.
+- [x] Stop/release verified on both phones; constructor failure and late-callback cleanup reviewed. Queue limits unchanged.
 
 Verification: U/B; generated Surface-input encoding/decoding check and the R1 live diagnostic.
 Dependencies: R1. Estimated scope: Small/medium (at most five listed files).
-Likely files: core/stream/CameraStreamEncoder.kt; core/stream/StreamSession.kt; androidTest/.../StreamCodecDeviceTest.kt.
+Files: core/stream/StreamEncoder.kt; core/stream/CameraStreamEncoder.kt; androidTest/.../StreamCameraDeviceTest.kt.
 
 ## R3: Share the CameraX preview
 

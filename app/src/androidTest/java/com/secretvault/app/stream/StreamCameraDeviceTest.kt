@@ -10,12 +10,29 @@ import android.os.Bundle
 import android.util.Size
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.secretvault.app.core.stream.StreamEncoder
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(AndroidJUnit4::class)
 class StreamCameraDeviceTest {
+    @Test fun surfaceEncoderStartsAndReleasesWithoutOpeningCamera() {
+        val failure = AtomicReference<Throwable?>()
+        val encoder = StreamEncoder(0, onConfig = {}, onFrame = {}, onError = failure::set)
+        val surface = encoder.inputSurface
+        try {
+            assertTrue("Encoder input surface is invalid", surface.isValid)
+            encoder.requestKeyFrame()
+        } finally { encoder.close() }
+        assertFalse("Encoder retained its input surface", surface.isValid)
+        assertNull("Surface encoder failed", failure.get())
+        encoder.close()
+    }
+
     @Test fun supportsRequestedStreamConfigurationWithoutOpeningCamera() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val manager = instrumentation.targetContext.getSystemService(CameraManager::class.java)

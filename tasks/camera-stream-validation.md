@@ -169,3 +169,35 @@ unlocked and positioned for the camera test:
 The runner rejects failed instrumentation results and removes temporary
 invitation files. Logs in ignored scratch contain status and counters only.
 The runner reopens SV after finishing so an unlocked phone remains awake in the app.
+
+## Surface encoder ownership split — 2026-10-02
+
+- Extracted StreamEncoder from the diagnostic Camera2 encoder. It owns only
+  native codec resources and exposes an input Surface; it never requests camera
+  permission or opens a camera. The diagnostic CameraStreamEncoder owns its
+  Camera2 device/session and feeds that Surface. Configuration, Baseline AVC,
+  frame copying, keyframe request, callbacks and transport bounds are preserved.
+- Constructor exceptions close codec resources. Callback guards ignore work
+  after close. Surface release finishes callback-thread shutdown even if release
+  throws. These error paths were reviewed; unsupported-codec failure was not
+  forced on the supported test phones.
+- StreamCameraDeviceTest#surfaceEncoderStartsAndReleasesWithoutOpeningCamera
+  passed on CMF (0.214s) and Pixel (0.090s): native start/keyframe request, valid
+  input Surface, release invalidation and harmless repeated close. Durations
+  are test runtimes, not streaming latency.
+- Repeated live UI tests after extraction passed in both directions, including
+  viewer Disconnect and sender peer-disconnect cleanup:
+
+| Sender → viewer | Minimum sampled encoded FPS (10s) | Minimum sampled rendered FPS (15s) |
+| --- | ---: | ---: |
+| CMF → Pixel | 29 | 28 |
+| Pixel → CMF | 28 | 28 |
+
+- All 90 unit tests pass; debug and instrumentation APK builds pass. Updated
+  both installed debug apps without clearing vault data or changing recording
+  defaults. No production dependency or device-role restriction was added.
+- APK SHA-256:
+  `64FE2CEE7E0B689432D8FACF69245EDD234AAA14163F33C96748AA0A22EC75BC`.
+- This prepares normal-camera integration. The normal CameraX/native preview
+  is not connected to the encoder yet, and the requested camera/home buttons,
+  discovery, persistent streaming PIN and BLE assistance remain pending.
