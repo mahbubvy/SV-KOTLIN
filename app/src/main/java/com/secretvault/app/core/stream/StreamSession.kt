@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 data class StreamState(val message: String = "Choose Send or View", val busy: Boolean = false, val stopping: Boolean = false,
-    val live: Boolean = false, val invitation: String? = null, val config: StreamConfig? = null,
+    val live: Boolean = false, val invitation: String? = null, val endpoint: StreamEndpoint? = null, val config: StreamConfig? = null,
     val encodedFps: Int = 0, val receivedFps: Int = 0, val renderedFps: Int = 0, val startupMs: Long? = null) {
     override fun toString(): String = "StreamState($message, credentials hidden)"
 }
@@ -69,8 +69,8 @@ class StreamSession(private val context: Context) : Closeable {
         }
     }
 
-    fun sendShared(renderer: StreamPreviewRenderer, rotation: Int, viewAspect: Float) {
-        sendSource { onConfig, onFrame, onError ->
+    fun sendShared(renderer: StreamPreviewRenderer, rotation: Int, viewAspect: Float, pinManager: StreamPinManager? = null) {
+        sendSource(pinManager) { onConfig, onFrame, onError ->
             val video = StreamEncoder(rotation, onConfig, onFrame, onError)
             try { renderer.attachEncoder(video.inputSurface, rotation, viewAspect) }
             catch (error: Exception) { video.close(); throw error }
@@ -79,13 +79,20 @@ class StreamSession(private val context: Context) : Closeable {
         }
     }
 
-    private fun sendSource(startSource: ((StreamConfig) -> Unit, (StreamFrame) -> Unit, (Throwable) -> Unit) -> Closeable) {
+    fun refreshCameraFrame() { requestKeyFrame?.invoke() }
+
+    private fun sendSource(pinManager: StreamPinManager? = null,
+                           startSource: ((StreamConfig) -> Unit, (StreamFrame) -> Unit, (Throwable) -> Unit) -> Closeable) {
         mutableState.value = StreamState("Starting camera…", busy = true)
         scope.launch {
             try {
+                pinManager?.let { pins ->
+                    val pin = pins.readPin() ?: throw IOException("Set a streaming PIN first")
+                    pin.fill('\u0000')
+                }
                 val network = wifi()
                 val address = cm.getLinkProperties(network)!!.linkAddresses.first { it.address is Inet4Address }.address
-                val listener = StreamTls.listen(address)
+                val listener = StreamTls.listen(address, pinManager)
                 synchronized(this@StreamSession) {
                     if (closed.get()) { listener.close(); return@launch }
                     host = listener
@@ -106,7 +113,8 @@ class StreamSession(private val context: Context) : Closeable {
                     if (closed.get()) { camera.close(); return@launch }
                     encoder = camera
                 }
-                mutableState.update { if (closed.get()) it else it.copy(message = "Waiting for a viewer", invitation = listener.invitation.encode()) }
+                mutableState.update { if (closed.get()) it else it.copy(message = "Waiting for a viewer",
+                    invitation = if (pinManager == null) listener.invitation.encode() else null, endpoint = listener.endpoint) }
                 stats()
                 while (isActive && !closed.get()) {
                     val peer = try { listener.accept() } catch (error: SocketException) {
@@ -151,11 +159,20 @@ class StreamSession(private val context: Context) : Closeable {
     }
 
     fun view(invitation: StreamInvitation, surface: Surface) {
+        viewSource(surface) { network, onSocket -> StreamTls.connect(invitation, network.socketFactory, onSocket) }
+    }
+
+    fun view(endpoint: StreamEndpoint, pin: CharArray, surface: Surface) {
+        viewSource(surface, { pin.fill('\u0000') }) { network, onSocket -> StreamTls.connect(endpoint, pin, network.socketFactory, onSocket) }
+    }
+
+    private fun viewSource(surface: Surface, clearSecret: () -> Unit = {},
+                           connect: (Network, (Socket) -> Unit) -> Socket) {
         mutableState.value = StreamState("Connecting…", busy = true)
         scope.launch {
             try {
                 val network = wifi()
-                val peer = StreamTls.connect(invitation, network.socketFactory) { candidate ->
+                val peer = connect(network) { candidate ->
                     synchronized(this@StreamSession) {
                         if (closed.get()) { candidate.close(); throw IOException("Session ended") }
                         socket = candidate
@@ -180,8 +197,9 @@ class StreamSession(private val context: Context) : Closeable {
                     received.incrementAndGet(); video.offer(frame)
                 }
             } catch (_: CancellationException) { }
-            catch (_: Exception) { if (!closed.get()) end("Could not receive camera. Check Wi-Fi and the connection details, then try again.") }
-        }
+            catch (_: Exception) { if (!closed.get()) end("Could not receive camera. Check Wi-Fi and the streaming PIN, then try again.") }
+            finally { clearSecret() }
+        }.invokeOnCompletion { clearSecret() }
     }
 
     private fun stats() {
@@ -204,7 +222,7 @@ class StreamSession(private val context: Context) : Closeable {
     private fun end(message: String) {
         if (!closed.compareAndSet(false, true)) return
         publishing.set(false)
-        mutableState.update { it.copy(message = "Stopping…", stopping = true, busy = true, live = false, invitation = null) }
+        mutableState.update { it.copy(message = "Stopping…", stopping = true, busy = true, live = false, invitation = null, endpoint = null) }
         scope.cancel()
         CoroutineScope(Dispatchers.IO).launch {
             synchronized(this@StreamSession) {

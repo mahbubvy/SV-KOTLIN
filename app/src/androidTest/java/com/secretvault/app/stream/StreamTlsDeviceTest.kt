@@ -20,6 +20,42 @@ import org.junit.Assume.assumeTrue
 
 @RunWith(AndroidJUnit4::class)
 class StreamTlsDeviceTest {
+    @Test fun pinPairingRejectsWrongPinAndChangedSessionBeforeMedia() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        val network = cm.allNetworks.first { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true }
+        val address = cm.getLinkProperties(network)!!.linkAddresses.first { it.address is Inet4Address }.address
+        val name = "stream_pairing_test_${java.util.UUID.randomUUID()}"
+        val prefs = context.getSharedPreferences(name, android.content.Context.MODE_PRIVATE)
+        val pins = com.secretvault.app.core.stream.StreamPinManager(context, prefs)
+        val executor = Executors.newSingleThreadExecutor()
+        pins.setPin(charArrayOf('4', '7', '2', '9', '1', '6'))
+        try {
+            StreamTls.listen(address, pins).use { host ->
+                val endpoint = requireNotNull(host.endpoint)
+                val first = executor.submit<javax.net.ssl.SSLSocket> { host.accept() }
+                val since = android.os.SystemClock.elapsedRealtime()
+                StreamTls.connect(endpoint, charArrayOf('4', '7', '2', '9', '1', '6'), network.socketFactory).use { client ->
+                    first.get(15, TimeUnit.SECONDS).use { server -> server.outputStream.write(42); assertEquals(42, client.inputStream.read()) }
+                }
+                instrumentation.sendStatus(0, android.os.Bundle().apply { putLong("streamPairingMs", android.os.SystemClock.elapsedRealtime() - since) })
+                host.releasePeer()
+                for (changedSession in listOf(false, true)) {
+                    val rejection = executor.submit<Boolean> { try { host.accept().close(); false } catch (_: IOException) { true } }
+                    val peer = if (changedSession) endpoint.copy(sessionId = "f".repeat(32)) else endpoint
+                    assertThrows(IOException::class.java) { StreamTls.connect(peer,
+                        if (changedSession) charArrayOf('4', '7', '2', '9', '1', '6') else charArrayOf('4', '7', '2', '9', '1', '7'),
+                        network.socketFactory).close() }
+                    assertTrue(rejection.get(15, TimeUnit.SECONDS))
+                }
+                val downgrade = executor.submit<Boolean> { try { host.accept().close(); false } catch (_: IOException) { true } }
+                assertThrows(IOException::class.java) { StreamTls.connect(host.invitation, network.socketFactory).close() }
+                assertTrue(downgrade.get(15, TimeUnit.SECONDS))
+            }
+        } finally { executor.shutdownNow(); context.deleteSharedPreferences(name) }
+    }
+
     @Test fun wifiRoundTrip() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val role = InstrumentationRegistry.getArguments().getString("streamRole")

@@ -55,6 +55,7 @@ android {
 }
 
 dependencies {
+    implementation(libs.bouncycastle.provider)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
