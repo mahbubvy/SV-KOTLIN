@@ -137,7 +137,7 @@ fun CameraStreamScreen(onBack: () -> Unit) {
                         }
                         override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {
                             if (latestSending && latestSession.state.value.busy && view.display.rotation != startedRotation) latestSession.close()
-                            fitPreview(view, latestSession.state.value.config)
+                            fitPreview(view, latestSession.state.value.config, latestSending)
                         }
                         override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
                             latestSession.close(); previewSurface?.release(); previewSurface = null
@@ -147,7 +147,7 @@ fun CameraStreamScreen(onBack: () -> Unit) {
                     }
                 }
             }, update = { view ->
-                fitPreview(view, state.config)
+                fitPreview(view, state.config, sending)
             }, modifier = Modifier.fillMaxSize())
             if (!state.busy || (!sending && !state.live)) {
                 Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black).padding(24.dp), contentAlignment = Alignment.Center) {
@@ -185,16 +185,26 @@ fun CameraStreamScreen(onBack: () -> Unit) {
     }
 }
 
-private fun fitPreview(view: TextureView, config: StreamConfig?) {
+private fun fitPreview(view: TextureView, config: StreamConfig?, cameraPreview: Boolean) {
     if (config == null || view.width == 0 || view.height == 0) return
+    view.setTransform(streamPreviewTransform(view.width, view.height, config, cameraPreview, view.display.rotation * 90))
+}
+
+internal fun streamPreviewTransform(viewWidth: Int, viewHeight: Int, config: StreamConfig,
+                                    cameraPreview: Boolean, displayDegrees: Int): Matrix {
     val rotated = config.rotation % 180 != 0
     val contentWidth = if (rotated) config.height else config.width
     val contentHeight = if (rotated) config.width else config.height
-    val scale = minOf(view.width.toFloat() / contentWidth, view.height.toFloat() / contentHeight)
-    view.setTransform(Matrix().apply {
-        setScale(config.width.toFloat() / view.width, config.height.toFloat() / view.height)
-        postTranslate(-config.width / 2f, -config.height / 2f)
-        postRotate(config.rotation.toFloat()); postScale(scale, scale)
-        postTranslate(view.width / 2f, view.height / 2f)
-    })
+    val scale = minOf(viewWidth.toFloat() / contentWidth, viewHeight.toFloat() / contentHeight)
+    // Camera2 TextureView already applies sensor rotation; decoder output does not.
+    val sensorRotated = cameraPreview && (config.rotation + displayDegrees) % 180 != 0
+    val inputWidth = if (sensorRotated) config.height else config.width
+    val inputHeight = if (sensorRotated) config.width else config.height
+    return Matrix().apply {
+        setScale(inputWidth.toFloat() / viewWidth, inputHeight.toFloat() / viewHeight)
+        postTranslate(-inputWidth / 2f, -inputHeight / 2f)
+        postRotate(if (cameraPreview) -displayDegrees.toFloat() else config.rotation.toFloat())
+        postScale(scale, scale)
+        postTranslate(viewWidth / 2f, viewHeight / 2f)
+    }
 }

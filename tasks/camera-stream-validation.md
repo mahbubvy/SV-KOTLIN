@@ -201,3 +201,27 @@ The runner reopens SV after finishing so an unlocked phone remains awake in the 
 - This prepares normal-camera integration. The normal CameraX/native preview
   is not connected to the encoder yet, and the requested camera/home buttons,
   discovery, persistent streaming PIN and BLE assistance remain pending.
+
+## Sender preview orientation — 2026-10-02
+
+- User confirmed the sideways portrait image was on the camera phone only.
+  Both roles had used the decoder transform: it applied sensor rotation again
+  to the Camera2 TextureView, which already receives that rotation from Android.
+  Sender now corrects display rotation and fits the sensor-oriented buffer;
+  decoder rotation and the transmitted stream configuration remain unchanged.
+  Platform behavior: https://developer.android.com/media/camera/camera2/camera-preview#textureview
+- StreamPreviewDeviceTest#cameraAndDecoderShowTheSameUprightUnstretchedImage
+  passed on CMF and Pixel. It checks corner positions, aspect ratio and centered
+  fitting for all four sensor/display rotations, portrait/landscape view sizes
+  and both producers. This verifies transform geometry, not real-image appearance.
+- Updated debug and instrumentation APKs on both phones; build passed.
+  Live UI streaming and disconnect cleanup passed again in both directions:
+  CMF → Pixel minimum sampled sender/viewer FPS 28/27;
+  Pixel → CMF 28/28 (10s sender and 15s viewer sampling).
+  Physical portrait preview appearance still needs user confirmation; no camera
+  images or vault media were captured for visual verification.
+- Review: both transform call sites pass the current role; stream configuration,
+  encoder, decoder, authentication, capture defaults, layout and controls are
+  unchanged. No dependency or device-specific role rule was added.
+- APK SHA-256:
+  `23989B17729897509641D4089AEF4555D2C91C91B856F83153781D519ACC58C3`.
