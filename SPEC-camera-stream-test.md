@@ -1,19 +1,22 @@
 # Spec: Discoverable SV camera streaming
 
 Status: Scope revised for camera/home integration, persistent streaming PIN and
-optional Bluetooth-assisted discovery. Implementation started with capture-free
-R1 capability checks on both phones. The existing debug
-prototype passed generated-video Wi-Fi checks, but the user reports live-camera
-failure; that failure is not diagnosed yet. Active backlog: tasks R1–R14.
+optional Bluetooth-assisted discovery. R1 capability probes and 720p live UI
+streaming passed in both CMF/Pixel directions, including disconnect cleanup.
+The original reported failure was not reproduced; UI-test cache/timing issues
+were corrected. Normal-camera integration is still pending. Active backlog: R1–R14.
 
 ## Objective
 
-Send the active SV camera view from CMF Phone 1 to SV on Pixel 5 over their shared
+Send the active SV camera view from one supported SV device to another over shared
 Wi-Fi, with native discovery and separate PIN pairing. Stream starts inside the
 normal camera; View stream sits on vault home directly above Import. Optional
 BLE helps find nearby senders and obtain setup metadata; video remains on Wi-Fi.
 
-Confirmed by the user: CMF is the sender; Pixel 5 is the viewer.
+Either device can send or view. Roles, discovery, pairing and streaming must not
+depend on phone model. Check native camera/codec capabilities at runtime and
+report unsupported configurations. CMF and Pixel are test devices, not fixed
+product roles; verify both directions.
 
 Assumptions for review:
 - One sender and one viewer, both running a test build of SV.
@@ -140,7 +143,7 @@ controls need at least 44 dp touch targets and readable waiting/error states.
   against the baseline rather than attributing existing warnings to this work.
 - Add focused runnable checks for pairing rejection, malformed/oversized input,
   bounded frame buffering, and session cleanup according to the chosen transport.
-- Use the actual CMF and Pixel for the camera/network/rendering checks. A desktop
+- Use the actual CMF and Pixel in both directions for camera/network/rendering checks. A desktop
   receiver or emulator alone cannot satisfy the two-phone acceptance criteria.
 - Use a blank/test surface for captures; do not inspect existing vault media.
 - Measure delay with a common visible time reference observed in both the sender
@@ -168,7 +171,8 @@ uninstall the vault, or claim hardware support without a device test.
 
 ## Success criteria
 
-- The CMF live camera image is visibly received inside SV on the Pixel over Wi-Fi.
+- Live camera images are received inside SV over Wi-Fi in both tested directions,
+  with either supported device selectable as sender or viewer.
 - The measured quality, startup, sustained-viewing, and delay targets above pass,
   or revised targets have been reviewed explicitly.
 - Device discovery leads to PIN-authenticated viewing; wrong PIN, impersonation,

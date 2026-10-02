@@ -1,0 +1,51 @@
+param(
+    [Parameter(Mandatory)][string]$Sender,
+    [Parameter(Mandatory)][string]$Viewer,
+    [string]$Adb = "$env:LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe"
+)
+$ErrorActionPreference = 'Stop'
+$workspace = Split-Path $PSScriptRoot -Parent
+$logDirectory = Join-Path $workspace 'scratch'
+New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
+$hostLog = Join-Path $logDirectory 'stream-live-host.log'
+$viewerLog = Join-Path $logDirectory 'stream-live-viewer.log'
+$testClass = 'com.secretvault.app.stream.StreamLiveUiDeviceTest#streamsActualCameraThroughUi'
+$runner = 'com.secretvault.app.test/androidx.test.runner.AndroidJUnitRunner'
+$hostProcess = $null
+$passed = $false
+try {
+    foreach ($device in @($Sender, $Viewer)) {
+        & $Adb -s $device shell run-as com.secretvault.app rm -f cache/stream-test-invitation
+        if ($LASTEXITCODE -ne 0) { throw 'Debug app is unavailable' }
+    }
+    $arguments = @('-s', $Sender, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', $testClass, '-e', 'streamRole', 'send', $runner)
+    $hostProcess = Start-Process -FilePath $Adb -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $hostLog -RedirectStandardError (Join-Path $logDirectory 'stream-live-host-error.log')
+    $pairingText = $null
+    for ($attempt = 0; $attempt -lt 80; $attempt++) {
+        $pairingText = (& $Adb -s $Sender exec-out run-as com.secretvault.app cat cache/stream-test-invitation 2>$null)
+        if ($pairingText -like 'svstream://*') { break }
+        if ($hostProcess.HasExited) { break }
+        Start-Sleep -Milliseconds 250
+    }
+    if ($pairingText -notlike 'svstream://*') { throw 'Sender invitation unavailable; inspect the sender test log' }
+    $pairingText | & $Adb -s $Viewer shell 'run-as com.secretvault.app sh -c "cat > cache/stream-test-invitation"'
+    if ($LASTEXITCODE -ne 0) { throw 'Private invitation transfer failed' }
+    $pairingText = $null
+    & $Adb -s $Viewer shell am instrument -w -r -e class $testClass -e streamRole view $runner | Tee-Object -FilePath $viewerLog
+    if (!$hostProcess.WaitForExit(10000)) { throw 'Sender test did not finish' }
+    Get-Content -LiteralPath $hostLog
+    foreach ($log in @($hostLog, $viewerLog)) {
+        if ((Get-Content -LiteralPath $log -Raw) -notmatch 'OK \(1 test\)') { throw "Live stream check failed: $log" }
+    }
+    $passed = $true
+} finally {
+    $pairingText = $null
+    if ($hostProcess -and !$hostProcess.HasExited) { $hostProcess.Kill() }
+    foreach ($device in @($Sender, $Viewer)) {
+        if ($hostProcess) {
+            if (!$passed) { & $Adb -s $device shell am force-stop com.secretvault.app }
+            & $Adb -s $device shell am start -n com.secretvault.app/.MainActivity | Out-Null
+        }
+        & $Adb -s $device shell run-as com.secretvault.app rm -f cache/stream-test-invitation
+    }
+}

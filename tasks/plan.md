@@ -1,7 +1,8 @@
 # Implementation plan: Discoverable SV camera streaming
 
-Updated: 2026-10-02. Implementation authorized; R1 capability diagnostics passed.
-Live reproduction is pending camera positioning/local unlock. No dependency change yet.
+Updated: 2026-10-02. Implementation authorized; capability probes and an initial
+live UI checks passed in both CMF/Pixel directions, including disconnect cleanup.
+The original failure was not reproduced. No dependency change yet.
 Active tasks: R1–R14 in [todo.md](todo.md). This revises the same streaming work.
 The original prototype plan is retained below for its decisions and evidence.
 
@@ -9,6 +10,8 @@ The original prototype plan is retained below for its decisions and evidence.
 
 - Sender: normal SV camera → Stream → configure a separate persistent streaming
   PIN once → advertise availability → waiting/connected indicator → Stop.
+- Roles are selectable on every supported device. CMF and Pixel name test
+  hardware only; do not gate streaming roles by model or encode fixed peer addresses.
 - Receiver: vault home → View stream directly above Import → available cameras
   → choose device → enter streaming PIN → fitted live camera image → Disconnect.
 - Both phones use the same Wi-Fi. Bluetooth assists discovery/connection setup;
@@ -25,9 +28,10 @@ The original prototype plan is retained below for its decisions and evidence.
 
 Existing `core/stream/` implements bounded H.264 messages, a decoder, native TLS,
 a random-secret invitation, a separate Camera2 encoder and session cleanup.
-Generated 640 × 360 video over CMF → Pixel Wi-Fi passed; 90 unit tests passed.
-The user now reports live-camera failure. Its exact stage/root cause is unknown.
-Do not mistake the generated-fixture result for a working live sender.
+Generated 640 × 360 video and an initial 720p live camera UI check over
+CMF → Pixel Wi-Fi passed; 90 unit tests passed. The originally reported failure
+was not reproduced in the successful live checks. Native UI-test cache and
+timing failures were corrected; both role directions pass the same check.
 
 `CameraManager` owns CameraX Preview plus photo/video use cases; CMF's selected
 1080p60 rear-main mode instead uses `CmfHighFpsCameraView` and a vendor Camera2

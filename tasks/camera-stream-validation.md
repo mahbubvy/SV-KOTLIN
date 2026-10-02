@@ -68,7 +68,7 @@ the user requested finishing the build before positioning the phones.
   stopped session's live state or invitation.
 - Native camera encoding uses one Camera2 session with preview/encoder surfaces,
   capability checks, H.264 Baseline and a requested 1280 × 720 at 30 FPS.
-  Actual camera output/FPS remain unverified.
+  Initial live output was subsequently verified below; sustained performance is pending.
 - Settings entry and destination require debug/unlocked state. Start is explicit;
   Back, background, Surface destruction and network-loss handlers end a stream.
   Ordinary camera/recording code was not changed.
@@ -88,3 +88,84 @@ When the phones are positioned: unlock SV on both, open Settings → Camera stre
 test, select Send camera on CMF and View camera on Pixel. Start CMF, transfer its
 fresh connection details privately, and Connect on Pixel. Stop/Disconnect ends
 that session; a new sender session requires new details.
+
+## Actual CMF → Pixel camera UI check — 2026-10-02
+
+- User authorized opening both vaults and testing the live camera. No vault
+  media was opened, no recording was saved, and no vault PIN was stored.
+- Installed application version was unchanged: 1.1.1-camera-stream-test. Only
+  the instrumentation APK changed. No application behavior was patched.
+- CMF sender UI started normally, published AVC configuration and encoded
+  frames. The initial roughly 13 FPS display was sampled during startup, not a
+  steady-state result. The reported failure was not reproduced.
+- StreamLiveUiDeviceTest exercised the real CameraStreamScreen on each phone
+  with a consuming TextureView. It transferred the fresh invitation through
+  app-private cache/stdin without printing credentials, then connected Pixel.
+- Both roles passed 15 consecutive one-second live/FPS checks at 1280 × 720.
+  Minimum sampled UI counters: CMF encoded 29 FPS, Pixel rendered 32 FPS.
+  These counters can include burst delivery; they do not establish exact
+  sensor FPS or visual latency. No image-quality/rotation judgment is claimed.
+- Stop/Disconnect completed on both. After instrumentation, opened each vault
+  and its ordinary camera; camera service showed an active SV camera-0 client
+  on each phone.
+- The test intentionally mounts only the diagnostic stream screen in a debug
+  instrumentation Activity; it does not test vault authentication/navigation.
+- Original failure stage remains unknown. Background, Wi-Fi loss, rotation,
+  long runs and battery/performance checks remain pending.
+- A repeat passed the Pixel's 15-second playback check but revealed a test
+  shutdown race: viewer disconnected before the sender's last assertion.
+  Changed sender sampling to 10 seconds followed by waiting for peer-disconnect
+  cleanup; viewer still samples 15 seconds and initiates Disconnect. This
+  corrected test awaits another unlocked-device run. A subsequent attempt was
+  blocked by the phones' lock screens, before camera startup.
+- After another local unlock, a repeat passed the keyguard precondition but
+  could not locate Pixel's View camera control. No connection was attempted by
+  that viewer. This UI-test startup failure is unresolved; it is not evidence
+  that the camera/transport failed. Both devices relocked after failed-run
+  cleanup. Added nonsecret foreground-package information to future timeout
+  errors. The modified UI check is not yet marked verified or committed.
+
+## Device-neutral roles and repeatable UI check — 2026-10-02
+
+- Stream/transport source contains no CMF/Pixel model checks or fixed peer IPs.
+  Both devices expose Send camera and View camera. Changed the debug sender
+  prompt to refer to this camera and another SV device. The user requires
+  device-neutral roles; updated the spec and active plan accordingly.
+- Built and installed the debug update and instrumentation on both phones.
+  The media, encryption and ordinary-camera implementation were unchanged.
+- Resolved UI-test failures using native visible-window retrieval, fresh
+  accessibility nodes on SDK 34+, enabled button actions and scroll-to-control.
+  Also wait for the FPS counter's initial update before sampling and let the
+  viewer initiate shutdown after a longer check than the sender's sampling.
+  No app workaround, test dependency or security bypass was added.
+  References: [UiAutomation](https://developer.android.com/reference/android/app/UiAutomation)
+  and [interactive windows](https://developer.android.com/reference/android/accessibilityservice/AccessibilityServiceInfo#FLAG_RETRIEVE_INTERACTIVE_WINDOWS).
+- Final checks passed on both roles in both directions:
+
+| Sender → viewer | Sender's minimum sampled encoded FPS (10s) | Viewer's minimum sampled rendered FPS (15s) | Disconnect/peer cleanup |
+| --- | ---: | ---: | --- |
+| CMF → Pixel | 29 | 28 | Passed |
+| Pixel → CMF | 28 | 28 | Passed |
+
+- These short runs establish a working live baseline, not five-minute stability,
+  exact sensor FPS, measured visual latency or support on untested hardware.
+  Capability checks determine availability; device names do not determine roles.
+- Final APK SHA-256 after the prompt change:
+  `9F55BF9306F85D20843F3886EC81FF2DA7CF27D644A80CA6AB3891B7A47C4729`.
+- Review: tests exercise actual camera/codec/TLS/TextureView rendering and both
+  roles, bound waits and private invitation cleanup, preserve vault data, and
+  add no production library. Product copy is concrete and has no device-specific
+  role instruction. Layout, controls, contrast and visual styling were unchanged.
+  Full camera-stream feature/accessibility/performance gates remain pending.
+
+Repeat after installing the debug and instrumentation APKs, with both phones
+unlocked and positioned for the camera test:
+
+```powershell
+# Keep the ADB server socket configured for the connected phones.
+& .\tasks\test-live-stream.ps1 -Sender <sender-serial> -Viewer <viewer-serial>
+```
+
+The runner rejects failed instrumentation results and removes temporary
+invitation files. Logs in ignored scratch contain status and counters only.
+The runner reopens SV after finishing so an unlocked phone remains awake in the app.

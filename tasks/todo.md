@@ -1,10 +1,13 @@
 # Tasks: Discoverable SV camera streaming
 
 Updated: 2026-10-02. R1–R14 are the active revised backlog. The user authorized
-implementation; R1 capability diagnostics passed on both phones. The prior checklist is retained below as
+implementation; R1 capability and live UI streaming checks passed on both phones. The prior checklist is retained below as
 prototype evidence. Unfinished prototype acceptance is carried into these tasks.
 
 See [plan.md](plan.md) and [spec](../SPEC-camera-stream-test.md).
+All streaming roles are device-neutral. CMF and Pixel below identify test
+hardware or an existing native camera adapter, not sender/viewer restrictions.
+Verify both directions; discover actual peers rather than storing their IPs.
 Source paths are relative to app/src/main/java/com/secretvault/app/ unless
 prefixed by another root. New file/class names are proposals: reuse equivalents.
 
@@ -27,16 +30,19 @@ until the user positions the phones; build/fixture results are not a substitute.
 
 - [ ] Capture the failing stage on CMF and repair the cause before changing discovery or UI.
 
-Progress: StreamCameraDeviceTest passed on CMF/Pixel without opening a camera.
-Both advertise 720p30 preview/encoder outputs and Baseline AVC; native encoder
-configure/start passed. This does not prove the camera Surface combination,
-codec output or live Wi-Fi frames. Live reproduction waits for camera positioning
-and local phone unlock; CMF was locked at the connection check.
+Progress: capability probes and the actual CameraStreamScreen flow passed in
+both CMF/Pixel directions. Each viewer displayed 720p continuously for 15 seconds;
+Disconnect and sender peer-disconnect cleanup passed. Both ordinary camera
+screens reopened and acquired camera 0 during the initial check.
+The previously reported failure was not reproduced, so no application fix or
+confirmed root cause is claimed. A repeatable two-phone UI check now guards the
+live baseline after correcting stale accessibility nodes and startup/shutdown
+timing in the test. Remaining original-failure investigation needs failing conditions.
 
 Acceptance:
 - [ ] Record camera/codec capability results and the exact failure stage; no speculative cause is marked confirmed.
-- [ ] CMF rear-camera frames encode and visibly render on Pixel through the existing diagnostic flow.
-- [ ] A focused regression check catches the cause; the ordinary camera reopens after Stop.
+- [x] CMF rear-camera frames encode and render on Pixel through the existing diagnostic flow.
+- [x] A focused live UI check guards playback and disconnect; the ordinary camera reopened after Stop. Original reported cause remains unconfirmed.
 
 Verification: U/B; reproduce and rerun on the positioned phones with scoped logcat and a nonprivate scene.
 Dependencies: None. Estimated scope: Medium (at most five listed files).

@@ -151,7 +151,7 @@ fun CameraStreamScreen(onBack: () -> Unit) {
             }, modifier = Modifier.fillMaxSize())
             if (!state.busy || (!sending && !state.live)) {
                 Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black).padding(24.dp), contentAlignment = Alignment.Center) {
-                    Text(if (state.busy) state.message else if (sending) "Start the CMF camera, then connect the Pixel" else "Connect to see the live camera",
+                    Text(if (state.busy) state.message else if (sending) "Start this camera, then connect from another SV device" else "Connect to see the live camera",
                         color = TextSecondary, fontSize = 16.sp)
                 }
             }
