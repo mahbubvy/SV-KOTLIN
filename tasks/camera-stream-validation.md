@@ -256,3 +256,18 @@ The runner reopens SV after finishing so an unlocked phone remains awake in the 
   yet; PIN pairing/discovery/home entry are still pending.
 - APK SHA-256:
   `CAE968B829F3750CC2F7BB9DB9E8B03F8A0D5C7229B3CD895FAD1217B60BE2C3`.
+
+## Separate streaming PIN storage — 2026-10-02
+
+- Added StreamPinManager with six-digit ASCII validation and dedicated Keystore
+  key alias sv_stream_pin_key, outside the temporary TLS identity prefix.
+  AES-GCM uses a fresh native IV and authenticated context for each write.
+  The existing KeyStoreManager supplies the AES-256 key without changing vault
+  aliases, unlock authentication, media encryption or backup contents.
+- Device checks pass on CMF (0.062s) and Pixel (0.229s): reconstruct manager and
+  read, different ciphertext/IV for repeated writes, no plaintext preference,
+  reject corrupt/malformed storage, persist retry budget/cooldown after manager
+  recreation, cooldown expiry and successful-pairing reset.
+- Tests use a temporary preference file and generated PIN, remove that file and
+  do not set the real sender PIN. PIN UI and session invalidation remain R9.
+  Build passes; authentication/PAKE is the next security checkpoint.
