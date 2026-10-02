@@ -64,6 +64,7 @@ class CameraManager(
     private var cameraReady = false
     private var zoomRequest = 0
     private var cameraSession = 0
+    private var streaming = false
     private var cmfCameraView: CmfHighFpsCameraView? = null
     private var cmfHighFpsActive = false
     private var cmfRecordingStartTime = 0L
@@ -103,6 +104,7 @@ class CameraManager(
         streamRenderer: com.secretvault.app.core.stream.StreamPreviewRenderer? = null
     ) {
         if (activeRecording != null || _isRecording.value) return
+        streaming = streamRenderer != null
         val session = ++cameraSession
         cameraReady = false
         camera = null
@@ -213,7 +215,7 @@ class CameraManager(
                         camera = null
                         cmfHighFpsActive = true
                         cmfHighFpsView.start(
-                            includeAudio = recordAudio,
+                            includeAudio = recordAudio && !streaming,
                             orientationHint = videoOrientation.recorderOrientationHint,
                             onReady = {
                                 cameraReady = true
@@ -392,7 +394,7 @@ class CameraManager(
         recordAudio: Boolean,
         onRecordingStarted: () -> Unit
     ): Boolean {
-        if (!cameraReady || activeRecording != null) return false
+        if (!cameraReady || activeRecording != null || streaming) return false
         if (cmfHighFpsActive) {
             val started = cmfCameraView?.startRecording() ?: false
             if (started) {
@@ -455,6 +457,16 @@ class CameraManager(
             return
         }
         activeRecording?.stop()
+    }
+
+    fun pausePreview() {
+        if (_isRecording.value || activeRecording != null) return
+        cameraSession++
+        zoomRequest++
+        cameraReady = false
+        camera = null
+        cmfCameraView?.deactivate()
+        cameraProvider?.unbindAll()
     }
 
     fun release() {

@@ -116,6 +116,7 @@ fun VaultNavGraph(
                     navController.navigate(Screen.Camera.route)
                 },
                 onSettingsClick = { navController.navigate(Screen.Settings.route) },
+                onViewStreamClick = { navController.navigate(Screen.ViewStream.route) },
                 onLockClick = {
                     app.ephemeralShareManager.purgeAllSharedFiles(force = true)
                     app.sessionManager.lock()
@@ -138,6 +139,14 @@ fun VaultNavGraph(
                     { navController.navigate(Screen.CameraStream.route) }
                 } else null
             )
+        }
+
+        composable(Screen.ViewStream.route) {
+            if (!isUnlocked) {
+                Box(modifier = Modifier.fillMaxSize().background(VaultDarkBg))
+                return@composable
+            }
+            com.secretvault.app.ui.stream.StreamViewerScreen(onBack = { navController.popBackStack() })
         }
 
         composable(Screen.CameraStream.route) {

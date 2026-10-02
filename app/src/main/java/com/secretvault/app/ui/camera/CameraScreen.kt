@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,6 +39,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -51,6 +53,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -59,12 +62,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.secretvault.app.SecretVaultApp
 import com.secretvault.app.core.camera.CameraManager
 import com.secretvault.app.core.camera.CameraMode
 import com.secretvault.app.core.camera.CmfHighFpsCameraView
 import com.secretvault.app.core.camera.LensFacing
 import com.secretvault.app.core.camera.VideoMode
+import com.secretvault.app.core.stream.StreamDiscovery
+import com.secretvault.app.core.stream.StreamBleDiscovery
+import com.secretvault.app.core.stream.StreamPinManager
+import com.secretvault.app.core.stream.StreamPreviewRenderer
+import com.secretvault.app.core.stream.StreamSession
+import com.secretvault.app.ui.stream.StreamPinDialog
 import com.secretvault.app.ui.camera.components.CameraBottomBar
 import com.secretvault.app.ui.camera.components.CameraPreviewView
 import com.secretvault.app.ui.camera.components.CameraTopBar
@@ -76,6 +87,9 @@ import com.secretvault.app.ui.theme.VaultAccent
 import com.secretvault.app.ui.theme.VaultDarkBg
 import com.secretvault.app.ui.theme.VaultSurface
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
 
 @Composable
 fun CameraScreen(
@@ -117,6 +131,82 @@ fun CameraScreen(
     val cameraManager = remember {
         CameraManager(context, app.mediaSaveQueue)
     }
+    val pins = remember { StreamPinManager(context.applicationContext) }
+    val discovery = remember { StreamDiscovery(context.applicationContext) }
+    val bluetooth = remember { StreamBleDiscovery(context.applicationContext) }
+    val bluetoothState by bluetooth.state.collectAsState()
+    var bluetoothEnabled by remember { mutableStateOf(StreamBleDiscovery.allowed(context, true)) }
+    val bluetoothPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+        app.sessionManager.setExternalPickerInProgress(false)
+        bluetoothEnabled = grants.values.all { it }
+        if (!bluetoothEnabled) Toast.makeText(context, "Wi-Fi discovery still works without Bluetooth permission", Toast.LENGTH_SHORT).show()
+    }
+    val discoveryState by discovery.state.collectAsState()
+    var stream by remember { mutableStateOf(StreamSession(context.applicationContext)) }
+    val streamState by stream.state.collectAsState()
+    var renderer by remember { mutableStateOf<StreamPreviewRenderer?>(null) }
+    var streamStarted by remember { mutableStateOf(false) }
+    var streamStopping by remember { mutableStateOf(false) }
+    var previewAspect by remember { mutableStateOf(0f) }
+    var foreground by remember { mutableStateOf(true) }
+    var showStreamPin by remember { mutableStateOf(false) }
+    var startAfterPin by remember { mutableStateOf(false) }
+    var savingPin by remember { mutableStateOf(false) }
+    var streamError by remember { mutableStateOf<String?>(null) }
+
+    fun stopStream() {
+        streamStopping = true
+        val oldRenderer = renderer
+        val oldStream = stream
+        discovery.stopAdvertising()
+        bluetooth.stopAdvertising()
+        oldStream.close()
+        scope.launch {
+            oldStream.state.first { !it.busy }
+            if (renderer === oldRenderer) { renderer = null; streamStarted = false; streamStopping = false }
+            oldRenderer?.close()
+        }
+    }
+    fun startStream() {
+        if (renderer != null || streamStopping || !foreground || uiState.isRecording) return
+        streamError = null
+        if (!pins.isConfigured()) { startAfterPin = true; showStreamPin = true; return }
+        stream = StreamSession(context.applicationContext)
+        streamStarted = false
+        try {
+            renderer = StreamPreviewRenderer { scope.launch {
+                streamError = "Camera stream failed. Stop and try again."
+                stopStream()
+            } }
+        } catch (_: Exception) {
+            stream.close()
+            streamError = "Camera stream could not start. Try again."
+        }
+    }
+    LaunchedEffect(streamState.endpoint, streamState.live, bluetoothEnabled) {
+        val endpoint = streamState.endpoint
+        if (endpoint != null && !streamState.live) discovery.advertise(endpoint) else discovery.stopAdvertising()
+        if (endpoint != null && !streamState.live && bluetoothEnabled) bluetooth.advertise(endpoint) else bluetooth.stopAdvertising()
+    }
+    LaunchedEffect(streamState.busy, streamStarted) {
+        if (streamStarted && !stream.state.value.busy && renderer != null) {
+            streamError = streamState.message
+            stopStream()
+        }
+    }
+    LaunchedEffect(renderer, previewAspect) {
+        if (previewAspect > 0f) renderer?.updateViewport(previewAspect)
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                foreground = false; startAfterPin = false; showStreamPin = false
+                discovery.stopAdvertising(); bluetooth.close(); stopStream(); cameraManager.pausePreview()
+            } else if (event == Lifecycle.Event.ON_START) foreground = true
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // Hardware/Gesture back handler: always return to Vault Home
     BackHandler {
@@ -142,6 +232,7 @@ fun CameraScreen(
     var cmfHighFpsViewInstance by remember { mutableStateOf<CmfHighFpsCameraView?>(null) }
     val shutterFlashAlpha = remember { Animatable(0f) }
     var cameraGeneration by remember { mutableStateOf(0) }
+    var cameraIsReady by remember { mutableStateOf(false) }
     val selectedRearOption = uiState.rearLensOptions.firstOrNull { it.id == uiState.selectedRearLensId }
     val selectedPhysicalId = selectedRearOption?.physicalCameraId
     val useCmfHighFps = uiState.cameraMode == CameraMode.VIDEO &&
@@ -151,8 +242,9 @@ fun CameraScreen(
         CmfHighFpsCameraView.isCmfPhone1()
 
     // Start / Restart Camera when permission is granted, camera mode changes, lens facing changes, or preview ready
-    LaunchedEffect(hasCameraPermission, uiState.cameraMode, uiState.lensFacing, selectedPhysicalId, uiState.videoMode, uiState.videoOrientation, uiState.recordAudio, previewViewInstance, cmfHighFpsViewInstance) {
-        if (hasCameraPermission) {
+    LaunchedEffect(hasCameraPermission, foreground, streamStopping, renderer, uiState.cameraMode, uiState.lensFacing, selectedPhysicalId, uiState.videoMode, uiState.videoOrientation, uiState.recordAudio, previewViewInstance, cmfHighFpsViewInstance) {
+        if (hasCameraPermission && foreground && !streamStopping) {
+            cameraIsReady = false
             val pv = previewViewInstance ?: return@LaunchedEffect
             val cmfView = cmfHighFpsViewInstance ?: return@LaunchedEffect
             cameraManager.startCamera(
@@ -168,10 +260,22 @@ fun CameraScreen(
                 selectedRearLensId = selectedPhysicalId,
                 onRearLensOptions = viewModel::setRearLensOptions,
                 onVideoConfigured = { modes, selected -> viewModel.setSupportedVideoModes(modes, selected) },
-                onCameraReady = { cameraGeneration++ },
+                onCameraReady = {
+                    cameraGeneration++
+                    cameraIsReady = true
+                    val gl = renderer
+                    if (gl != null && !streamStarted) {
+                        val activePreview = if (useCmfHighFps) cmfView else pv
+                        streamStarted = true
+                        stream.sendShared(gl, if (activePreview.width < activePreview.height) 90 else 0,
+                            activePreview.width.toFloat() / activePreview.height.coerceAtLeast(1), pins)
+                    } else if (gl != null) stream.refreshCameraFrame()
+                },
                 onCameraError = { error ->
                     Toast.makeText(context, error, Toast.LENGTH_LONG).show()
-                }
+                    if (renderer != null) { streamError = error; stopStream() }
+                },
+                streamRenderer = renderer
             )
         }
     }
@@ -206,15 +310,23 @@ fun CameraScreen(
         }
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(cameraManager) {
         onDispose {
             cameraManager.release()
         }
     }
+    DisposableEffect(stream, renderer) {
+        val currentStream = stream
+        val currentRenderer = renderer
+        onDispose { discovery.stopAdvertising(); currentStream.close(); currentRenderer?.close() }
+    }
+    DisposableEffect(discovery) { onDispose { discovery.close() } }
+    DisposableEffect(bluetooth) { onDispose { bluetooth.close() } }
 
     Box(
         modifier = modifier
             .fillMaxSize()
+            .onSizeChanged { if (it.height > 0) previewAspect = it.width.toFloat() / it.height }
             .background(Color.Black)
     ) {
         if (!hasCameraPermission) {
@@ -322,7 +434,7 @@ fun CameraScreen(
                 videoMode = uiState.videoMode,
                 videoOrientation = uiState.videoOrientation,
                 supportedVideoModes = uiState.supportedVideoModes,
-                isRecording = uiState.isRecording,
+                isRecording = uiState.isRecording || renderer != null,
                 onVideoModeSelect = viewModel::setVideoMode,
                 onVideoOrientationSelect = viewModel::setVideoOrientation,
                 onFaceBlurToggle = { viewModel.toggleFaceBlur() },
@@ -332,6 +444,44 @@ fun CameraScreen(
                     .statusBarsPadding()
             )
 
+            Column(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 64.dp, start = 16.dp, end = 16.dp)
+                .clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.85f)).padding(horizontal = 8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { if (renderer == null) startStream() else stopStream() },
+                        enabled = !uiState.isRecording && !streamStopping && !streamState.stopping && (renderer != null || cameraIsReady)) {
+                        Text(if (renderer != null) "Stop stream" else "Stream", color = VaultAccent)
+                    }
+                    if (renderer == null) TextButton(onClick = {
+                        startAfterPin = false; streamError = null; showStreamPin = true
+                    }) { Text("Streaming PIN", color = TextPrimary) }
+                    IconButton(enabled = renderer == null && !uiState.isRecording, onClick = {
+                        if (bluetoothEnabled) bluetoothEnabled = false
+                        else if (StreamBleDiscovery.allowed(context, true)) bluetoothEnabled = true
+                        else {
+                            app.sessionManager.setExternalPickerInProgress(true)
+                            bluetoothPermission.launch(StreamBleDiscovery.permissions(true))
+                        }
+                    }) { Icon(Icons.Default.Bluetooth,
+                        contentDescription = if (bluetoothEnabled) "Disable Bluetooth discovery" else "Enable Bluetooth discovery",
+                        tint = if (bluetoothEnabled) VaultAccent else TextPrimary) }
+                }
+                val status = when {
+                    renderer != null -> if (!streamStarted) "Preparing camera…" else if (streamState.live) "Viewer connected · Stop stream to record" else streamState.message
+                    streamError != null -> streamError
+                    else -> null
+                }
+                status?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) }
+                if (renderer != null && !streamState.live && uiState.cameraMode == CameraMode.VIDEO) {
+                    Text("Stop stream to record", color = TextSecondary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                }
+                if (renderer != null && discoveryState.message.startsWith("Could not")) {
+                    Text(discoveryState.message, color = TextPrimary, modifier = Modifier.padding(8.dp))
+                }
+                if (renderer != null && bluetoothEnabled && bluetoothState.message.isNotEmpty() && !streamState.live) {
+                    Text(bluetoothState.message, color = TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(8.dp))
+                }
+            }
+
             // Bottom Bar
             CameraBottomBar(
                 flashMode = uiState.flashMode,
@@ -340,6 +490,7 @@ fun CameraScreen(
                 onAudioToggle = viewModel::toggleRecordAudio,
                 cameraMode = uiState.cameraMode,
                 isRecording = uiState.isRecording,
+                isStreaming = renderer != null,
                 recordingDurationSeconds = uiState.recordingDurationSeconds,
                 onModeSelect = { viewModel.setCameraMode(it) },
                 onShutterClick = {
@@ -394,7 +545,7 @@ fun CameraScreen(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .statusBarsPadding()
-                    .padding(top = 64.dp)
+                    .padding(top = if (renderer != null) 176.dp else 128.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -421,4 +572,16 @@ fun CameraScreen(
             }
         }
     }
+    if (showStreamPin) StreamPinDialog(setup = true, saving = savingPin, error = streamError,
+        onDismiss = { showStreamPin = false; startAfterPin = false }, onConfirm = { pin ->
+            savingPin = true
+            scope.launch {
+                try {
+                    withContext(Dispatchers.IO) { try { pins.setPin(pin) } finally { pin.fill('\u0000') } }
+                    showStreamPin = false
+                    if (startAfterPin && foreground) startStream()
+                } catch (_: Exception) { streamError = "Could not save streaming PIN. Try again." }
+                finally { pin.fill('\u0000'); savingPin = false; startAfterPin = false }
+            }
+        })
 }

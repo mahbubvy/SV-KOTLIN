@@ -131,7 +131,7 @@ class StreamPreviewRenderer(private val onError: (Throwable) -> Unit) : SurfaceP
     }
 
     fun nativePreview(preview: Surface, inputSize: Size, outputSize: Size): NativeInput = onGl {
-        check(!closed.get() && nativeOutput == null && inputs.isEmpty())
+        check(!closed.get() && nativeOutput == null)
         val input = createInput(inputSize)
         try {
             nativeOutput = createWindow(preview) to outputSize; current = input
@@ -152,6 +152,11 @@ class StreamPreviewRenderer(private val onError: (Throwable) -> Unit) : SurfaceP
 
     fun detachEncoder() = onGl {
         destroyWindow(encoderWindow); encoderWindow = EGL14.EGL_NO_SURFACE
+    }
+
+    fun updateViewport(aspect: Float) = onGl {
+        require(aspect.isFinite() && aspect > 0f)
+        viewportAspect = aspect
     }
 
     private fun render(input: Input) {

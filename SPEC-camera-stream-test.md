@@ -1,10 +1,11 @@
 # Spec: Discoverable SV camera streaming
 
-Status: Scope revised for camera/home integration, persistent streaming PIN and
-optional Bluetooth-assisted discovery. R1 capability probes and 720p live UI
-streaming passed in both CMF/Pixel directions, including disconnect cleanup.
-The original reported failure was not reproduced; UI-test cache/timing issues
-were corrected. Normal-camera integration is still pending. Active backlog: R1–R14.
+Status: Normal-camera streaming, persistent encrypted PIN, Home viewer, native
+Wi-Fi discovery and optional BLE assistance are implemented in the debug build.
+Both role directions pass pairing/live-view checks. A five-minute CMF → Pixel
+PIN-authenticated stream passed; the user confirmed upright, matching previews.
+Remaining acceptance and unperformed measurements are tracked in R1–R14 and
+tasks/camera-stream-validation.md; implementation does not mark them passed.
 
 ## Objective
 
@@ -77,8 +78,9 @@ Assumptions for review:
 - Kotlin 2.1.0, Android SDK 26 minimum / 35 target, Compose, coroutines 1.10.1.
 - CameraX 1.4.1 handles normal camera sessions.
 - CMF 1080p60 uses a custom Camera2/MediaRecorder path.
-- Native TLS/H.264 streaming helpers and INTERNET/ACCESS_NETWORK_STATE permissions
-  now exist. No PAKE or Bluetooth/discovery implementation is installed yet.
+- Native TLS/H.264, CameraEffect/EGL, NSD and BLE/GATT are implemented. Bouncy
+  Castle 1.86's lightweight J-PAKE supplies certificate-bound mutual PIN confirmation;
+  it does not replace Android's TLS or encryption providers.
 - Preserve generated-fixture evidence in tasks/camera-stream-validation.md;
   diagnose live camera before promoting the revised UX.
 

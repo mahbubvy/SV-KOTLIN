@@ -6,6 +6,7 @@ sealed class Screen(val route: String) {
     object VaultHome : Screen("vault_home")
     object Settings : Screen("settings")
     object Camera : Screen("camera")
+    object ViewStream : Screen("view_stream")
     object CameraStream : Screen("camera_stream_test")
     object MediaViewer : Screen("media_viewer/{albumId}/{initialMediaId}") {
         fun createRoute(albumId: String?, initialMediaId: String): String {

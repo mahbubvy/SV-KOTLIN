@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -26,6 +28,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.Switch
@@ -79,6 +83,7 @@ fun GalleryScreen(
     onCameraClick: () -> Unit,
     onLockClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    onViewStreamClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val uiState by galleryViewModel.uiState.collectAsState()
@@ -298,6 +303,13 @@ fun GalleryScreen(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                if (uiState.activeAlbumId == null) {
+                    ExtendedFloatingActionButton(onClick = onViewStreamClick,
+                        modifier = Modifier.semantics { contentDescription = "View stream" },
+                        containerColor = VaultSurface, contentColor = VaultAccent,
+                        icon = { Icon(Icons.Default.Videocam, contentDescription = null) },
+                        text = { Text("View stream") })
+                }
                 // Import from Device Button
                 SmallFloatingActionButton(
                     onClick = {

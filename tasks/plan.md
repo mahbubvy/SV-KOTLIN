@@ -1,8 +1,9 @@
 # Implementation plan: Discoverable SV camera streaming
 
-Updated: 2026-10-02. Implementation authorized; capability probes and an initial
-live UI checks passed in both CMF/Pixel directions, including disconnect cleanup.
-The original failure was not reproduced. No dependency change yet.
+Updated: 2026-10-02. Normal-camera/home integration, separate encrypted PIN,
+certificate-bound J-PAKE, NSD and optional BLE are implemented. Both phone roles
+pass discovery/pairing/live-view checks; five-minute CMF → Pixel viewing and
+ordinary CMF 1080p60 recording after Stop pass. See [validation evidence](camera-stream-validation.md).
 Active tasks: R1–R14 in [todo.md](todo.md). This revises the same streaming work.
 The original prototype plan is retained below for its decisions and evidence.
 
@@ -50,6 +51,14 @@ it is not a network pairing protocol. Do not reuse its PIN or digest for streami
 ## Architecture choices and research
 
 ### Keep the working media/transport pieces
+
+Implementation refinement: the shared encoder keeps the same 1280×720 codec
+configuration through lens/zoom changes, using CameraX output transforms and
+requesting a keyframe when the source rebinds. Viewport changes update the GPU
+crop; the initial stream orientation stays fixed and content is fitted within it.
+This avoids codec/configuration resets when the encoded format has not changed.
+Phone rotation and front/rear content comparisons still require their listed
+acceptance checks; do not claim those from a portrait-only visual confirmation.
 
 Reuse StreamProtocol, StreamDecoder, bounded queues, native TLS and the existing
 error/lifecycle flow. Retain 720p30 as a measured target, approximately 3 Mbps,

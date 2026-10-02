@@ -71,6 +71,7 @@ fun CameraBottomBar(
     onShutterClick: () -> Unit,
     onFlipCamera: () -> Unit,
     onGalleryClick: () -> Unit,
+    isStreaming: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -114,7 +115,7 @@ fun CameraBottomBar(
         }
 
         // Mode Switcher (Photo / Video)
-        if (!isRecording) {
+        if (!isRecording && !isStreaming) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(24.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -140,7 +141,7 @@ fun CameraBottomBar(
             if (cameraMode == CameraMode.VIDEO) {
                 IconButton(
                     onClick = onAudioToggle,
-                    enabled = !isRecording,
+                    enabled = !isRecording && !isStreaming,
                     modifier = Modifier.size(48.dp).clip(CircleShape)
                         .background(Color.Black.copy(alpha = 0.8f))
                 ) {
@@ -246,6 +247,7 @@ fun CameraBottomBar(
             ShutterButton(
                 cameraMode = cameraMode,
                 isRecording = isRecording,
+                enabled = cameraMode == CameraMode.PHOTO || !isStreaming,
                 onClick = onShutterClick
             )
 
@@ -289,14 +291,15 @@ private fun ModePill(
 private fun ShutterButton(
     cameraMode: CameraMode,
     isRecording: Boolean,
+    enabled: Boolean,
     onClick: () -> Unit
 ) {
     Box(
         modifier = Modifier
             .size(80.dp)
-            .border(4.dp, Color.White, CircleShape)
+            .border(4.dp, if (enabled) Color.White else TextMuted, CircleShape)
             .padding(6.dp)
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         val innerShape = if (cameraMode == CameraMode.VIDEO && isRecording) {

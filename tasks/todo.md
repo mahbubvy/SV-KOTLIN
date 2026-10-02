@@ -89,19 +89,20 @@ Likely files: core/stream/StreamPreviewRenderer.kt (proposed); core/camera/Camer
 
 ## R4: Share the CMF native preview
 
-- [ ] Connect the existing CMF 1080p60 vendor session to the renderer without opening a second camera.
+- [x] Connect the existing CMF 1080p60 vendor session to the renderer without opening a second camera.
 
 Progress: the existing CMF session now feeds a GPU SurfaceTexture in place of
 its direct preview target, retaining the preview + MediaRecorder HAL outputs.
 The renderer supplies local preview and 720p30 encoder. CMF → Pixel shared native
 stream and disconnect pass (minimum sampled sender/viewer 28/28 FPS). Generated
-colour-chart codec/rotation checks pass on both phones. Ordinary recording after
-Stop and source rebind/lifecycle stress remain to verify before completing R4.
+colour-chart codec/rotation checks pass on both phones. After five minutes of
+streaming, ordinary CMF recording measured 59.4 FPS at 1920 × 1080. The temporary
+test recording was deleted. Broader lifecycle interruption cases remain R13.
 
 Acceptance:
 - [x] CMF native local preview and 720p stream derive from the same sensor frames.
 - [x] The verified session/output combination is preserved or any necessary change is explicitly device-tested.
-- [ ] Stream Stop restores the prior ordinary 1080p60 recording path and releases renderer outputs.
+- [x] Stream Stop restores the prior ordinary 1080p60 recording path and releases renderer outputs.
 
 Verification: U/B; CMF native-path instrumentation, Pixel receive check and short nonprivate recording regression.
 Dependencies: R3. Estimated scope: Medium (at most five listed files).
@@ -110,6 +111,13 @@ Likely files: core/camera/CmfHighFpsCameraView.kt; core/stream/StreamPreviewRend
 ## R5: Preserve the actual camera view through changes
 
 - [ ] Match camera content and handle configuration changes in an ordered, bounded stream.
+
+Progress: portrait images were confirmed upright and matching by the user.
+Pixel front/rear/alternate rear lens rebinds kept the same authenticated stream
+and local preview alive. Viewer FPS dipped to 2 during transitions; this is not
+a continuous-30-FPS claim. Asymmetric real-image lens/mirroring and landscape
+appearance still need visual verification. Fixed codec dimensions are retained
+through source changes; CameraX output transforms and fresh keyframes update content.
 
 Acceptance:
 - [ ] Selected rear/front lens, live zoom, crop, mirroring and orientation match local camera content; controls are not sent.
@@ -133,10 +141,11 @@ Progress: StreamPinManager stores six ASCII digits with Keystore AES-256-GCM,
 fresh IVs and dedicated sv_stream_pin_key alias. Persistence, IV uniqueness,
 corruption/invalid-input rejection and persisted five-attempt retry cooldown
 checks pass on CMF and Pixel. PIN set/change UI and active-session invalidation
-will be connected in R9; neither real device's streaming PIN was configured by tests.
+are connected in R9 and pass on both phones. Tests restore the original streaming
+preferences; they do not leave the fixture PIN configured.
 
 Acceptance:
-- [ ] Streaming PIN is set/changeable while unlocked and persists across process restart; proposed policy is six numeric digits.
+- [x] Streaming PIN is set/changeable while unlocked and persists across manager recreation; policy is six numeric digits. Process-restart UI remains untested.
 - [x] PIN/secret is encrypted with a dedicated Keystore AES-GCM key and random IV; values are absent from logs/backups/discovery.
 - [ ] Malformed/missing/corrupt configuration fails explicitly; changing the PIN ends an active stream and invalidates old pairing.
 
@@ -146,12 +155,12 @@ Likely files: core/stream/StreamPinManager.kt (proposed); ui/stream/StreamPinDia
 
 ## R7: Prove secure PIN pairing
 
-- [ ] Select a reviewed PAKE implementation and integrate certificate-bound mutual confirmation into native TLS before exposing public discovery.
+- [x] Select a reviewed PAKE implementation and integrate certificate-bound mutual confirmation into native TLS before exposing public discovery.
 
 Acceptance:
-- [ ] Chosen library/version/license/advisories/size and exact transcript are documented; measured pairing succeeds on both phones with the same PIN.
-- [ ] Wrong PIN, altered TLS identity/transcript, replay/reflection, malformed input and protocol downgrade fail before media; the PIN/reusable proof is never sent.
-- [ ] Pairing input/attempts/time are bounded, sender-wide retry cooldown survives restart, only one viewer is authorized, and session restart requires fresh proofs.
+- [x] Chosen library/version/license/advisories/size and exact transcript are documented; measured pairing succeeds on both phones with the same PIN.
+- [x] Wrong PIN, altered TLS identity/transcript, replay/reflection, malformed input and protocol downgrade fail before media; the PIN/reusable proof is never sent.
+- [x] Pairing input/attempts/time are bounded, sender-wide retry cooldown survives restart, only one viewer is authorized, and session restart requires fresh proofs.
 
 Verification: B; expanded StreamTlsDeviceTest plus PAKE negative cases, two-phone handshake timings and explicit security review before R8.
 Dependencies: R6. Estimated scope: Medium (at most five listed files).
@@ -159,16 +168,16 @@ Likely files: gradle/libs.versions.toml; app/build.gradle.kts; core/stream/Strea
 
 ### Checkpoint after R7: Authenticated pairing
 
-- [ ] Relevant build/checks and actual-device acceptance pass; findings are recorded.
-- [ ] Review the evidence before promoting the next slice; unresolved hardware/security results remain pending.
+- [x] Relevant build/checks and actual-device acceptance pass; findings are recorded.
+- [x] Reviewed the certificate-bound transcript, bounded parsing, attempts and cleanup before discovery integration.
 
 ## R8: Discover and pair over Wi-Fi
 
-- [ ] Build a debug end-to-end device list using NSD and the verified PIN handshake.
+- [x] Build a debug end-to-end device list using NSD and the verified PIN handshake.
 
 Acceptance:
-- [ ] CMF appears on Pixel over the shared Wi-Fi with conflict-safe names and a fresh session identifier.
-- [ ] Only bounded public metadata is advertised; endpoints/fingerprints are treated as untrusted and authenticated by R7 before video.
+- [x] CMF appears on Pixel over the shared Wi-Fi with conflict-safe names and a fresh session identifier; reverse roles and duplicate names also pass.
+- [x] Only bounded public metadata is advertised; endpoints/fingerprints are treated as untrusted and authenticated by R7 before video.
 - [ ] Service loss, stale details, second-viewer/busy, client isolation and registration/resolve failure produce usable states; Stop removes the service.
 
 Verification: U/B; proposed StreamDiscoveryDeviceTest over actual Wi-Fi, duplicate names, restart and no internet; protocol validation tests.
@@ -177,11 +186,11 @@ Likely files: core/stream/StreamDiscovery.kt (proposed); core/stream/StreamSessi
 
 ## R9: Add Stream inside the normal camera
 
-- [ ] Expose the sender through the existing camera UI and active owner.
+- [x] Expose the sender through the existing camera UI and active owner.
 
 Acceptance:
-- [ ] A labeled Stream action configures the PIN if missing, starts intentionally and shows Waiting/Viewer connected/Stop without navigating to a separate camera.
-- [ ] Record is disabled while streaming with a reason; camera settings/defaults are restored after Stop.
+- [x] A labeled Stream action configures the PIN if missing, starts intentionally and shows Waiting/Viewer connected/Stop without navigating to a separate camera.
+- [x] Record is disabled while streaming with a reason; camera settings/defaults are restored after Stop.
 - [ ] Close, failure or PIN change stops broadcast; reopening with keep-vault-open never automatically starts it.
 
 Verification: U/B; actual camera UI walkthrough on CMF and Pixel, permission/error states and ordinary camera reopen.
@@ -190,11 +199,11 @@ Likely files: ui/camera/CameraScreen.kt; ui/camera/components/CameraTopBar.kt; u
 
 ## R10: Add Home View stream above Import
 
-- [ ] Expose the receiver with the placement specified by the user and a device-list/PIN/view flow.
+- [x] Expose the receiver with the placement specified by the user and a device-list/PIN/view flow.
 
 Acceptance:
-- [ ] Root home shows labeled View stream directly above Import; it is absent in folders/selection mode and inaccessible when the vault is locked.
-- [ ] Tap opens available cameras; select → masked PIN dialog → encrypted live view. Receiver never opens its camera/microphone.
+- [x] Root home shows labeled View stream directly above Import; it is absent in folders/selection mode and inaccessible when the vault is locked.
+- [x] Tap opens available cameras; select → masked PIN dialog → encrypted live view. Receiver never opens its camera/microphone.
 - [ ] Search/empty/busy/PIN failure/live/disconnected states, cancel/back/Disconnect and rotated fit are reachable with keyboard and large text.
 
 Verification: U/B; click through both roles, locked navigation, folder/selection state, keyboard/landscape and PIN retry using actual phones.
@@ -208,12 +217,12 @@ Likely files: ui/gallery/GalleryScreen.kt; ui/navigation/Screen.kt; ui/navigatio
 
 ## R11: Advertise optional Bluetooth assistance
 
-- [ ] Provide public setup metadata using native BLE advertisement and bounded read-only GATT.
+- [x] Provide public setup metadata using native BLE advertisement and bounded read-only GATT.
 
 Acceptance:
 - [ ] Advertising/peripheral capability is checked on both phones; permission denial or unsupported hardware leaves Wi-Fi working.
-- [ ] Legacy advertising payload fits its limit; longer public metadata is read through bounded GATT and contains no secret/PIN.
-- [ ] Bluetooth advertising/GATT exist only during an explicit stream, use the same rotating session ID as NSD and stop on exit.
+- [x] Legacy advertising payload fits its limit; longer public metadata is read through bounded GATT and contains no secret/PIN.
+- [x] Bluetooth advertising/GATT exist only during an explicit stream, use the same rotating session ID as NSD and stop on exit.
 
 Verification: U/B; proposed StreamBleDeviceTest on CMF and Pixel with Bluetooth off, permissions denied/revoked and oversized metadata.
 Dependencies: R10. Estimated scope: Medium (at most five listed files).
@@ -221,10 +230,10 @@ Likely files: core/stream/StreamBleDiscovery.kt (proposed); core/stream/StreamSe
 
 ## R12: Merge Bluetooth discoveries into the viewer list
 
-- [ ] Add a filtered short BLE scan to the existing list and retain the same PIN-authenticated Wi-Fi transport.
+- [x] Add a filtered short BLE scan to the existing list and retain the same PIN-authenticated Wi-Fi transport.
 
 Acceptance:
-- [ ] Wi-Fi/BLE sightings for the same session produce one list entry and share the R7 pairing path.
+- [x] Wi-Fi/BLE sightings for the same session produce one list entry and share the R7 pairing path.
 - [ ] Scan is bounded, stops after selection/exit, and supports Refresh; Bluetooth denial/off falls back to NSD.
 - [ ] Different-network/unreachable sightings explain the Wi-Fi requirement; no video or PIN travels in BLE advertisements/GATT.
 

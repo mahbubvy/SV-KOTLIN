@@ -271,3 +271,107 @@ The runner reopens SV after finishing so an unlocked phone remains awake in the 
 - Tests use a temporary preference file and generated PIN, remove that file and
   do not set the real sender PIN. PIN UI and session invalidation remain R9.
   Build passes; authentication/PAKE is the next security checkpoint.
+
+## Normal camera, PIN pairing and discoverable viewer — 2026-10-02
+
+The normal camera now has Stream/Stop and separate streaming PIN setup/change.
+Home exposes View stream above Import. Either device may send or receive; the
+CMF-specific camera adapter remains only an existing recording hardware path.
+One active camera owner feeds local preview and a 1280 × 720 Baseline AVC stream
+targeting 30 FPS at 3 Mbps. Streaming does not change the saved recording quality.
+No audio, simultaneous recording, remote capture or stream saving is provided.
+
+### Authentication and discovery
+
+- Uses Bouncy Castle lightweight J-PAKE 1.86 with NIST-3072/SHA-256 inside native
+  TLS, mutual round-three confirmation bound to the actual certificate, role and
+  fresh session ID. See [protocol and dependency review](stream-pairing-protocol.md).
+  No Android crypto provider is replaced. No PIN/hash/reusable authorization is
+  advertised or logged; the saved sender PIN uses its dedicated AES-GCM key.
+- Local device PIN/TLS tests passed on CMF (529 ms) and Pixel (553 ms). Unit/device
+  negative checks reject wrong PIN, changed certificate/session, replay/reflection,
+  malformed/oversized/zero group input and prototype v1 downgrade before media.
+  Five charged attempts cause a persisted thirty-second cooldown. Reads/connects
+  and total pairing time are bounded; only one viewer is admitted.
+- Production camera → discovered device → masked PIN → live view passed in both
+  directions, including an incorrect PIN followed by correct PIN, Disconnect,
+  sender error cleanup, explicit restart and Stop. NSD discovery measured 280/374 ms;
+  PIN-to-first-frame measured 891/900 ms. Selected CMF FHD60 and Pixel UHD60 modes
+  remained selected after Stop. These timings include the UI harness, not visual delay.
+- BLE-only public metadata discovery and subsequent PIN-authenticated Wi-Fi TLS
+  passed in both directions. Initial scans took 1379/1429 ms. A further duplicate-name
+  test took 859/1022 ms and verified two same-name NSD senders have distinct labels,
+  while NSD/BLE results for one session merge into one entry. Wi-Fi discovery was
+  faster in these runs; Bluetooth is optional assistance, not a video transport.
+- Wi-Fi pairing worked before Bluetooth permissions were granted. The permission
+  denial/revocation paths are reviewed for Wi-Fi fallback; live revocation was not
+  exercised. Metadata parsing accepts only bounded local IPv4 endpoints and v2
+  fields, then verifies certificate-bound PIN proof before accepting media.
+
+### Sustained streaming, UI and source changes
+
+- CMF native camera → Pixel: sender sampled 300 seconds, minimum 25 encoded FPS;
+  viewer sampled 305 seconds, minimum 26 rendered FPS. Continuous live/frame checks
+  passed without a stall, reconnect or queue failure. The user confirmed both
+  phones' portrait images were upright and matching during this run.
+- After Stop, a 2.5-second temporary ordinary CMF clip measured 59.4 FPS from frame
+  presentation timestamps at 1920 × 1080. It was deleted without importing to the vault.
+- Pixel CameraX → CMF: front, rear alternate lens/zoom, then rear main rebinds
+  passed without a second camera or stream reconnect. Sender minimum sampled FPS
+  was 22; viewer minimum was 2 during transitions. This verifies resumed delivery,
+  not uninterrupted 30 FPS through switching or optical ultrawide correctness.
+  The encoder retains fixed dimensions; source transforms and requested keyframes
+  update the feed. Real-image front mirroring/lens identity/landscape comparison
+  still needs visual confirmation.
+- An earlier switching run failed before the viewer reached its first-frame state;
+  no source switch was reported. The repeated run after the Pixel was unlocked
+  passed. The initial failure's precise cause is unconfirmed; it is not reported
+  as a proven application fix or a lens failure.
+- PIN setup/confirmation/change, masked input, deliberate start/Stop, background
+  teardown and return without automatic broadcast passed on both phones. Tests
+  snapshot and restore the real streaming preferences. Changing PIN is available
+  after stopping the stream; Save alone does not start a broadcast.
+- Home placement, absence in a synthetic folder/selection state, View stream/back,
+  and removal of the viewer route on explicit vault lock passed on both phones.
+  Initial checks found the Extended FAB's text absent from the accessibility tree;
+  adding an explicit View stream description made the action discoverable/clickable.
+  The corrected harness establishes authentication before creating the graph and
+  checks OS keyguard separately. No private item was selected or changed.
+- Stop/unpublish, exit/background cleanup, callback ownership, pending PIN wiping,
+  surface release and bounded queue/stall behavior were reviewed. Camera creation
+  failures now surface an error instead of escaping the Stream click handler.
+  A late Bluetooth permission result cannot start receiver discovery in background.
+
+### Limits of this evidence
+
+No screenshots or camera/vault frames were read, and FLAG_SECURE remains enabled.
+Only generated chart pixels were read in the geometry test. APKs were installed
+as updates; no uninstall or vault-data clear occurred. Temporary test preferences,
+invitation files and generated recording were removed; no stream remains active.
+
+Not yet measured/exercised: twenty external visual-delay samples and a 500 ms
+median target, heat observations, internet-disabled Wi-Fi, client isolation,
+live Wi-Fi/permission loss, all surface/process-death races, large text/landscape
+keyboard walkthrough, and unrelated sharing/backup/playback regression flows.
+These remain unchecked acceptance items, not successful tests. The original
+user-reported prototype failure was not reproduced under the tested conditions.
+
+### Final build and review
+
+- 93 unit tests passed with zero failures. Debug application and instrumentation
+  APK builds passed. Final Home/PIN/background tests passed together on both phones
+  (CMF 12.928 seconds / Pixel 14.133 seconds, two tests each).
+- Lint still fails on the pre-existing 41-error baseline, with 116 warnings versus
+  the earlier 113. No new error was introduced. Viewer Surface allocation has two
+  Recycle warnings: ownership is intentionally held in Compose state and released
+  on TextureView destruction, replacement and disposal. Those callbacks were
+  reviewed rather than suppressing lint globally. Existing CameraManager API-level
+  and Media3 opt-in findings remain outside this change. The overall lint task is
+  not reported as passing.
+- Reviewed correctness, resource/lifecycle ownership, input bounds, PIN/TLS trust
+  binding, discovery limits, UI actions/contrast/touch targets and performance.
+  Existing native/CameraX camera and encrypted-storage helpers were reused. The
+  J-PAKE library is the only added dependency; no custom PAKE primitives or relay.
+- Final debug APK: SecretVault-v1.1.1-camera-stream-test-debug.apk, 79,494,749 bytes.
+  SHA-256: `B41CB4C3FAFC380775E1CDA31C9C9D5CE60C638EEB97EFF5749463C2F908B2A9`.
+  Installed as an update on CMF and Pixel. No GitHub push/release was performed.
