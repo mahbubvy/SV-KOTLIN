@@ -144,3 +144,40 @@ controls, ENERGY 1 / RHYTHM 1 / MOTION 1. Existing photo placement is retained.
 
 Scoped source/build/device interaction gate complete with visual/keyboard limits
 stated above; this does not claim an exhaustive visual audit or clean lint.
+
+## Remote video quality and flash, 2026-10-03
+
+Scope: camera-reported quality menu, Off/Auto/On flash, availability and applied
+state. Direction remains native dark/mint, ENERGY 1 / RHYTHM 1 / MOTION 1.
+
+- R-01/R-06–R-10/R-12–R-14/R-19/R-22, C-1/C-2/C-3: the new controls select
+  saved-video quality and camera light. Reuse existing camera presets and icons;
+  no new navigation, decorative asset, filler section or new visual vocabulary.
+- R-02/R-17/R-18/R-28/R-36/R-38, C-5: modes come from camera capabilities and
+  binding, with actual-mode confirmation. Flash completion reflects CameraX
+  completion or native capture results. Explain Auto as photos only and On as
+  continuous light. Explicitly direct users to 30 FPS for photo capture. Defaults
+  and measured video resolution/FPS are recorded in camera-stream-validation.md.
+- R-03/R-05/R-11/R-35, C-4: quality and flash use a two-column row, minimum
+  48 dp controls, 8/16 dp spacing, native menus and wrapping text. Footer controls
+  scroll within half the screen. Disconnect is outside that scroll container so
+  recovery remains visible. Do not show unavailable controls before pairing or
+  after failure. These fixes address two device-test layout failures; retest
+  evidence is recorded in the validation report.
+- R-04/R-23/R-24/R-26/R-27/R-32: explicit native menu labels, selected check marks,
+  polite applied/pending messages, readiness guards and disabled states. Quality
+  and lens changes disable while recording; flash remains available then, but
+  disables during save/other commands. Front-camera no-flash behavior is checked.
+  Device checks verify quality-control bounds and touch height. No keyboard,
+  large-font or landscape visual audit is claimed; FLAG_SECURE is retained.
+- R-15/R-16/R-20/R-21/R-25/R-29–R-31/R-34/R-37: retain existing Material type,
+  shapes, neutral outlines, mint capture accent and red Stop. No added gradients,
+  blur, texture or animation. Existing text/background contrast is unchanged;
+  selected state comes from camera responses rather than decorative status dots.
+- R-33: edits use apply_patch, app/test builds succeed, protocol mutation is
+  caught by the regression test, and 98 unit tests pass. Lint retains the existing
+  41 errors / 116 warnings. Device checks cover highest defaults, selected 60 FPS,
+  flash during recording, post-stop rendering and CMF background save.
+
+Scoped source/build/device gate with stated visual limits; camera image remains
+the primary area, with compact controls and persistent recovery below it.

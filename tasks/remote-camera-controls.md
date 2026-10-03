@@ -76,3 +76,38 @@ normal stop, viewer disconnect and camera background. Saved test clips are
 1920×1080, have portrait rotation metadata and approximately 29.9 FPS measured
 from MP4 sample timestamps. See camera-stream-validation.md for exact evidence
 and remote-camera-controls-ui-gate.md for the scoped interface review.
+
+## Highest-quality recording and remote light
+
+Requested next increment: remove the FHD30-only recording restriction and add
+remote flash control. Stream transport stays 720p30; the saved video uses the
+highest supported resolution/FPS by default, with an explicit viewer quality menu.
+
+- Reuse the existing VideoMode presets and per-camera size/frame-duration/range
+  checks. Rank resolution before FPS. Validate camera binding; never acknowledge
+  an unbound requested quality as applied. Ordinary recording preferences remain
+  separate. Lens changes refresh the available quality list.
+- CMF's native 1080p60 path already accepts a stream renderer. Integrate it with
+  encrypted recording acknowledgments and lifecycle stop. Its two-output session
+  does not offer still capture; show photo unavailable in that selected mode.
+  CameraX 60 FPS streaming also omits the still output so JPEG capture does not
+  constrain sensor FPS. Select a 30 FPS mode to use remote photo capture.
+- Quality changes share the existing bounded sequential command slot, only while
+  idle, and acknowledge after rebind/readiness. No automatic retry.
+- Flash menu uses Off / Auto / On. Auto applies automatic still flash; On also
+  enables continuous light for preview/video. Advertise only a camera with a flash
+  unit. Allow light changes while recording; acknowledge applied torch state.
+  Local and remote light changes synchronize; teardown turns the torch off.
+- Use newer endpoint versions for settings messages. Retain encrypted pairing,
+  foreground/unlocked guards, native menus and 48 dp controls. Verify actual saved
+  resolution/FPS, lens switching, torch state, photos, and record/disconnect cleanup.
+
+Completed 2026-10-03: quality and flash controls built and installed on both
+phones. Pixel defaults to 4K60 and CMF defaults to 4K30; both also record the
+selected 1080p60 while streaming. MP4 sample timestamps measure approximately
+58.9–59.7 FPS for 60 FPS modes and 29.9 FPS for CMF 4K30. Remote flash ON/OFF
+passes before/during recording, and front-camera flash disables. Protected
+pairing recovery, photo capture at 30 FPS, Pixel 0.6× and local/remote camera
+synchronization pass. CMF native background recording finalizes and encrypts.
+98 unit checks pass; lint retains 41 errors / 116 warnings. Exact evidence and
+visual/testing limits are in camera-stream-validation.md and the scoped UI gate.

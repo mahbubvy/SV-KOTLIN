@@ -20,6 +20,7 @@ import com.secretvault.app.ui.settings.SettingsScreen
 import com.secretvault.app.core.camera.CameraMode
 import com.secretvault.app.core.camera.LensFacing
 import com.secretvault.app.core.camera.VideoMode
+import com.secretvault.app.core.camera.FlashMode
 import com.secretvault.app.core.stream.StreamPinManager
 import com.secretvault.app.core.database.entity.AlbumEntity
 import com.secretvault.app.core.model.MediaType
@@ -73,7 +74,14 @@ class StreamLiveUiDeviceTest {
         val status = find { it.text?.toString()?.startsWith("Could not") == true || it.text?.toString()?.startsWith("Camera stream") == true || it.text?.toString() in listOf("Preparing camera…", "Connecting…", "Waiting for first frame…", "Choose Send or View",
             "Could not receive camera. Check Wi-Fi and the connection details, then try again.",
             "Video could not decode. Start a new session.") }?.text
-        throw AssertionError("Stream UI did not show: $text; foreground package: $foreground; status: $status")
+        val visibleText = mutableListOf<String>()
+        fun readVisible(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            if (!node.isPassword && !node.isEditable) node.text?.toString()?.let { visibleText.add(it.take(160)) }
+            for (index in 0 until node.childCount) readVisible(node.getChild(index))
+        }
+        readVisible(instrumentation.uiAutomation.rootInActiveWindow)
+        throw AssertionError("Stream UI did not show: $text; foreground package: $foreground; status: $status; visible=${visibleText.take(30)}")
     }
 
     private fun tap(text: String) {
@@ -158,6 +166,14 @@ class StreamLiveUiDeviceTest {
         val noStreamPin = InstrumentationRegistry.getArguments().getString("noStreamPin") == "true"
         val cameraChanges = InstrumentationRegistry.getArguments().getString("cameraChanges") == "true"
         val remoteVideo = InstrumentationRegistry.getArguments().getString("remoteVideo") == "true"
+        val remoteSettings = InstrumentationRegistry.getArguments().getString("remoteSettings") == "true"
+        val requestedMode = when (InstrumentationRegistry.getArguments().getString("videoMode")) {
+            "1080p60" -> VideoMode.FHD_60
+            "4k30" -> VideoMode.UHD_30
+            "4k60" -> VideoMode.UHD_60
+            "highest" -> if (native) VideoMode.UHD_30 else VideoMode.UHD_60
+            else -> VideoMode.FHD_30
+        }
         val videoExit = InstrumentationRegistry.getArguments().getString("videoExit") ?: "stop"
         assumeTrue(role == "send" || role == "view")
         val context = instrumentation.targetContext
@@ -180,7 +196,7 @@ class StreamLiveUiDeviceTest {
         val cameraModel = CameraViewModel(if (native) VideoMode.FHD_60 else VideoMode.UHD_60).apply { setCameraMode(CameraMode.VIDEO) }
         val viewerTexture = AtomicReference<android.view.TextureView>()
         try {
-            if ((remotePhoto || remoteVideo || cameraChanges) && role == "send") app.sessionManager.unlock()
+            if ((remotePhoto || remoteVideo || cameraChanges || remoteSettings) && role == "send") app.sessionManager.unlock()
             if (remoteVideo) cameraModel.toggleRecordAudio()
             if (role == "send") {
                 StreamPinManager(context).setPinRequired(!noStreamPin)
@@ -198,6 +214,16 @@ class StreamLiveUiDeviceTest {
                     invitationFile.delete(); tap("Stream"); waitFor("Waiting for a viewer", 20000)
                     invitationFile.writeText("svstream2://ready/" + java.net.URLEncoder.encode("SV ${Build.MODEL.take(48)}", "UTF-8"))
                     waitFor("Viewer connected", 60000)
+                    if (remoteSettings) {
+                        runBlocking { kotlinx.coroutines.withTimeout(25000) { cameraModel.uiState.first { it.flashMode == FlashMode.ON } } }
+                        if (!(native && requestedMode == VideoMode.FHD_60)) {
+                            val provider = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context).get()
+                            val info = LensFacing.BACK.selector.filter(provider.availableCameraInfos).first()
+                            assertEquals("Remote flash did not enable CameraX torch", androidx.camera.core.TorchState.ON, info.torchState.value)
+                        }
+                        instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "send: remote flash ON applied to camera; native=${native && requestedMode == VideoMode.FHD_60}") })
+                        runBlocking { kotlinx.coroutines.withTimeout(15000) { cameraModel.uiState.first { it.flashMode == FlashMode.OFF } } }
+                    }
                     if (cameraChanges) {
                         val rear = cameraModel.uiState.value.rearLensOptions
                         val selections = listOf("front") + (listOfNotNull(rear.firstOrNull { it.id == null }) + rear.filter { it.id != null } +
@@ -255,7 +281,8 @@ class StreamLiveUiDeviceTest {
                         val item = captured.single()
                         assertTrue("Encrypted recording or thumbnail missing", File(item.encryptedPath).length() > 0 &&
                             File(requireNotNull(item.thumbnailPath)).length() > 0 && (item.durationMs ?: 0) >= 2500)
-                        assertEquals(1920, item.width); assertEquals(1080, item.height)
+                        assertEquals(if (requestedMode.quality == androidx.camera.video.Quality.UHD) 3840 else 1920, item.width)
+                        assertEquals(if (requestedMode.quality == androidx.camera.video.Quality.UHD) 2160 else 1080, item.height)
                         val plaintext = File(context.cacheDir, "remote-video-metadata-test.mp4")
                         try {
                             app.cryptoEngine.decryptFile(File(item.encryptedPath), plaintext)
@@ -267,7 +294,7 @@ class StreamLiveUiDeviceTest {
                                 val hasAudio = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO)
                                 assertEquals("Portrait recording metadata", "90", rotation)
                                 assertTrue("Silent test recorded audio", hasAudio != "yes")
-                                fps?.toFloatOrNull()?.let { assertTrue("Wrong capture FPS", kotlin.math.abs(it - 30f) < 0.5f) }
+                                fps?.toFloatOrNull()?.let { assertTrue("Wrong capture FPS", kotlin.math.abs(it - requestedMode.fps) < 0.5f) }
                                 instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "send: decrypted test clip metadata rotation=$rotation captureFPS=$fps audio=$hasAudio; exit=$videoExit") })
                             } finally { retriever.release() }
                             val extractor = android.media.MediaExtractor()
@@ -281,7 +308,7 @@ class StreamLiveUiDeviceTest {
                                 while (extractor.sampleTime >= 0) { last = extractor.sampleTime; count++; if (!extractor.advance()) break }
                                 assertTrue("No valid recorded video samples", count > 30 && last > first)
                                 val actualFps = (count - 1) * 1_000_000.0 / (last - first)
-                                assertTrue("Wrong recorded FPS: $actualFps", actualFps in 28.0..32.0)
+                                assertTrue("Wrong recorded FPS: $actualFps", kotlin.math.abs(actualFps - requestedMode.fps) <= 2.0)
                                 instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "send: test clip video samples=$count averagePTSfps=$actualFps") })
                             } finally { extractor.release() }
                         } finally { plaintext.delete() }
@@ -335,6 +362,29 @@ class StreamLiveUiDeviceTest {
                             kotlin.math.abs(matrix[android.graphics.Matrix.MSKEW_X]) > 0.01f)
                     }
                     instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: NSD discovery ${discoveryMs}ms; connection to first-frame ${SystemClock.elapsedRealtime() - connectAt}ms") })
+                    waitFor("Video quality")
+                    val qualityControl = waitFor("Video quality").let { node ->
+                        var parent = node
+                        while (!parent.isClickable && parent.parent != null) parent = parent.parent
+                        parent
+                    }
+                    val qualityBounds = Rect().also(qualityControl::getBoundsInScreen)
+                    assertTrue("Video quality touch target is too small", qualityBounds.height() >= 48 * context.resources.displayMetrics.density - 1)
+                    assertTrue("Video quality control exceeds viewport", qualityBounds.left >= 0 && qualityBounds.right <= context.resources.displayMetrics.widthPixels)
+                    val highestMode = if (native) VideoMode.UHD_30 else VideoMode.UHD_60
+                    waitFor(highestMode.label)
+                    instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: highest default ${highestMode.label}") })
+                    if (requestedMode != highestMode) {
+                        tap("Video quality"); tap(requestedMode.label); waitFor("Camera setting applied", 20000); waitFor(requestedMode.label)
+                    }
+                    if (remoteSettings) {
+                        fun flash(mode: String) {
+                            val current = find { it.text?.toString() in listOf("Flash auto", "Flash on", "Flash off") }?.text?.toString() ?: throw AssertionError("Flash control missing")
+                            tap(current); tap("Flash $mode"); waitFor("Camera setting applied", 15000); waitFor("Flash $mode")
+                        }
+                        flash("on"); SystemClock.sleep(2000); flash("off"); SystemClock.sleep(500)
+                        instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: quality ${requestedMode.label}, remote flash ON/OFF acknowledged") })
+                    }
                     if (cameraChanges) {
                         val cameraButton = waitFor("Choose camera").let { icon ->
                             var control = icon
@@ -364,6 +414,14 @@ class StreamLiveUiDeviceTest {
                         for (label in order) {
                             tap("Choose camera"); tap(label); waitFor("Camera changed", 15000)
                             waitFor(label); waitFor("Live camera"); SystemClock.sleep(1200)
+                            if (label == "Front") {
+                                val noFlash = waitFor("No flash").let { node ->
+                                    var parent = node
+                                    while (!parent.isClickable && parent.parent != null) parent = parent.parent
+                                    parent
+                                }
+                                assertFalse("Front camera without flash enabled the flash control", noFlash.isEnabled)
+                            }
                             assertTrue("Wrong viewer camera selection after $label", find { it.text?.toString() == label } != null)
                         }
                         instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: remote front/rear and ${rear.size} rear lens choices acknowledged; preview remained live") })
@@ -384,6 +442,11 @@ class StreamLiveUiDeviceTest {
                             parent
                         }
                         assertFalse("Lens controls remain enabled while recording", selector.isEnabled)
+                        if (remoteSettings) {
+                            tap("Flash off"); tap("Flash on"); waitFor("Camera setting applied", 15000); waitFor("Flash on")
+                            tap("Flash on"); tap("Flash off"); waitFor("Camera setting applied", 15000); waitFor("Flash off")
+                            instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: flash ON/OFF while recording acknowledged") })
+                        }
                         var previousTimestamp = 0L
                         repeat(4) {
                             SystemClock.sleep(1000); waitFor("Live camera", 500)
@@ -398,6 +461,14 @@ class StreamLiveUiDeviceTest {
                         else {
                             tap("Stop recording"); waitFor("Video saved on camera device", 70000)
                             waitFor("Record video"); waitFor("Live camera")
+                            repeat(4) {
+                                SystemClock.sleep(1000)
+                                activity.onActivity {
+                                    val timestamp = requireNotNull(viewerTexture.get().surfaceTexture).timestamp
+                                    assertTrue("Viewer stopped rendering after recording", timestamp > previousTimestamp)
+                                    previousTimestamp = timestamp
+                                }
+                            }
                         }
                         instrumentation.sendStatus(0, Bundle().apply { putString("streamResult",
                             "view: remote start + four-second rendered preview; lens disabled; exit=$videoExit") })
@@ -408,7 +479,7 @@ class StreamLiveUiDeviceTest {
             }
         } finally {
             invitationFile.delete()
-            if ((remotePhoto || remoteVideo || cameraChanges) && role == "send" && !wasUnlocked) app.sessionManager.lock()
+            if ((remotePhoto || remoteVideo || cameraChanges || remoteSettings) && role == "send" && !wasUnlocked) app.sessionManager.lock()
             if (role == "send") {
                 val edit = prefs.edit().clear()
                 saved.forEach { (key, value) -> when (value) {

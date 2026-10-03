@@ -44,6 +44,10 @@ class CameraViewModel(initialVideoMode: VideoMode = VideoMode.UHD_30) : ViewMode
         _uiState.value = _uiState.value.copy(flashMode = nextMode)
     }
 
+    fun setFlashMode(mode: FlashMode) {
+        _uiState.value = _uiState.value.copy(flashMode = mode)
+    }
+
     fun toggleFaceBlur() {
         _uiState.value = _uiState.value.copy(autoFaceBlur = !_uiState.value.autoFaceBlur)
     }

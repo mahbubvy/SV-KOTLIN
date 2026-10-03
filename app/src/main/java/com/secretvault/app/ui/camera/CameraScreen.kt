@@ -69,6 +69,7 @@ import com.secretvault.app.core.camera.CameraMode
 import com.secretvault.app.core.camera.CmfHighFpsCameraView
 import com.secretvault.app.core.camera.LensFacing
 import com.secretvault.app.core.camera.VideoMode
+import com.secretvault.app.core.camera.FlashMode
 import com.secretvault.app.core.stream.StreamDiscovery
 import com.secretvault.app.core.stream.StreamBleDiscovery
 import com.secretvault.app.core.stream.StreamPinManager
@@ -148,6 +149,9 @@ fun CameraScreen(
     var stream by remember { mutableStateOf(StreamSession(context.applicationContext)) }
     val streamState by stream.state.collectAsState()
     val streamRecording by cameraManager.streamRecordingState.collectAsState()
+    val streamSettings by cameraManager.streamSettings.collectAsState()
+    var streamVideoMode by remember { mutableStateOf<VideoMode?>(null) }
+    var localFlashBusy by remember { mutableStateOf(false) }
     var renderer by remember { mutableStateOf<StreamPreviewRenderer?>(null) }
     var streamStarted by remember { mutableStateOf(false) }
     var streamStopping by remember { mutableStateOf(false) }
@@ -178,6 +182,7 @@ fun CameraScreen(
         streamError = null
         if (pins.isPinRequired() && !pins.isConfigured()) { startAfterPin = true; showStreamPin = true; return }
         stream = StreamSession(context.applicationContext)
+        streamVideoMode = null
         streamStarted = false
         try {
             renderer = StreamPreviewRenderer { scope.launch {
@@ -250,14 +255,14 @@ fun CameraScreen(
     }
     val selectedRearOption = uiState.rearLensOptions.firstOrNull { it.id == uiState.selectedRearLensId }
     val selectedPhysicalId = selectedRearOption?.physicalCameraId
-    val useCmfHighFps = renderer == null && uiState.cameraMode == CameraMode.VIDEO &&
-        uiState.lensFacing == LensFacing.BACK &&
-        uiState.videoMode == VideoMode.FHD_60 &&
+    val useCmfHighFps = uiState.lensFacing == LensFacing.BACK &&
+        (if (renderer == null) uiState.cameraMode == CameraMode.VIDEO && uiState.videoMode == VideoMode.FHD_60
+         else (streamVideoMode?.ordinal ?: streamSettings.mode) == VideoMode.FHD_60.ordinal) &&
         uiState.selectedRearLensId == null &&
         CmfHighFpsCameraView.isCmfPhone1()
 
     // Start / Restart Camera when permission is granted, camera mode changes, lens facing changes, or preview ready
-    LaunchedEffect(hasCameraPermission, foreground, streamStopping, renderer, uiState.cameraMode, uiState.lensFacing, selectedPhysicalId, uiState.videoMode, uiState.videoOrientation, uiState.recordAudio, previewViewInstance, cmfHighFpsViewInstance) {
+    LaunchedEffect(hasCameraPermission, foreground, streamStopping, renderer, streamVideoMode, uiState.cameraMode, uiState.lensFacing, selectedPhysicalId, uiState.videoMode, uiState.videoOrientation, uiState.recordAudio, previewViewInstance, cmfHighFpsViewInstance) {
         if (hasCameraPermission && foreground && !streamStopping) {
             cameraIsReady = false
             appliedCameraId = null
@@ -276,6 +281,7 @@ fun CameraScreen(
                 selectedRearLensId = selectedPhysicalId,
                 onRearLensOptions = viewModel::setRearLensOptions,
                 onAvailableFacings = viewModel::setAvailableFacings,
+                streamVideoMode = streamVideoMode,
                 onVideoConfigured = { modes, selected -> viewModel.setSupportedVideoModes(modes, selected) },
                 onCameraReady = {
                     cameraGeneration++
@@ -287,7 +293,7 @@ fun CameraScreen(
                         val owner = stream
                         stream.sendShared(gl, if (activePreview.width < activePreview.height) 90 else 0,
                             activePreview.width.toFloat() / activePreview.height.coerceAtLeast(1), pins, capturePhoto = {
-                                if (!app.sessionManager.isUnlocked.value || !foreground || !cameraIsReady || stream !== owner || renderer == null || uiState.isRecording) false
+                                if (!app.sessionManager.isUnlocked.value || !foreground || !cameraIsReady || stream !== owner || renderer == null || uiState.isRecording || localFlashBusy || !cameraManager.streamSettings.value.photoAvailable) false
                                 else suspendCancellableCoroutine { result ->
                                     val completed = AtomicBoolean(false)
                                     fun finish(saved: Boolean) {
@@ -303,7 +309,7 @@ fun CameraScreen(
                                 }
                             }, cameraState = remoteCameraState, selectCamera = { target ->
                                 if (!app.sessionManager.isUnlocked.value || !foreground || !cameraIsReady || stream !== owner ||
-                                    renderer == null || appliedCameraId == null || viewModel.uiState.value.isRecording ||
+                                    renderer == null || appliedCameraId == null || localFlashBusy || viewModel.uiState.value.isRecording ||
                                     cameraManager.streamRecordingState.value.saving || remoteCameraState.value.options.none { it.id == target }) false
                                 else if (appliedCameraId == target) true
                                 else {
@@ -316,8 +322,21 @@ fun CameraScreen(
                                 }
                             }, recordingState = cameraManager.streamRecordingState, setRecording = { start ->
                                 if (!app.sessionManager.isUnlocked.value || !foreground || !cameraIsReady || stream !== owner ||
-                                    renderer == null || appliedCameraId == null) false
+                                    renderer == null || appliedCameraId == null || localFlashBusy) false
                                 else cameraManager.setStreamRecording(start, cameraManager.streamRecordingState.value.audio)
+                            }, settingsState = cameraManager.streamSettings, setSetting = { kind, value ->
+                                if (!app.sessionManager.isUnlocked.value || !foreground || !cameraIsReady || stream !== owner ||
+                                    renderer == null || appliedCameraId == null || localFlashBusy) false
+                                else if (kind == 1) {
+                                    val mode = FlashMode.entries[value]
+                                    cameraManager.setStreamFlash(mode).also { if (it) viewModel.setFlashMode(mode) }
+                                } else if (cameraManager.streamRecordingState.value.recording || cameraManager.streamRecordingState.value.saving) false
+                                else {
+                                    val generation = cameraGeneration
+                                    streamVideoMode = VideoMode.entries[value]
+                                    androidx.compose.runtime.snapshotFlow { cameraGeneration > generation && cameraIsReady && appliedCameraId != null }.first { it }
+                                    app.sessionManager.isUnlocked.value && foreground && stream === owner && cameraManager.streamSettings.value.mode == value
+                                }
                             })
                     } else if (gl != null) stream.refreshCameraFrame()
                 },
@@ -512,12 +531,14 @@ fun CameraScreen(
                 streamState.photoMessage?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
                 streamState.cameraMessage?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
                 streamState.recordingMessage?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
+                streamState.settingsMessage?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
                 if (renderer != null) {
                     Text(if (streamRecording.recording) "Recording %02d:%02d".format(streamRecording.seconds / 60, streamRecording.seconds % 60)
                         else if (streamRecording.saving) "Saving encrypted video…"
-                        else if (streamRecording.available) "Remote video: 1080p 30 FPS · Microphone ${if (streamRecording.audio) "on" else "off"}"
+                        else if (streamRecording.available) "Remote video: ${streamSettings.mode?.let { VideoMode.entries[it].label }} · Microphone ${if (streamRecording.audio) "on" else "off"}"
                         else "Remote video unavailable for this camera",
                         color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp))
+                    if (streamRecording.available && !streamSettings.photoAvailable) Text("Select 30 FPS to take photos", color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp))
                     if (streamRecording.recording) androidx.compose.material3.TextButton(onClick = { cameraManager.stopVideoRecording() },
                         modifier = Modifier.heightIn(min = 48.dp)) { Text("Stop recording", color = VaultAccent) }
                 }
@@ -533,7 +554,18 @@ fun CameraScreen(
             CameraBottomBar(
                 flashMode = uiState.flashMode,
                 recordAudio = uiState.recordAudio,
-                onFlashToggle = viewModel::toggleFlashMode,
+                onFlashToggle = {
+                    if (renderer == null) viewModel.toggleFlashMode()
+                    else scope.launch {
+                        localFlashBusy = true
+                        try {
+                            val next = when (uiState.flashMode) { FlashMode.AUTO -> FlashMode.ON; FlashMode.ON -> FlashMode.OFF; FlashMode.OFF -> FlashMode.AUTO }
+                            if (kotlinx.coroutines.withTimeoutOrNull(10_000) { cameraManager.setStreamFlash(next) } == true) viewModel.setFlashMode(next)
+                        } finally { localFlashBusy = false }
+                    }
+                },
+                flashEnabled = !localFlashBusy && (renderer == null || (streamSettings.flashAvailable && !streamState.photoBusy && !streamState.cameraBusy && !streamState.recordingBusy && !streamState.settingsBusy && !streamRecording.saving)),
+                photoAvailable = renderer == null || streamSettings.photoAvailable,
                 onAudioToggle = viewModel::toggleRecordAudio,
                 cameraMode = uiState.cameraMode,
                 isRecording = uiState.isRecording,
@@ -565,14 +597,14 @@ fun CameraScreen(
                         }
                     }
                 },
-                onFlipCamera = { if (!streamState.photoBusy && !streamState.cameraBusy && !streamState.recordingBusy &&
+                onFlipCamera = { if (!streamState.photoBusy && !streamState.cameraBusy && !streamState.recordingBusy && !streamState.settingsBusy &&
                     !streamRecording.recording && !streamRecording.saving) viewModel.toggleLensFacing() },
                 latestMediaItem = latestMediaItem,
                 rearLensOptions = if (uiState.lensFacing == LensFacing.BACK) uiState.rearLensOptions else emptyList(),
                 selectedRearLensId = uiState.selectedRearLensId,
-                onRearLensSelect = { if (!streamState.photoBusy && !streamState.cameraBusy && !streamState.recordingBusy &&
+                onRearLensSelect = { if (!streamState.photoBusy && !streamState.cameraBusy && !streamState.recordingBusy && !streamState.settingsBusy &&
                     !streamRecording.recording && !streamRecording.saving) viewModel.selectRearLens(it) },
-                cameraControlsEnabled = !streamState.photoBusy && !streamState.cameraBusy && !streamState.recordingBusy &&
+                cameraControlsEnabled = !localFlashBusy && !streamState.photoBusy && !streamState.cameraBusy && !streamState.recordingBusy && !streamState.settingsBusy &&
                     !streamRecording.recording && !streamRecording.saving,
                 onGalleryClick = {
                     val item = latestMediaItem

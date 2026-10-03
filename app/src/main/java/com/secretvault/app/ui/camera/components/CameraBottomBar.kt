@@ -77,6 +77,8 @@ fun CameraBottomBar(
     streamEnabled: Boolean,
     isStreaming: Boolean = false,
     cameraControlsEnabled: Boolean = true,
+    flashEnabled: Boolean = true,
+    photoAvailable: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -202,6 +204,7 @@ fun CameraBottomBar(
                 }
                 IconButton(
                     onClick = onFlashToggle,
+                    enabled = flashEnabled,
                     modifier = Modifier.size(48.dp).clip(CircleShape)
                         .background(Color.Black.copy(alpha = 0.8f))
                 ) {
@@ -261,7 +264,7 @@ fun CameraBottomBar(
             ShutterButton(
                 cameraMode = cameraMode,
                 isRecording = isRecording,
-                enabled = cameraControlsEnabled && (cameraMode == CameraMode.PHOTO || !isStreaming),
+                enabled = cameraControlsEnabled && ((cameraMode == CameraMode.PHOTO && photoAvailable) || !isStreaming),
                 onClick = onShutterClick
             )
 

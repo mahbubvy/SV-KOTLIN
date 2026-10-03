@@ -583,3 +583,82 @@ user-reported prototype failure was not reproduced under the tested conditions.
   Tests inspect only metadata/timestamps from their own captures, never images or
   vault media from before the test. Nominal capture-FPS metadata is absent, so the
   measured FPS above comes from video sample PTS rather than that metadata key.
+## Remote highest quality and flash, 2026-10-03
+
+Final APK: `app/build/outputs/apk/debug/SecretVault-v1.1.1-camera-stream-test-debug.apk`.
+SHA-256: `D1D34C997C26C8C5DFD5FE9C77786E2AF0AE3B3EF66CCAE63DF9952994F473C7`.
+Installed with `adb install -r` on CMF A015 and Pixel 5; package hashes match.
+App/test APK builds and all 98 unit tests pass. Lint comparison retains the
+pre-existing 41 errors / 116 warnings; no suppressions or baseline added.
+
+Streaming quality is separate from ordinary recording preferences. Camera
+capabilities rank resolution before FPS; the viewer defaults to the highest
+available preset. Unsupported binding removes that candidate, reports the actual
+fallback and does not acknowledge the failed quality as applied. The photo-only
+fallback restores a 30 FPS preview. No rejected-binding hardware case occurred
+on these two devices; that fallback received source/build review.
+
+Two-phone checks use the normal CameraScreen and StreamViewerScreen, NSD
+discovery, public controls and an unlocked vault. Cameras were aimed at the
+user-authorized test scene. Only newly recorded silent test clips are decrypted
+inside app cache for metadata/sample inspection; plaintext is deleted afterward.
+
+| Camera → viewer | Selected saved mode | Dimensions | MP4 sample FPS | Duration |
+| --- | --- | --- | --- | --- |
+| Pixel → CMF | Highest default 4K60 | 3840×2160 | 58.9081 | 6111 ms |
+| CMF → Pixel | Highest default 4K30 | 3840×2160 | 29.9087 | 6018 ms |
+| CMF → Pixel | Selected native 1080p60 | 1920×1080 | 59.4412 | 5903 ms |
+| CMF → Pixel | Native 1080p60, camera background | 1920×1080 | 59.4421 | 6945 ms |
+| Pixel → CMF | Selected 1080p30, protected regression | 1920×1080 | 29.4688 | 6719 ms |
+| Pixel → CMF | Selected 1080p60 | 1920×1080 | 59.7404 | 4887 ms |
+
+All listed clips have portrait rotation metadata 90°, no audio, encrypted video
+and thumbnail files, and exactly one inserted video record per capture. Reported
+FPS comes from sample count and first/last MP4 timestamps, not the UI label.
+Transport remains 720p30. TextureView timestamps increase during recording and,
+for the stronger later checks, after normal stop. Short checks do not establish
+sustained thermal performance, long-session battery behavior or performance on
+other phones. Early highest-default checks preceded final UI/fallback refinements;
+protected regression and Pixel 1080p60 use the final controls. The last one-line
+photo-only fallback reset is source/build/unit verified, then installed.
+
+Remote flash ON/OFF is acknowledged both before and during recording. CameraX
+torch state is ON on the camera phone during the initial ON check; CMF native
+acknowledgments wait for matching camera capture-result FLASH_MODE readback.
+Auto keeps torch off and selects automatic still flash; its automatic firing in
+dark scenes has not been measured. Front camera without a flash unit exposes
+disabled No flash. 30 FPS retains remote photos; 60 FPS omits ImageCapture and
+shows Select 30 FPS to take photos. Quality/lens/photo actions disable during
+recording or save; flash remains available during recording.
+
+Protected regression rejects a wrong PIN, reconnects with the fixture PIN,
+changes front/back and rear lenses, confirms Pixel 0.6× CameraX zoom 0.615,
+synchronizes local camera changes, saves a photo, and records/stops a video.
+CMF native background test finalizes/encrypts without resuming broadcast. Ordinary
+CMF 1080p60 and Pixel 4K60 defaults are retained after streaming.
+
+Two UI failures were fixed and retested: controls could push Disconnect out of
+the footer's visible range, and pre-pairing unavailable controls crowded the
+wrong-PIN error. Disconnect now sits below the scrolling controls and quality/
+unavailable-video controls appear only when live. Successful retests include
+quality-button touch bounds, recovery, front-camera no-flash, lens and record
+eligibility. Native stop now releases the old GL preview input before creating
+its next session; background cleanup waits for recorder finalization before
+surface release. FLAG_SECURE remains; no landscape/large-font visual audit or
+keyboard test is claimed. See remote-camera-controls-ui-gate.md.
+
+Protocol review checks bounded states/requests, strict flags, ordered frame and
+result messages, protected/open v8/v9 discovery, one pending command and shared
+sequential IDs. Mutation allowing flash mode 3 fails
+qualityAndFlashMessagesAreBoundedAndPreserveFrames; source is restored and the
+full 98-test suite passes. No new dependency or cryptography format change.
+
+Local logs (ignored scratch files):
+`remote-quality-pixel-4k60-{host,viewer}.log`,
+`remote-quality-cmf-4k30-{host,viewer}.log`,
+`remote-quality-cmf-1080p60-{host,viewer}.log`,
+`remote-quality-cmf-background-{host,viewer}.log`,
+`remote-quality-pixel-regression-{host,viewer}.log`, and
+`remote-quality-pixel-1080p60-{host,viewer}.log`.
+Additional failed-layout logs are retained locally. Test clips remain in the
+Camera albums; no user media was removed. No push or release performed.

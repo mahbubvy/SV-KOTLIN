@@ -50,6 +50,7 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
     private var active = false
     private var sessionReady = false
     private var recording = false
+    @Volatile private var stoppingRecording = false
     private var recordingStartedAt = 0L
     private var includeAudio = false
     private var orientationHint = 90
@@ -144,6 +145,7 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
         val handler = backgroundHandler ?: return
         if (!recording) return
         recording = false
+        stoppingRecording = true
         val duration = android.os.SystemClock.elapsedRealtime() - recordingStartedAt
         handler.post {
             val candidate = outputFile
@@ -156,6 +158,7 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
                 null
             }
             if (file == null) candidate?.delete()
+            outputFile = null
             try { mediaRecorder?.reset(); mediaRecorder?.release() } catch (_: Exception) {}
             mediaRecorder = null
             recorderSurface?.release()
@@ -164,13 +167,14 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
             captureSession = null
             sessionReady = false
             if (active && cameraDevice != null) createCmfSession()
+            stoppingRecording = false
             post { onFinished(file, duration) }
         }
     }
 
-    fun setTorch(enabled: Boolean) {
+    fun setTorch(enabled: Boolean, onApplied: ((Boolean) -> Unit)? = null) {
         torchEnabled = enabled
-        if (sessionReady && !recording) applyRepeatingRequest()
+        if (sessionReady) applyRepeatingRequest(onApplied) else onApplied?.invoke(false)
     }
 
     fun release() {
@@ -243,7 +247,8 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
             val renderer = streamRenderer
             texture.setDefaultBufferSize(if (renderer == null) VIDEO_WIDTH else VIDEO_HEIGHT,
                 if (renderer == null) VIDEO_HEIGHT else VIDEO_WIDTH)
-            previewSurface?.release()
+            if (renderedPreview != null) renderedPreview?.close() else previewSurface?.release()
+            renderedPreview = null
             val displaySurface = Surface(texture)
             if (renderer != null) {
                 renderedPreview = renderer.nativePreview(displaySurface, android.util.Size(VIDEO_WIDTH, VIDEO_HEIGHT),
@@ -319,7 +324,7 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
         }
     }
 
-    private fun applyRepeatingRequest() {
+    private fun applyRepeatingRequest(onApplied: ((Boolean) -> Unit)? = null) {
         val camera = cameraDevice ?: return
         val session = captureSession ?: return
         val preview = previewSurface ?: return
@@ -331,8 +336,18 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
                 addTarget(recorder)
                 configureRequest(this)
             }
-            session.setRepeatingRequest(request.build(), null, handler)
+            val expected = if (torchEnabled) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF
+            val completed = java.util.concurrent.atomic.AtomicBoolean(false)
+            session.setRepeatingRequest(request.build(), if (onApplied == null) null else object : CameraCaptureSession.CaptureCallback() {
+                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: android.hardware.camera2.TotalCaptureResult) {
+                    if (result.get(android.hardware.camera2.CaptureResult.FLASH_MODE) == expected && completed.compareAndSet(false, true)) post { onApplied(true) }
+                }
+                override fun onCaptureFailed(session: CameraCaptureSession, request: CaptureRequest, failure: android.hardware.camera2.CaptureFailure) {
+                    if (completed.compareAndSet(false, true)) post { onApplied(false) }
+                }
+            }, handler)
         } catch (error: Exception) {
+            post { onApplied?.invoke(false) }
             reportError("CMF 60 FPS request failed: ${error.message ?: error.javaClass.simpleName}")
         }
     }
@@ -374,7 +389,10 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
     override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) { configureTransform(width, height); if (active) openCamera() }
     override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = configureTransform(width, height)
     override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
-        stopCamera()
+        if (stoppingRecording) {
+            active = false
+            backgroundHandler?.post { stopCamera() }
+        } else stopCamera()
         return true
     }
     override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit

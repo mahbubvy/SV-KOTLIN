@@ -522,4 +522,17 @@ tokens in committed logs, report content, or process command-line arguments.
   97 unit tests pass. Lint remains the pre-existing 41 errors / 116 warnings.
 
 Evidence and remaining verification limits: camera-stream-validation.md and
-remote-camera-controls-ui-gate.md. No further feature increment has been chosen.
+remote-camera-controls-ui-gate.md.
+
+## Remote quality/flash checkpoint, 2026-10-03
+
+- [x] Default to the highest camera-supported preset; viewer quality menu.
+  Pixel 4K60 / CMF 4K30 defaults and both phones' selected 1080p60 verified.
+- [x] Off/Auto/On flash with hardware confirmation and recording-time control.
+  Front-camera no-flash state disables the control; local/remote settings sync.
+- [x] CMF native recording integrated with encrypted save and safe background
+  finalize; moving live preview verified during and after normal stop.
+- [x] Photo capture at 30 FPS, protected pairing recovery, camera/lens selection
+  and Pixel 0.6× regressions pass. 60 FPS advertises photo unavailable.
+- [x] Both phones installed; 98 unit checks pass. Lint remains the existing
+  41 errors / 116 warnings. Scoped UI gate and measurement report recorded.
