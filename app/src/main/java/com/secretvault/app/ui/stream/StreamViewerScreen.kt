@@ -197,8 +197,15 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(state.settingsState.mode?.let { VideoMode.entries[it].label }.orEmpty(), color = TextPrimary, fontSize = 12.sp)
                     if (state.interactionState.cameraId != null) Text("%.1f×".format(java.util.Locale.US, state.interactionState.zoom), color = TextPrimary, fontSize = 12.sp)
-                    Icon(if (state.recordingState.audio) Icons.Default.Mic else Icons.Default.MicOff,
-                        if (state.recordingState.audio) "Microphone on" else "Microphone off", tint = TextPrimary, modifier = Modifier.size(16.dp))
+                    IconToggleButton(checked = state.recordingState.audio,
+                        onCheckedChange = { session.setInteraction(2, if (it) 1f else 0f) },
+                        enabled = canChooseCamera && state.interactionState.microphoneAvailable &&
+                            state.interactionState.cameraId == state.cameraState.selectedId,
+                        modifier = Modifier.size(48.dp)) {
+                        Icon(if (state.recordingState.audio) Icons.Default.Mic else Icons.Default.MicOff,
+                            if (state.recordingState.audio) "Microphone on" else "Microphone off",
+                            tint = if (state.recordingState.audio) VaultAccent else TextPrimary)
+                    }
                 }
                 val notices = listOfNotNull(state.photoMessage, state.cameraMessage, state.recordingMessage, state.settingsMessage, state.interactionMessage)
                     .filter { it !in confirmations && it !in setOf("Taking photo…", "Changing camera…", "Applying camera setting…", "Starting recording…", "Saving encrypted video…") }

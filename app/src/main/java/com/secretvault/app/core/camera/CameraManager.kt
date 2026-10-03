@@ -207,7 +207,8 @@ class CameraManager(
                                 cmfHighFpsActive = true
                                 cmfHighFpsView.start(audio, videoOrientation.recorderOrientationHint, onReady = {
                                     _streamRecordingState.value = _streamRecordingState.value.copy(available = true, audio = audio)
-                                    _interaction.value = StreamInteractionState(maxZoom = cmfHighFpsView.maximumZoom, zoom = cmfHighFpsView.currentZoom, focusAvailable = cmfHighFpsView.focusAvailable)
+                                    _interaction.value = StreamInteractionState(maxZoom = cmfHighFpsView.maximumZoom, zoom = cmfHighFpsView.currentZoom, focusAvailable = cmfHighFpsView.focusAvailable,
+                                        microphoneAvailable = ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
                                     cameraReady = true; setFlashMode(flashMode); onCameraReady()
                                 }, onError = onCameraError, streamRenderer = streamRenderer)
                                 return@addListener
@@ -253,7 +254,8 @@ class CameraManager(
                             includeAudio = recordAudio && !streaming,
                             orientationHint = videoOrientation.recorderOrientationHint,
                             onReady = {
-                                _interaction.value = StreamInteractionState(maxZoom = cmfHighFpsView.maximumZoom, zoom = cmfHighFpsView.currentZoom, focusAvailable = cmfHighFpsView.focusAvailable)
+                                _interaction.value = StreamInteractionState(maxZoom = cmfHighFpsView.maximumZoom, zoom = cmfHighFpsView.currentZoom, focusAvailable = cmfHighFpsView.focusAvailable,
+                                    microphoneAvailable = ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
                                 cameraReady = true
                                 onCameraReady()
                             },
@@ -289,6 +291,8 @@ class CameraManager(
                     }
                 }
                 cameraReady = true
+                _interaction.value = _interaction.value.copy(microphoneAvailable = ContextCompat.checkSelfPermission(context,
+                    android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
                 val boundCamera = camera
                 boundCamera?.let { _interaction.value = _interaction.value.copy(focusAvailable = it.cameraInfo.isFocusMeteringSupported(
                     FocusMeteringAction.Builder(SurfaceOrientedMeteringPointFactory(1f, 1f).createPoint(0.5f, 0.5f)).build())) }

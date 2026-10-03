@@ -79,6 +79,7 @@ fun CameraBottomBar(
     cameraControlsEnabled: Boolean = true,
     flashEnabled: Boolean = true,
     photoAvailable: Boolean = true,
+    audioEnabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -145,10 +146,10 @@ fun CameraBottomBar(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.Bottom
         ) {
-            if (cameraMode == CameraMode.VIDEO) {
+            if (cameraMode == CameraMode.VIDEO || isStreaming) {
                 IconButton(
                     onClick = onAudioToggle,
-                    enabled = !isRecording && !isStreaming,
+                    enabled = !isRecording && audioEnabled,
                     modifier = Modifier.size(48.dp).clip(CircleShape)
                         .background(Color.Black.copy(alpha = 0.8f))
                 ) {

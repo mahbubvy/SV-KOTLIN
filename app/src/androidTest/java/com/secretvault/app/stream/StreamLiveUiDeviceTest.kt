@@ -96,6 +96,34 @@ class StreamLiveUiDeviceTest {
         throw AssertionError("No enabled clickable control for $text")
     }
 
+    private fun zoom(action: String, expected: String) {
+        val node = requireNotNull(find { it.stateDescription?.toString()?.startsWith("Camera zoom ") == true })
+        val control = requireNotNull(node.actionList.firstOrNull { it.label?.toString() == action })
+        assertTrue("Camera zoom action rejected", node.performAction(control.id))
+        val deadline = SystemClock.elapsedRealtime() + 15000
+        while (find { it.stateDescription?.toString() == "Camera zoom $expected×" } == null) {
+            assertTrue("Hardware zoom did not acknowledge $expected", SystemClock.elapsedRealtime() < deadline)
+            SystemClock.sleep(100)
+        }
+    }
+
+    private fun focusViewer() {
+        val bounds = Rect().also { waitFor("Live camera").getBoundsInScreen(it) }
+        val now = SystemClock.uptimeMillis()
+        val x = bounds.exactCenterX()
+        val y = bounds.top + bounds.height() * 0.4f
+        val down = android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, x, y, 0)
+        val up = android.view.MotionEvent.obtain(now, now + 60, android.view.MotionEvent.ACTION_UP, x, y, 0)
+        try {
+            instrumentation.uiAutomation.injectInputEvent(down, true)
+            instrumentation.uiAutomation.injectInputEvent(up, true)
+        } finally { down.recycle(); up.recycle() }
+        waitFor("Focus target", 2000)
+        SystemClock.sleep(6000)
+        assertTrue("Remote focus was rejected", find { it.text?.toString() == "Camera control could not be applied" } == null)
+        waitFor("Live camera")
+    }
+
     @Test fun streamsActualCameraThroughUi() {
         val role = InstrumentationRegistry.getArguments().getString("streamRole")
         assumeTrue(role == "send" || role == "view")
@@ -168,6 +196,7 @@ class StreamLiveUiDeviceTest {
         val remoteVideo = InstrumentationRegistry.getArguments().getString("remoteVideo") == "true"
         val remoteSettings = InstrumentationRegistry.getArguments().getString("remoteSettings") == "true"
         val viewerScreenshot = InstrumentationRegistry.getArguments().getString("viewerScreenshot") == "true"
+        val remoteInteractions = InstrumentationRegistry.getArguments().getString("remoteInteractions") == "true"
         val requestedMode = when (InstrumentationRegistry.getArguments().getString("videoMode")) {
             "1080p60" -> VideoMode.FHD_60
             "4k30" -> VideoMode.UHD_30
@@ -182,7 +211,11 @@ class StreamLiveUiDeviceTest {
         val wasUnlocked = app.sessionManager.isUnlocked.value
         val photoTestStartedAt = System.currentTimeMillis()
         val mediaBefore = if ((remotePhoto || remoteVideo) && role == "send") runBlocking { app.mediaRepository.getTotalCount() } else 0
-        assertTrue("Unlock the phone locally before the live camera check", !context.getSystemService(KeyguardManager::class.java).isDeviceLocked)
+        val unlockDeadline = SystemClock.elapsedRealtime() + 120000
+        while (context.getSystemService(KeyguardManager::class.java).isDeviceLocked) {
+            assertTrue("Unlock the phone locally before the live camera check", SystemClock.elapsedRealtime() < unlockDeadline)
+            SystemClock.sleep(200)
+        }
         instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
@@ -197,8 +230,8 @@ class StreamLiveUiDeviceTest {
         val cameraModel = CameraViewModel(if (native) VideoMode.FHD_60 else VideoMode.UHD_60).apply { setCameraMode(CameraMode.VIDEO) }
         val viewerTexture = AtomicReference<android.view.TextureView>()
         try {
-            if ((remotePhoto || remoteVideo || cameraChanges || remoteSettings || viewerScreenshot) && role == "send") app.sessionManager.unlock()
-            if (remoteVideo) cameraModel.toggleRecordAudio()
+            if ((remotePhoto || remoteVideo || cameraChanges || remoteSettings || viewerScreenshot || remoteInteractions) && role == "send") app.sessionManager.unlock()
+            if (remoteVideo && !remoteInteractions) cameraModel.toggleRecordAudio()
             if (role == "send") {
                 StreamPinManager(context).setPinRequired(!noStreamPin)
                 if (!noStreamPin) {
@@ -211,10 +244,22 @@ class StreamLiveUiDeviceTest {
                     if (role == "send") CameraScreen(context.applicationContext as SecretVaultApp, cameraModel, {}, {})
                     else StreamViewerScreen(onBack = {})
                 } } }
+                if (remoteInteractions) { instrumentation.waitForIdleSync(); app.sessionManager.unlock() }
                 if (role == "send") {
+                    if (remoteInteractions) {
+                        waitFor("Flip Camera", 20000); SystemClock.sleep(2000)
+                        zoom("Zoom in", "1.5"); zoom("Zoom out", "1.0")
+                        instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "send: local hardware zoom acknowledged 1.5x then 1x") })
+                    }
                     invitationFile.delete(); tap("Stream"); waitFor("Waiting for a viewer", 20000)
                     invitationFile.writeText("svstream2://ready/" + java.net.URLEncoder.encode("SV ${Build.MODEL.take(48)}", "UTF-8"))
-                    waitFor("Viewer connected", 60000)
+                    waitFor("Viewer connected", 120000)
+                    if (remoteInteractions) {
+                        runBlocking { kotlinx.coroutines.withTimeout(80000) { cameraModel.uiState.first { !it.recordAudio } } }
+                        runBlocking { kotlinx.coroutines.withTimeout(30000) { cameraModel.uiState.first { it.recordAudio } } }
+                        runBlocking { kotlinx.coroutines.withTimeout(30000) { cameraModel.uiState.first { !it.recordAudio } } }
+                        instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "send: remote microphone OFF/ON/OFF synchronized to local camera") })
+                    }
                     if (remoteSettings) {
                         runBlocking { kotlinx.coroutines.withTimeout(25000) { cameraModel.uiState.first { it.flashMode == FlashMode.ON } } }
                         if (!(native && requestedMode == VideoMode.FHD_60)) {
@@ -394,6 +439,13 @@ class StreamLiveUiDeviceTest {
                     if (requestedMode != highestMode) {
                         tap("Video quality"); tap(requestedMode.label); waitFor("Camera setting applied", 20000); waitFor(requestedMode.label)
                     }
+                    if (remoteInteractions) {
+                        zoom("Zoom in", "1.5"); focusViewer(); zoom("Zoom out", "1.0")
+                        tap("Microphone on"); waitFor("Microphone off"); SystemClock.sleep(2000)
+                        tap("Microphone off"); waitFor("Microphone on"); SystemClock.sleep(2000)
+                        tap("Microphone on"); waitFor("Microphone off"); SystemClock.sleep(2000)
+                        instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: remote hardware zoom, tap focus and microphone OFF/ON/OFF acknowledged") })
+                    }
                     if (viewerScreenshot) {
                         val file = File(context.cacheDir, "stream-viewer-review.png")
                         SystemClock.sleep(4500)
@@ -482,6 +534,16 @@ class StreamLiveUiDeviceTest {
                             parent
                         }
                         assertFalse("Lens controls remain enabled while recording", selector.isEnabled)
+                        if (remoteInteractions) {
+                            val microphone = waitFor("Microphone off").let { icon ->
+                                var control = icon
+                                while (!control.isClickable && control.parent != null) control = control.parent
+                                control
+                            }
+                            assertFalse("Microphone can change audio tracks while recording", microphone.isEnabled)
+                            zoom("Zoom in", "1.5"); focusViewer(); zoom("Zoom out", "1.0")
+                            instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: zoom and focus accepted during recording; microphone disabled") })
+                        }
                         if (remoteSettings) {
                             tap("Flash off"); tap("Flash on"); waitFor("Camera setting applied", 15000); waitFor("Flash on")
                             tap("Flash on"); tap("Flash off"); waitFor("Camera setting applied", 15000); waitFor("Flash off")
@@ -519,7 +581,7 @@ class StreamLiveUiDeviceTest {
             }
         } finally {
             invitationFile.delete()
-            if ((remotePhoto || remoteVideo || cameraChanges || remoteSettings || viewerScreenshot) && role == "send" && !wasUnlocked) app.sessionManager.lock()
+            if ((remotePhoto || remoteVideo || cameraChanges || remoteSettings || viewerScreenshot || remoteInteractions) && role == "send" && !wasUnlocked) app.sessionManager.lock()
             if (role == "send") {
                 val edit = prefs.edit().clear()
                 saved.forEach { (key, value) -> when (value) {

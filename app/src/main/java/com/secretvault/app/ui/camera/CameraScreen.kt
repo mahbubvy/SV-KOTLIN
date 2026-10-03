@@ -362,6 +362,21 @@ fun CameraScreen(
                                         viewModel.setFocusPoint(Offset(request.x * active.width, request.y * active.height))
                                         cameraManager.focusPreviewPoint(request.x, request.y, pv, cmfView)
                                     }
+                                    2 -> {
+                                        val enabled = request.x == 1f
+                                        val current = cameraManager.streamRecordingState.value
+                                        if (current.recording || current.saving || !cameraManager.interaction.value.microphoneAvailable) false
+                                        else if (viewModel.uiState.value.recordAudio == enabled) current.audio == enabled
+                                        else {
+                                            val generation = cameraGeneration
+                                            if (!viewModel.setRecordAudio(enabled)) false
+                                            else {
+                                                androidx.compose.runtime.snapshotFlow { cameraGeneration > generation && cameraIsReady && appliedCameraId == request.cameraId }.first { it }
+                                                app.sessionManager.isUnlocked.value && foreground && stream === owner &&
+                                                    cameraManager.streamRecordingState.value.audio == enabled
+                                            }
+                                        }
+                                    }
                                     else -> false
                                 }
                             })
@@ -587,7 +602,7 @@ fun CameraScreen(
             // Bottom Bar
             CameraBottomBar(
                 flashMode = uiState.flashMode,
-                recordAudio = uiState.recordAudio,
+                recordAudio = if (renderer != null) streamRecording.audio else uiState.recordAudio,
                 onFlashToggle = {
                     if (renderer == null) viewModel.toggleFlashMode()
                     else scope.launch {
@@ -600,6 +615,8 @@ fun CameraScreen(
                 },
                 flashEnabled = !localFlashBusy && (renderer == null || (streamSettings.flashAvailable && !streamState.photoBusy && !streamState.cameraBusy && !streamState.recordingBusy && !streamState.settingsBusy && !streamRecording.saving)),
                 photoAvailable = renderer == null || streamSettings.photoAvailable,
+                audioEnabled = cameraIsReady && interaction.microphoneAvailable && !streamRecording.recording && !streamRecording.saving &&
+                    !streamState.photoBusy && !streamState.cameraBusy && !streamState.recordingBusy && !streamState.settingsBusy && !streamState.interactionBusy,
                 onAudioToggle = viewModel::toggleRecordAudio,
                 cameraMode = uiState.cameraMode,
                 isRecording = uiState.isRecording,

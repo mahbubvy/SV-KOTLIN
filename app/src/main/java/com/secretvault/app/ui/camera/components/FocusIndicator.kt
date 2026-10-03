@@ -15,6 +15,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.secretvault.app.ui.theme.VaultAccent
 
 @Composable
@@ -44,6 +46,7 @@ fun FocusIndicator(
                     )
                 }
                 .size(sizeDp)
+                .semantics { contentDescription = "Focus target" }
                 .border(
                     width = 2.dp,
                     color = VaultAccent.copy(alpha = alpha.value),

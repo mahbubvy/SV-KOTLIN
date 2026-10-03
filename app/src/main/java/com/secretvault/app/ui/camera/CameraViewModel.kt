@@ -53,7 +53,13 @@ class CameraViewModel(initialVideoMode: VideoMode = VideoMode.UHD_30) : ViewMode
     }
 
     fun toggleRecordAudio() {
-        _uiState.value = _uiState.value.copy(recordAudio = !_uiState.value.recordAudio)
+        setRecordAudio(!_uiState.value.recordAudio)
+    }
+
+    fun setRecordAudio(enabled: Boolean): Boolean {
+        if (_uiState.value.isRecording || _uiState.value.isSaving) return false
+        _uiState.value = _uiState.value.copy(recordAudio = enabled)
+        return true
     }
 
     fun toggleLensFacing() {

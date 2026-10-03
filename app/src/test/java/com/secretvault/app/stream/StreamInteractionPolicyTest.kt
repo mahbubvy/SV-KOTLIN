@@ -6,6 +6,13 @@ import org.junit.Test
 
 class StreamInteractionPolicyTest {
     private val controls = StreamInteractionState("back/default", 1f, 8f, 1f, 0.5f, true, true)
+    @Test fun microphoneRequiresCapabilityAndExactOnOffValues() {
+        val request = StreamInteractionRequest(1, "back/default", 2, 0f)
+        assertTrue(interactionAllowed(request, controls, controls.cameraId, StreamRecordingState(available = true)))
+        assertTrue(interactionAllowed(request.copy(x = 1f), controls, controls.cameraId, null))
+        assertFalse(interactionAllowed(request.copy(x = 0.5f), controls, controls.cameraId, null))
+        assertFalse(interactionAllowed(request, controls.copy(microphoneAvailable = false), controls.cameraId, null))
+    }
     @Test fun zoomAndFocusRemainAvailableDuringRecordingButMicrophoneDoesNot() {
         val recording = StreamRecordingState(available = true, recording = true)
         assertTrue(interactionAllowed(StreamInteractionRequest(1, "back/default", 0, 2f), controls, controls.cameraId, recording))
