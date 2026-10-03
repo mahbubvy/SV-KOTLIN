@@ -81,6 +81,9 @@ fun MediaViewerScreen(
     }
 
     val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(uiState.errorMessage) { uiState.errorMessage?.let {
+        android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show()
+    } }
     val activity = remember(context) {
         var ctx = context
         while (ctx is android.content.ContextWrapper) {
@@ -147,6 +150,8 @@ fun MediaViewerScreen(
                     totalCount = uiState.mediaList.size,
                     onBack = onBack,
                     onInfoClick = { viewModel.setInfoDialogOpen(true) },
+                    onFavoriteClick = viewModel::toggleFavorite,
+                    favoriteEnabled = !uiState.favoriteBusy,
                     onRotateMedia = {
                         mediaRotationById[currentItem.id] = ((mediaRotationById[currentItem.id] ?: 0) + 90) % 360
                     }

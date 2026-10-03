@@ -26,6 +26,23 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class GalleryViewModelTest {
 
+    @Test fun favoritesUpdateAndClearHiddenSelections() = runTest(testDispatcher) {
+        val items = kotlinx.coroutines.flow.MutableStateFlow(sampleItems.map { it.copy(isFavorite = it.id == "m2") })
+        coEvery { mockMediaRepo.getMedia(any(), any()) } returns items
+        viewModel = GalleryViewModel(mockMediaRepo)
+        viewModel.showFavorites()
+        advanceUntilIdle()
+        assertEquals(listOf("m2"), viewModel.uiState.value.mediaList.map { it.id })
+        viewModel.selectAll()
+        items.value = sampleItems
+        advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.mediaList.isEmpty())
+        assertFalse(viewModel.uiState.value.isSelectionMode)
+        viewModel.setAlbumFilter("album_camera")
+        advanceUntilIdle()
+        assertEquals(2, viewModel.uiState.value.mediaList.size)
+    }
+
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var mockMediaRepo: MediaRepository
     private lateinit var viewModel: GalleryViewModel

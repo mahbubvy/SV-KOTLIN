@@ -130,14 +130,15 @@ fun GalleryScreen(
         return
     }
 
-    val currentTitle = if (uiState.activeAlbumId == null) "Albums" else uiState.activeAlbumName
+    val isAlbumsHome = uiState.activeAlbumId == null && !uiState.favoritesOnly
+    val currentTitle = if (isAlbumsHome) "Albums" else uiState.activeAlbumName
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
 
     // Intercept hardware/gesture Back: return to root Albums or exit selection mode instead of exiting app
-    androidx.activity.compose.BackHandler(enabled = uiState.activeAlbumId != null || uiState.isSelectionMode) {
+    androidx.activity.compose.BackHandler(enabled = !isAlbumsHome || uiState.isSelectionMode) {
         if (uiState.isSelectionMode) {
             galleryViewModel.clearSelection()
-        } else if (uiState.activeAlbumId != null) {
+        } else if (!isAlbumsHome) {
             galleryViewModel.setAlbumFilter(null, "Albums")
         }
     }
@@ -159,7 +160,7 @@ fun GalleryScreen(
                 selectedCount = uiState.selectedIds.size,
                 isAllSelected = uiState.mediaList.isNotEmpty() && uiState.selectedIds.size == uiState.mediaList.size,
                 currentSort = uiState.sortOrder,
-                showBackButton = uiState.activeAlbumId != null,
+                showBackButton = !isAlbumsHome,
                 onBackClick = { galleryViewModel.setAlbumFilter(null, "Albums") },
                 onSortSelected = { galleryViewModel.setSortOrder(it) },
                 onSelectAllClick = {
@@ -171,14 +172,15 @@ fun GalleryScreen(
                 },
                 onCloseSelectionClick = { galleryViewModel.clearSelection() },
                 onLockClick = onLockClick,
-                onSettingsClick = if (uiState.activeAlbumId == null) onSettingsClick else null,
-                onBackupRestoreClick = if (uiState.activeAlbumId == null && !uiState.isSelectionMode) {
+                onSettingsClick = if (isAlbumsHome) onSettingsClick else null,
+                onFavoritesClick = if (isAlbumsHome) galleryViewModel::showFavorites else null,
+                onBackupRestoreClick = if (isAlbumsHome && !uiState.isSelectionMode) {
                     { showBackupRestoreScreen = true }
                 } else null
             )
 
             // Main Content Area: Albums View (Root) vs Album Media Grid
-            if (uiState.activeAlbumId == null) {
+            if (isAlbumsHome) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -242,13 +244,13 @@ fun GalleryScreen(
                                 )
                             }
                             Text(
-                                text = "No media in ${uiState.activeAlbumName}",
+                                text = if (uiState.favoritesOnly) "No favorites yet" else "No media in ${uiState.activeAlbumName}",
                                 fontSize = 17.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = TextPrimary
                             )
                             Text(
-                                text = "Photos and videos added or imported into this album will appear securely here.",
+                                text = if (uiState.favoritesOnly) "Tap the heart while viewing a photo or video." else "Photos and videos added or imported into this album will appear securely here.",
                                 fontSize = 13.sp,
                                 color = TextMuted,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -299,7 +301,7 @@ fun GalleryScreen(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                if (uiState.activeAlbumId == null) {
+                if (isAlbumsHome) {
                     FloatingActionButton(onClick = onViewStreamClick,
                         containerColor = VaultSurface, contentColor = VaultAccent) {
                         Icon(Icons.Default.Cast, contentDescription = "View stream")

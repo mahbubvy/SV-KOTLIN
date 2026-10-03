@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -69,6 +70,11 @@ fun MediaGridItem(
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
         )
+
+        if (item.isFavorite) Box(Modifier.align(Alignment.TopStart).padding(8.dp)
+            .background(Color.Black.copy(alpha = 0.8f), CircleShape).padding(4.dp)) {
+            Icon(Icons.Default.Favorite, "Favorite", tint = VaultAccent, modifier = Modifier.size(16.dp))
+        }
 
         // Video Badge & Duration
         if (item.mediaType == MediaType.VIDEO) {

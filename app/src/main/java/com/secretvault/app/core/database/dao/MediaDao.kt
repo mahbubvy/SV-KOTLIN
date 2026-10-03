@@ -63,6 +63,9 @@ interface MediaDao {
     @Query("UPDATE media_items SET albumId = :targetAlbumId WHERE id IN (:ids)")
     suspend fun moveItemsToAlbum(ids: List<String>, targetAlbumId: String)
 
+    @Query("UPDATE media_items SET isFavorite = :favorite WHERE id = :id")
+    suspend fun setFavorite(id: String, favorite: Boolean)
+
     @Query("SELECT COUNT(*) FROM media_items WHERE albumId = :albumId")
     suspend fun getItemCountForAlbum(albumId: String): Int
 

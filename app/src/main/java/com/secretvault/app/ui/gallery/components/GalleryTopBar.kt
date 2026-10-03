@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.SettingsBackupRestore
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -52,6 +53,7 @@ fun GalleryTopBar(
     onLockClick: () -> Unit,
     onBackupRestoreClick: (() -> Unit)? = null,
     onSettingsClick: (() -> Unit)? = null,
+    onFavoritesClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -118,6 +120,9 @@ fun GalleryTopBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
+                if (onFavoritesClick != null) IconButton(onClick = onFavoritesClick) {
+                    Icon(Icons.Default.FavoriteBorder, "Favorites", tint = TextPrimary)
+                }
                 if (onBackupRestoreClick != null) {
                     IconButton(onClick = onBackupRestoreClick) {
                         Icon(

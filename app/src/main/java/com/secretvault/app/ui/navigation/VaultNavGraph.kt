@@ -110,7 +110,7 @@ fun VaultNavGraph(
                 albumsViewModel = albumsViewModel,
                 onMediaClick = { item ->
                     val activeAlbumId = galleryViewModel.uiState.value.activeAlbumId
-                    navController.navigate(Screen.MediaViewer.createRoute(activeAlbumId, item.id))
+                    navController.navigate(Screen.MediaViewer.createRoute(activeAlbumId, item.id, galleryViewModel.uiState.value.favoritesOnly))
                 },
                 onCameraClick = {
                     navController.navigate(Screen.Camera.route)
@@ -201,7 +201,8 @@ fun VaultNavGraph(
                 return@composable
             }
             val rawAlbumId = backStackEntry.arguments?.getString("albumId")
-            val albumId = if (rawAlbumId == "ALL") null else rawAlbumId
+            val favoritesOnly = rawAlbumId == "FAVORITES"
+            val albumId = if (rawAlbumId == "ALL" || favoritesOnly) null else rawAlbumId
             val initialMediaId = backStackEntry.arguments?.getString("initialMediaId") ?: ""
 
             val viewerViewModel = remember(albumId, initialMediaId) {
@@ -209,7 +210,8 @@ fun VaultNavGraph(
                     albumId = albumId,
                     initialMediaId = initialMediaId,
                     mediaRepository = app.mediaRepository,
-                    albumRepository = app.albumRepository
+                    albumRepository = app.albumRepository,
+                    favoritesOnly = favoritesOnly
                 )
             }
 

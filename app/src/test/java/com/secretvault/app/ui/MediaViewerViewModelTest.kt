@@ -24,6 +24,37 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class MediaViewerViewModelTest {
 
+    @Test fun favoriteChangesAfterPersistenceAndCanBeRemoved() = runTest(testDispatcher) {
+        viewModel = MediaViewerViewModel("album_camera", "photo_1", mockMediaRepo, mockAlbumRepo)
+        advanceUntilIdle()
+        viewModel.toggleFavorite()
+        advanceUntilIdle()
+        coVerify { mockMediaRepo.setFavorite("photo_1", true) }
+        assertEquals(true, viewModel.getCurrentItem()?.isFavorite)
+        viewModel.toggleFavorite()
+        advanceUntilIdle()
+        coVerify { mockMediaRepo.setFavorite("photo_1", false) }
+        assertEquals(false, viewModel.getCurrentItem()?.isFavorite)
+    }
+
+    @Test fun failedFavoriteWriteDoesNotChangeTheMark() = runTest(testDispatcher) {
+        coEvery { mockMediaRepo.setFavorite(any(), any()) } throws IllegalStateException("Database unavailable")
+        viewModel = MediaViewerViewModel("album_camera", "photo_1", mockMediaRepo, mockAlbumRepo)
+        advanceUntilIdle()
+        viewModel.toggleFavorite()
+        advanceUntilIdle()
+        assertEquals(false, viewModel.getCurrentItem()?.isFavorite)
+        org.junit.Assert.assertNotNull(viewModel.uiState.value.errorMessage)
+    }
+
+    @Test fun favoritesViewerContainsOnlyMarkedItems() = runTest(testDispatcher) {
+        coEvery { mockMediaRepo.getMedia(any(), any()) } returns flowOf(sampleItems.map { it.copy(isFavorite = it.id == "video_1") })
+        viewModel = MediaViewerViewModel(null, "video_1", mockMediaRepo, mockAlbumRepo, favoritesOnly = true)
+        advanceUntilIdle()
+        assertEquals(listOf("video_1"), viewModel.uiState.value.mediaList.map { it.id })
+        assertEquals("Favorites", viewModel.uiState.value.albumName)
+    }
+
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var mockMediaRepo: MediaRepository
     private lateinit var mockAlbumRepo: AlbumRepository

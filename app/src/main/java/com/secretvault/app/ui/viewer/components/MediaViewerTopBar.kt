@@ -11,6 +11,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Rotate90DegreesCw
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -27,6 +30,7 @@ import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.model.MediaType
 import com.secretvault.app.ui.theme.TextMuted
 import com.secretvault.app.ui.theme.TextPrimary
+import com.secretvault.app.ui.theme.VaultAccent
 
 @Composable
 fun MediaViewerTopBar(
@@ -36,6 +40,8 @@ fun MediaViewerTopBar(
     onBack: () -> Unit,
     onInfoClick: () -> Unit,
     onRotateMedia: () -> Unit,
+    onFavoriteClick: () -> Unit = {},
+    favoriteEnabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -81,6 +87,11 @@ fun MediaViewerTopBar(
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
+            IconToggleButton(checked = item.isFavorite, enabled = favoriteEnabled, onCheckedChange = { onFavoriteClick() }) {
+                Icon(if (item.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                    if (item.isFavorite) "Remove from favorites" else "Add to favorites",
+                    tint = if (item.isFavorite) VaultAccent else TextPrimary)
+            }
             if (item.mediaType == MediaType.PHOTO || item.mediaType == MediaType.VIDEO) {
                 IconButton(onClick = onRotateMedia) {
                     Icon(

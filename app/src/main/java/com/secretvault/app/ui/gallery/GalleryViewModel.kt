@@ -20,7 +20,8 @@ data class GalleryUiState(
     val selectedIds: Set<String> = emptySet(),
     val isSelectionMode: Boolean = false,
     val isMoveDialogOpen: Boolean = false,
-    val isCreateAlbumDialogOpen: Boolean = false
+    val isCreateAlbumDialogOpen: Boolean = false,
+    val favoritesOnly: Boolean = false
 )
 
 class GalleryViewModel(
@@ -36,16 +37,19 @@ class GalleryViewModel(
         loadMedia()
     }
 
-    fun setAlbumFilter(albumId: String?, albumName: String = "All Media") {
+    fun setAlbumFilter(albumId: String?, albumName: String = "All Media", favoritesOnly: Boolean = false) {
         _uiState.value = _uiState.value.copy(
             activeAlbumId = albumId,
             activeAlbumName = albumName,
             mediaList = emptyList(),
             selectedIds = emptySet(),
-            isSelectionMode = false
+            isSelectionMode = false,
+            favoritesOnly = favoritesOnly
         )
         loadMedia()
     }
+
+    fun showFavorites() = setAlbumFilter(null, "Favorites", favoritesOnly = true)
 
     fun setSortOrder(sortOrder: SortOrder) {
         _uiState.value = _uiState.value.copy(sortOrder = sortOrder)
@@ -119,7 +123,9 @@ class GalleryViewModel(
                 albumId = _uiState.value.activeAlbumId,
                 sortOrder = _uiState.value.sortOrder
             ).collectLatest { list ->
-                _uiState.value = _uiState.value.copy(mediaList = list)
+                val visible = if (_uiState.value.favoritesOnly) list.filter { it.isFavorite } else list
+                val selected = _uiState.value.selectedIds.intersect(visible.map { it.id }.toSet())
+                _uiState.value = _uiState.value.copy(mediaList = visible, selectedIds = selected, isSelectionMode = selected.isNotEmpty())
             }
         }
     }

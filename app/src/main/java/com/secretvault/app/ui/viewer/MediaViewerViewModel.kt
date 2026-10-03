@@ -18,14 +18,17 @@ data class MediaViewerUiState(
     val isControlsVisible: Boolean = true,
     val isInfoDialogOpen: Boolean = false,
     val isMoveDialogOpen: Boolean = false,
-    val albumName: String = "Vault"
+    val albumName: String = "Vault",
+    val favoriteBusy: Boolean = false,
+    val errorMessage: String? = null
 )
 
 class MediaViewerViewModel(
     private val albumId: String?,
     private val initialMediaId: String,
     private val mediaRepository: MediaRepository,
-    private val albumRepository: AlbumRepository
+    private val albumRepository: AlbumRepository,
+    private val favoritesOnly: Boolean = false
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(MediaViewerUiState())
@@ -95,13 +98,33 @@ class MediaViewerViewModel(
         return state.mediaList.getOrNull(state.currentIndex)
     }
 
+    fun toggleFavorite() {
+        if (_uiState.value.favoriteBusy) return
+        val item = getCurrentItem() ?: return
+        val favorite = !item.isFavorite
+        _uiState.value = _uiState.value.copy(favoriteBusy = true, errorMessage = null)
+        viewModelScope.launch {
+            try {
+                mediaRepository.setFavorite(item.id, favorite)
+                _uiState.value = _uiState.value.copy(favoriteBusy = false,
+                    mediaList = _uiState.value.mediaList.map { if (it.id == item.id) it.copy(isFavorite = favorite) else it })
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(favoriteBusy = false, errorMessage = "Could not update favorite. Try again.")
+            }
+        }
+    }
+
     private fun loadMedia() {
         viewModelScope.launch {
-            val list = mediaRepository.getMedia(albumId, SortOrder.NEWEST_FIRST).first()
+            val all = mediaRepository.getMedia(albumId, SortOrder.NEWEST_FIRST).first()
+            val list = if (favoritesOnly) all.filter { it.isFavorite } else all
             val initialIndex = list.indexOfFirst { it.id == initialMediaId }.coerceAtLeast(0)
             val albumName = if (albumId != null) {
                 val album = albumRepository.getAlbumById(albumId)
                 album?.name ?: "Album"
+            } else if (favoritesOnly) {
+                "Favorites"
             } else {
                 "All Media"
             }

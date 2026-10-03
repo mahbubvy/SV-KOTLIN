@@ -21,6 +21,7 @@ interface MediaRepository {
     suspend fun deleteByIds(ids: List<String>)
     suspend fun moveMediaToAlbum(itemIds: List<String>, targetAlbumId: String)
     suspend fun getTotalCount(): Int
+    suspend fun setFavorite(id: String, favorite: Boolean)
 }
 
 class VaultMediaRepository(
@@ -98,5 +99,9 @@ class VaultMediaRepository(
 
     override suspend fun getTotalCount(): Int = withContext(Dispatchers.IO) {
         mediaDao.getTotalMediaCount()
+    }
+
+    override suspend fun setFavorite(id: String, favorite: Boolean) = withContext(Dispatchers.IO) {
+        mediaDao.setFavorite(id, favorite)
     }
 }

@@ -9,8 +9,8 @@ sealed class Screen(val route: String) {
     object ViewStream : Screen("view_stream")
     object CameraStream : Screen("camera_stream_test")
     object MediaViewer : Screen("media_viewer/{albumId}/{initialMediaId}") {
-        fun createRoute(albumId: String?, initialMediaId: String): String {
-            val encodedAlbum = albumId ?: "ALL"
+        fun createRoute(albumId: String?, initialMediaId: String, favoritesOnly: Boolean = false): String {
+            val encodedAlbum = if (favoritesOnly) "FAVORITES" else albumId ?: "ALL"
             return "media_viewer/$encodedAlbum/$initialMediaId"
         }
     }

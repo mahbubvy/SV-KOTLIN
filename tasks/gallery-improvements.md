@@ -27,3 +27,11 @@ rotation/page reset, accessible zoom actions and pager guard compile successfull
 restored source passes. Physical gesture/playback checks wait for the final APK.
 Implementation follows Android's Compose multitouch/transformable API:
 https://developer.android.com/develop/ui/compose/touch-input/pointer-input/multi-touch
+
+Favorites increment: persisted mark/unmark through a targeted DAO update, viewer
+heart/acknowledged state, grid badge and Home Favorites shortcut. Favorites view
+filters live repository results and prunes hidden selections; viewer opens only
+marked items and Back retains the Home collection state. 105 unit tests pass,
+including persistence failure and filtering. Dropping the toggle negation fails
+the persistence regression; restored code passes. Existing backup v1 manifests
+do not contain favorites; this increment preserves their wire format.
