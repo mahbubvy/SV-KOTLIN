@@ -13,6 +13,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Cameraswitch
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -23,6 +25,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -53,12 +56,16 @@ fun StreamViewerScreen(onBack: () -> Unit) {
     }
     var session by remember { mutableStateOf(StreamSession(context.applicationContext)) }
     val state by session.state.collectAsState()
+    val canTakePhoto = state.live && !state.photoBusy && !state.cameraBusy && !state.stopping &&
+        (state.cameraState.options.isEmpty() || state.cameraState.selectedId != null)
     val latestSession by rememberUpdatedState(session)
     var prompt by remember { mutableStateOf<StreamEndpoint?>(null) }
     var selected by remember { mutableStateOf<StreamEndpoint?>(null) }
     var pendingPin by remember { mutableStateOf<CharArray?>(null) }
     var surface by remember { mutableStateOf<Surface?>(null) }
+    var cameraMenu by remember { mutableStateOf(false) }
     fun disconnect() {
+        cameraMenu = false
         session.close(); pendingPin?.fill('\u0000'); pendingPin = null; selected = null; discovery.search()
         if (bluetoothEnabled) bluetooth.search()
     }
@@ -139,17 +146,41 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                     }
                 }, update = { view -> fitPreview(view, state.config, false) }, modifier = Modifier.fillMaxSize())
             }
-            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.fillMaxWidth().heightIn(max = (LocalConfiguration.current.screenHeightDp / 2).dp)
+                .verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(selected?.name.orEmpty(), color = TextPrimary)
                 Text(state.message, color = TextSecondary)
                 state.photoMessage?.let { Text(it, color = TextPrimary,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+                state.cameraMessage?.let { Text(it, color = TextPrimary,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+                if (state.cameraState.options.size > 1) Box {
+                    OutlinedButton(onClick = { cameraMenu = true },
+                        enabled = state.live && !state.photoBusy && !state.cameraBusy && state.cameraState.selectedId != null && !state.stopping,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) {
+                        Icon(Icons.Default.Cameraswitch, "Choose camera")
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (state.cameraBusy) "Changing camera…" else
+                            state.cameraState.options.firstOrNull { it.id == state.cameraState.selectedId }?.label ?: "Preparing camera…")
+                    }
+                    DropdownMenu(expanded = cameraMenu && state.live && !state.cameraBusy && !state.photoBusy && state.cameraState.selectedId != null,
+                        onDismissRequest = { cameraMenu = false },
+                        containerColor = VaultSurface) {
+                        state.cameraState.options.forEach { option ->
+                            DropdownMenuItem(text = { Text(option.label, color = TextPrimary) },
+                                onClick = { cameraMenu = false; session.selectCamera(option.id) },
+                                trailingIcon = { if (option.id == state.cameraState.selectedId) Icon(Icons.Default.Check, "Selected", tint = TextPrimary) },
+                                modifier = Modifier.heightIn(min = 48.dp))
+                        }
+                    }
+                }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (state.photoAvailable) IconButton(onClick = { session.takePhoto() },
-                        enabled = state.live && !state.photoBusy && !state.stopping,
-                        modifier = Modifier.size(64.dp).clip(CircleShape).background(if (state.live && !state.photoBusy) VaultAccent else VaultSurface)) {
+                        enabled = canTakePhoto,
+                        modifier = Modifier.size(64.dp).clip(CircleShape).background(if (canTakePhoto) VaultAccent else VaultSurface)) {
                         Icon(Icons.Default.CameraAlt, contentDescription = "Take photo",
-                            tint = if (state.live && !state.photoBusy) VaultDarkBg else TextMuted)
+                            tint = if (canTakePhoto) VaultDarkBg else TextMuted)
                     }
                     OutlinedButton(onClick = ::disconnect, modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) {

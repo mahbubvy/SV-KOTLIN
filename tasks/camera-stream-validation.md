@@ -475,3 +475,45 @@ user-reported prototype failure was not reproduced under the tested conditions.
   not tested separately from the successful NSD flow.
 - Installed on CMF and Pixel without clearing app data. APK SHA-256:
   `94D4529785930DD7D6A0B0C1F8314E76C675C152A2A086AA45F0C70D926C8B22`.
+
+## Remote camera/lens controls, 2026-10-03
+
+- Added a secondary camera menu to the viewer. Available facings come from
+  CameraX, rear lens choices from the existing camera catalog, and selected IDs
+  follow camera readiness plus successful zoom completion. Remote photo and
+  selection share one pending command, sequential IDs and a bounded result queue.
+  Local source controls disable during pending remote operations. Results and
+  selected-state updates share the single video writer.
+- All 96 unit tests pass, both APKs build, and diff whitespace checks pass. A
+  deliberate mutation weakening the option limit from eight to nine fails the
+  new protocol test; restoring the limit makes the full suite pass. Lint remains
+  at 41 existing errors and 116 warnings, without suppression.
+- The first UI attempt read the camera menu before its popup appeared. The
+  test now waits for Front before reading options. The next test overlapped its
+  local-flip phase with the viewer's last rear-selection assertion; these phases
+  are now separated. These were test synchronization failures; no production
+  source change was needed to obtain the subsequent switching passes.
+- CMF camera, open mode: NSD discovery 346 ms, first frame 446 ms. Remote front
+  and rear 1× switch with acknowledgments and matching camera model; local flips
+  update the viewer without reconnecting. CMF advertises one rear choice.
+- Pixel camera, protected mode: discovery 406 ms, PIN to first frame 970 ms.
+  Wrong PIN rejects, correct PIN connects, remote front and both rear options
+  acknowledge and match camera selections. Local flips synchronize. Both
+  directions check portrait viewer transform, fifteen seconds of continued live
+  preview, Disconnect, original video defaults and explicit restart/Stop.
+- Logs: scratch/remote-lens-cmf-host.log, scratch/remote-lens-pixel-viewer.log,
+  scratch/remote-lens-pixel-host.log and scratch/remote-lens-cmf-viewer.log.
+  No photos/videos were saved. Physical field-of-view, front-camera mirroring,
+  landscape and large-font visual checks are not claimed from these metadata
+  assertions. The full camera-selection timeout was not deliberately induced.
+- Final UI review uses the same eligibility for shutter disabled colors and
+  click handling, hides a stale menu while camera readiness is pending, and caps
+  the scrollable controls to half the window height to preserve preview space.
+  Final app is installed on both phones without clearing app data. SHA-256:
+  `727A3E5F178EA710F5FDA1BF5C422370C851E49496E082F2271E814DA237D957`.
+  The final runtime repeat initially stopped at Android lock screens after
+  installation. After local unlock, both directions pass again, including the
+  selector's 48 dp minimum height and viewport bounds. Final CMF-camera startup:
+  discovery 411 ms, first frame 689 ms; final Pixel-camera startup: discovery
+  283 ms, first frame 1079 ms. Installed hashes match on both phones. No
+  broadcasts remain active. The scoped UI gate is remote-camera-controls-ui-gate.md.

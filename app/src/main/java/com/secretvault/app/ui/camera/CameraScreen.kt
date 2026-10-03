@@ -73,6 +73,8 @@ import com.secretvault.app.core.stream.StreamBleDiscovery
 import com.secretvault.app.core.stream.StreamPinManager
 import com.secretvault.app.core.stream.StreamPreviewRenderer
 import com.secretvault.app.core.stream.StreamSession
+import com.secretvault.app.core.stream.StreamCameraState
+import com.secretvault.app.core.stream.StreamCameraOption
 import com.secretvault.app.ui.stream.StreamPinDialog
 import com.secretvault.app.ui.camera.components.CameraBottomBar
 import com.secretvault.app.ui.camera.components.CameraPreviewView
@@ -88,6 +90,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import java.util.concurrent.atomic.AtomicBoolean
@@ -238,6 +241,17 @@ fun CameraScreen(
     }
     var cameraGeneration by remember { mutableStateOf(0) }
     var cameraIsReady by remember { mutableStateOf(false) }
+    var appliedCameraId by remember { mutableStateOf<String?>(null) }
+    val remoteCameraState = remember { MutableStateFlow(StreamCameraState()) }
+    LaunchedEffect(uiState.availableFacings, uiState.rearLensOptions, appliedCameraId) {
+        val choices = buildList {
+            if (LensFacing.BACK in uiState.availableFacings) uiState.rearLensOptions.take(7).forEach {
+                add(StreamCameraOption("back/${it.id ?: "default"}", "Rear ${it.label}"))
+            }
+            if (LensFacing.FRONT in uiState.availableFacings) add(StreamCameraOption("front", "Front"))
+        }
+        remoteCameraState.value = StreamCameraState(choices, appliedCameraId?.takeIf { id -> choices.any { it.id == id } })
+    }
     val selectedRearOption = uiState.rearLensOptions.firstOrNull { it.id == uiState.selectedRearLensId }
     val selectedPhysicalId = selectedRearOption?.physicalCameraId
     val useCmfHighFps = renderer == null && uiState.cameraMode == CameraMode.VIDEO &&
@@ -250,6 +264,7 @@ fun CameraScreen(
     LaunchedEffect(hasCameraPermission, foreground, streamStopping, renderer, uiState.cameraMode, uiState.lensFacing, selectedPhysicalId, uiState.videoMode, uiState.videoOrientation, uiState.recordAudio, previewViewInstance, cmfHighFpsViewInstance) {
         if (hasCameraPermission && foreground && !streamStopping) {
             cameraIsReady = false
+            appliedCameraId = null
             val pv = previewViewInstance ?: return@LaunchedEffect
             val cmfView = cmfHighFpsViewInstance ?: return@LaunchedEffect
             cameraManager.startCamera(
@@ -264,6 +279,7 @@ fun CameraScreen(
                 recordAudio = uiState.recordAudio,
                 selectedRearLensId = selectedPhysicalId,
                 onRearLensOptions = viewModel::setRearLensOptions,
+                onAvailableFacings = viewModel::setAvailableFacings,
                 onVideoConfigured = { modes, selected -> viewModel.setSupportedVideoModes(modes, selected) },
                 onCameraReady = {
                     cameraGeneration++
@@ -289,6 +305,19 @@ fun CameraScreen(
                                             finish(true)
                                         })
                                 }
+                            }, cameraState = remoteCameraState, selectCamera = { target ->
+                                if (!app.sessionManager.isUnlocked.value || !foreground || !cameraIsReady || stream !== owner ||
+                                    renderer == null || appliedCameraId == null || viewModel.uiState.value.isRecording ||
+                                    remoteCameraState.value.options.none { it.id == target }) false
+                                else if (appliedCameraId == target) true
+                                else {
+                                    appliedCameraId = null
+                                    if (!viewModel.selectStreamCamera(target)) false
+                                    else {
+                                        androidx.compose.runtime.snapshotFlow { appliedCameraId }.first { it == target }
+                                        app.sessionManager.isUnlocked.value && foreground && cameraIsReady && stream === owner
+                                    }
+                                }
                             })
                     } else if (gl != null) stream.refreshCameraFrame()
                 },
@@ -302,8 +331,13 @@ fun CameraScreen(
     }
 
     LaunchedEffect(cameraGeneration, uiState.selectedRearLensId, uiState.lensFacing) {
+        if (!cameraIsReady) return@LaunchedEffect
+        appliedCameraId = null
         val ratio = if (uiState.lensFacing == LensFacing.BACK) selectedRearOption?.zoomRatio ?: 1f else 1f
-        cameraManager.setZoomRatio(ratio) { error ->
+        val targetId = if (uiState.lensFacing == LensFacing.FRONT) "front" else "back/${uiState.selectedRearLensId ?: "default"}"
+        cameraManager.setZoomRatio(ratio, onApplied = {
+            appliedCameraId = targetId
+        }) { error ->
             viewModel.selectRearLens(null)
             Toast.makeText(context, error, Toast.LENGTH_LONG).show()
         }
@@ -476,6 +510,7 @@ fun CameraScreen(
                 }
                 status?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) }
                 streamState.photoMessage?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
+                streamState.cameraMessage?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
                 if (renderer != null && !streamState.live && uiState.cameraMode == CameraMode.VIDEO) {
                     Text("Stop stream to record", color = TextSecondary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                 }
@@ -523,11 +558,12 @@ fun CameraScreen(
                         }
                     }
                 },
-                onFlipCamera = { viewModel.toggleLensFacing() },
+                onFlipCamera = { if (!streamState.photoBusy && !streamState.cameraBusy) viewModel.toggleLensFacing() },
                 latestMediaItem = latestMediaItem,
                 rearLensOptions = if (uiState.lensFacing == LensFacing.BACK) uiState.rearLensOptions else emptyList(),
                 selectedRearLensId = uiState.selectedRearLensId,
-                onRearLensSelect = viewModel::selectRearLens,
+                onRearLensSelect = { if (!streamState.photoBusy && !streamState.cameraBusy) viewModel.selectRearLens(it) },
+                cameraControlsEnabled = !streamState.photoBusy && !streamState.cameraBusy,
                 onGalleryClick = {
                     val item = latestMediaItem
                     if (item != null) {

@@ -76,6 +76,7 @@ fun CameraBottomBar(
     onStreamToggle: () -> Unit,
     streamEnabled: Boolean,
     isStreaming: Boolean = false,
+    cameraControlsEnabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -172,6 +173,7 @@ fun CameraBottomBar(
                             .background(if (isSelected) VaultAccent.copy(alpha = 0.24f) else Color.Black.copy(alpha = 0.55f))
                             .selectable(
                                 selected = isSelected,
+                                enabled = cameraControlsEnabled,
                                 role = Role.RadioButton,
                                 onClick = { onRearLensSelect(lens.id) }
                             )
@@ -259,14 +261,14 @@ fun CameraBottomBar(
             ShutterButton(
                 cameraMode = cameraMode,
                 isRecording = isRecording,
-                enabled = cameraMode == CameraMode.PHOTO || !isStreaming,
+                enabled = cameraControlsEnabled && (cameraMode == CameraMode.PHOTO || !isStreaming),
                 onClick = onShutterClick
             )
 
             // Flip Camera Button
             IconButton(
                 onClick = onFlipCamera,
-                enabled = !isRecording,
+                enabled = !isRecording && cameraControlsEnabled,
                 modifier = Modifier
                     .size(52.dp)
                     .clip(CircleShape)

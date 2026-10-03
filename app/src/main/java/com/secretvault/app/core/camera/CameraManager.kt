@@ -101,7 +101,8 @@ class CameraManager(
         onVideoConfigured: (List<VideoMode>, VideoMode) -> Unit,
         onCameraReady: () -> Unit,
         onCameraError: (String) -> Unit,
-        streamRenderer: com.secretvault.app.core.stream.StreamPreviewRenderer? = null
+        streamRenderer: com.secretvault.app.core.stream.StreamPreviewRenderer? = null,
+        onAvailableFacings: (List<LensFacing>) -> Unit = {}
     ) {
         if (activeRecording != null || _isRecording.value) return
         streaming = streamRenderer != null
@@ -134,6 +135,7 @@ class CameraManager(
             try {
                 cameraProvider?.unbindAll()
                 val availableInfos = cameraProvider!!.availableCameraInfos
+                onAvailableFacings(LensFacing.entries.filter { it.selector.filter(availableInfos).isNotEmpty() })
                 val backCameraInfo = LensFacing.BACK.selector.filter(availableInfos).firstOrNull()
                 val rearLensOptions = backCameraInfo?.let {
                     runCatching { discoverRearLensOptions(it) }
@@ -311,7 +313,7 @@ class CameraManager(
         return options
     }
 
-    fun setZoomRatio(ratio: Float, onError: (String) -> Unit) {
+    fun setZoomRatio(ratio: Float, onApplied: () -> Unit = {}, onError: (String) -> Unit) {
         if (_isRecording.value || cmfHighFpsActive || camera == null) return
         val boundCamera = camera ?: return
         val state = boundCamera.cameraInfo.zoomState.value ?: return
@@ -328,6 +330,7 @@ class CameraManager(
             try {
                 operation.get()
                 Log.i("VaultCamera", "Zoom applied: $ratio; range=${state.minZoomRatio}..${state.maxZoomRatio}")
+                onApplied()
             } catch (e: Exception) {
                 onError("Could not apply camera zoom")
             }

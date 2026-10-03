@@ -1,4 +1,4 @@
-# Local camera pairing, protected v2 and optional-PIN v3
+# Local camera pairing and controls
 
 The existing TLS media connection remains in use. PIN authentication uses the
 Bouncy Castle lightweight J-PAKE API, not a PIN hash or home-made PAKE arithmetic.
@@ -96,4 +96,33 @@ updated viewers can still receive video from older cameras without photo control
 Checkpoint evidence is recorded in camera-stream-validation.md. Matching PIN,
 wrong PIN, changed certificate/session, replay/reflection, malformed group input
 and v1 downgrade checks pass. On-phone PIN/TLS pairing took 529 ms on CMF and
-553 ms on Pixel; real two-phone PIN-to-first-frame UI checks took 891/900 ms.
+  553 ms on Pixel; real two-phone PIN-to-first-frame UI checks took 891/900 ms.
+
+## Remote camera and lens selection
+
+Camera-control endpoints advertise protected discovery v4 or open discovery v5.
+PIN and TLS handshakes remain unchanged. Updated viewers also understand v2/v3
+cameras without lens controls; earlier viewers ignore v4/v5 endpoints rather
+than receiving message types they cannot parse. Both phones need the new build
+for remote lens selection. This version is carried identically in NSD and BLE.
+
+After stream configuration, type 6 carries at most eight unique camera options
+and the applied selection. IDs are 1–32 ASCII bytes matching [A-Za-z0-9_./:-];
+labels are 1–48 UTF-8 bytes without control characters. Text lengths are one
+byte and are bounded before allocation. No applied ID means camera readiness
+or zoom is still pending. The camera supplies available front/back facings and
+the existing rear lens catalog; options do not come from the viewer.
+
+Type 7 carries a positive 64-bit request ID and an advertised target ID. Photo
+and camera selections share sequential IDs and one outstanding command. Type 8
+returns that ID and a 0/1 applied result after camera rebind and zoom completion.
+The camera requires its unlocked foreground screen and accepts only advertised
+targets. Selection confirmation is bounded to ten seconds; the viewer stops
+after fifteen seconds without a result. A late hardware change can still apply
+after timeout; the viewer must check the camera device and never retries it.
+
+The same video writer sends configuration, option updates, acknowledgments and
+frames. Local camera changes update the applied selection on the viewer. Camera
+and lens controls are unavailable while a photo/selection command is pending.
+Stopping restores ordinary recording configuration; simultaneous video recording
+is still separate work.

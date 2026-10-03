@@ -5,6 +5,16 @@ implementation; R1 capability and live UI streaming checks passed on both phones
 prototype evidence. Unfinished prototype acceptance is carried into these tasks.
 
 See [plan.md](plan.md) and [spec](../SPEC-camera-stream-test.md).
+Remote controls, increment 2 (2026-10-03): viewer camera/lens selection is
+implemented through the existing camera rebind/zoom path. The camera reports
+available front/back facings, rear lens choices and the applied selection.
+Photo and selection commands share one pending request. The viewer reflects
+local camera changes, and controls scroll on short screens. All 96 unit tests
+pass; both APKs build. Lint remains at 41 errors and 116 warnings. Two-phone
+camera switching passes in open CMF-camera mode and protected Pixel-camera
+mode, including Pixel's two rear choices. See remote-camera-controls.md and
+camera-stream-validation.md. Remote video recording is the next increment.
+
 Optional streaming PIN (2026-10-03): Settings now has a persistent Require
 streaming PIN switch, on by default. Off allows direct encrypted Wi-Fi viewing
 without initial PIN setup; existing PINs are retained for re-enabling. Protected
@@ -25,8 +35,8 @@ passed in both directions: one photo in each camera phone's Camera album, saved
 confirmation on the viewer, fifteen seconds of continued preview, Disconnect and
 explicit restart/Stop, with recording defaults retained. An initial CMF-to-Pixel
 attempt failed before Live; retry passed, with no confirmed cause for that initial
-connection failure. Remote lens switching and video recording remain
-separate future increments.
+connection failure. Remote lens switching is covered by increment 2 above;
+video recording remains a separate future increment.
 Latest APK build: Home action sizes now use the same regular FAB for Import and
 Camera, with an icon-only Cast action above Import for View stream. The accessibility
 label is retained.

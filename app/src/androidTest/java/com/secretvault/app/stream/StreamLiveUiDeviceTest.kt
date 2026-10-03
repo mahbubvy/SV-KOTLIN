@@ -18,6 +18,7 @@ import com.secretvault.app.ui.camera.CameraScreen
 import com.secretvault.app.ui.camera.CameraViewModel
 import com.secretvault.app.ui.settings.SettingsScreen
 import com.secretvault.app.core.camera.CameraMode
+import com.secretvault.app.core.camera.LensFacing
 import com.secretvault.app.core.camera.VideoMode
 import com.secretvault.app.core.stream.StreamPinManager
 import com.secretvault.app.core.database.entity.AlbumEntity
@@ -153,6 +154,7 @@ class StreamLiveUiDeviceTest {
         val native = InstrumentationRegistry.getArguments().getString("cameraSource") == "native"
         val remotePhoto = InstrumentationRegistry.getArguments().getString("remotePhoto") == "true"
         val noStreamPin = InstrumentationRegistry.getArguments().getString("noStreamPin") == "true"
+        val cameraChanges = InstrumentationRegistry.getArguments().getString("cameraChanges") == "true"
         assumeTrue(role == "send" || role == "view")
         val context = instrumentation.targetContext
         val app = context.applicationContext as SecretVaultApp
@@ -173,7 +175,7 @@ class StreamLiveUiDeviceTest {
         val invitationFile = File(context.cacheDir, "stream-test-invitation")
         val cameraModel = CameraViewModel(if (native) VideoMode.FHD_60 else VideoMode.UHD_60).apply { setCameraMode(CameraMode.VIDEO) }
         try {
-            if (remotePhoto && role == "send") app.sessionManager.unlock()
+            if ((remotePhoto || cameraChanges) && role == "send") app.sessionManager.unlock()
             if (role == "send") {
                 StreamPinManager(context).setPinRequired(!noStreamPin)
                 if (!noStreamPin) {
@@ -190,6 +192,22 @@ class StreamLiveUiDeviceTest {
                     invitationFile.delete(); tap("Stream"); waitFor("Waiting for a viewer", 20000)
                     invitationFile.writeText("svstream2://ready/" + java.net.URLEncoder.encode("SV ${Build.MODEL.take(48)}", "UTF-8"))
                     waitFor("Viewer connected · Stop stream to record", 60000)
+                    if (cameraChanges) {
+                        val rear = cameraModel.uiState.value.rearLensOptions
+                        val selections = listOf("front") + (listOfNotNull(rear.firstOrNull { it.id == null }) + rear.filter { it.id != null } +
+                            listOfNotNull(rear.firstOrNull { it.id == null })).map { "back/${it.id ?: "default"}" }
+                        for (target in selections) {
+                            runBlocking { kotlinx.coroutines.withTimeout(25000) {
+                                cameraModel.uiState.first { state ->
+                                    if (target == "front") state.lensFacing == LensFacing.FRONT
+                                    else state.lensFacing == LensFacing.BACK && "back/${state.selectedRearLensId ?: "default"}" == target
+                                }
+                            } }
+                            waitFor("Camera changed", 15000)
+                        }
+                        instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "send: requested front/rear and ${rear.size} rear lens choices matched camera model") })
+                        SystemClock.sleep(7000); tap("Flip Camera"); SystemClock.sleep(2500); tap("Flip Camera")
+                    }
                     if (remotePhoto) {
                         waitFor("Remote photo saved in this vault", 40000)
                         assertTrue("Remote shutter did not save exactly one media item", runBlocking { app.mediaRepository.getTotalCount() } == mediaBefore + 1)
@@ -243,6 +261,40 @@ class StreamLiveUiDeviceTest {
                             kotlin.math.abs(matrix[android.graphics.Matrix.MSKEW_X]) > 0.01f)
                     }
                     instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: NSD discovery ${discoveryMs}ms; connection to first-frame ${SystemClock.elapsedRealtime() - connectAt}ms") })
+                    if (cameraChanges) {
+                        val cameraButton = waitFor("Choose camera").let { icon ->
+                            var control = icon
+                            while (!control.isClickable && control.parent != null) control = control.parent
+                            control
+                        }
+                        val buttonBounds = Rect().also(cameraButton::getBoundsInScreen)
+                        val density = context.resources.displayMetrics.density
+                        assertTrue("Camera selector touch target is too small", buttonBounds.height() >= (48 * density - 1))
+                        assertTrue("Camera selector exceeds viewport", buttonBounds.left >= 0 &&
+                            buttonBounds.right <= context.resources.displayMetrics.widthPixels)
+                        tap("Choose camera")
+                        waitFor("Front")
+                        val labels = mutableListOf<String>()
+                        fun readOptions(node: AccessibilityNodeInfo?) {
+                            if (node == null) return
+                            node.text?.toString()?.takeIf { it == "Front" || it.startsWith("Rear ") }?.let { labels.add(it) }
+                            for (index in 0 until node.childCount) readOptions(node.getChild(index))
+                        }
+                        instrumentation.uiAutomation.windows.forEach { readOptions(it.root) }
+                        val rear = labels.distinct().filter { it.startsWith("Rear ") }
+                        assertTrue("Camera did not advertise front and rear", "Front" in labels && rear.isNotEmpty())
+                        val default = rear.first { it == "Rear 1×" }
+                        val order = listOf("Front", default) + rear.filter { it != default } + default
+                        instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+                        for (label in order) {
+                            tap("Choose camera"); tap(label); waitFor("Camera changed", 15000)
+                            waitFor(label); waitFor("Live camera"); SystemClock.sleep(1200)
+                            assertTrue("Wrong viewer camera selection after $label", find { it.text?.toString() == label } != null)
+                        }
+                        instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: remote front/rear and ${rear.size} rear lens choices acknowledged; preview remained live") })
+                        waitFor("Front", 15000); waitFor(default, 15000)
+                        instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: local camera changes synchronized without reconnecting") })
+                    }
                     if (remotePhoto) {
                         tap("Take photo"); waitFor("Photo saved on camera device", 40000)
                         waitFor("Live camera")
@@ -255,7 +307,7 @@ class StreamLiveUiDeviceTest {
             }
         } finally {
             invitationFile.delete()
-            if (remotePhoto && role == "send" && !wasUnlocked) app.sessionManager.lock()
+            if ((remotePhoto || cameraChanges) && role == "send" && !wasUnlocked) app.sessionManager.lock()
             if (role == "send") {
                 val edit = prefs.edit().clear()
                 saved.forEach { (key, value) -> when (value) {

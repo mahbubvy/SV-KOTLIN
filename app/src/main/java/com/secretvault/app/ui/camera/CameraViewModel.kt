@@ -23,6 +23,7 @@ data class CameraUiState(
     val supportedVideoModes: List<VideoMode> = emptyList(),
     val rearLensOptions: List<CameraLensOption> = listOf(CameraLensOption(null, "1×")),
     val selectedRearLensId: String? = null,
+    val availableFacings: List<LensFacing> = emptyList(),
     val isRecording: Boolean = false,
     val recordingDurationSeconds: Int = 0,
     val focusPoint: Offset? = null,
@@ -69,6 +70,24 @@ class CameraViewModel(initialVideoMode: VideoMode = VideoMode.UHD_30) : ViewMode
     fun setVideoMode(mode: VideoMode) {
         if (_uiState.value.isRecording || mode !in _uiState.value.supportedVideoModes) return
         _uiState.value = _uiState.value.copy(videoMode = mode)
+    }
+
+    fun setAvailableFacings(facings: List<LensFacing>) {
+        _uiState.value = _uiState.value.copy(availableFacings = facings)
+    }
+
+    fun selectStreamCamera(id: String): Boolean {
+        val state = _uiState.value
+        if (state.isRecording) return false
+        if (id == "front" && LensFacing.FRONT in state.availableFacings) {
+            _uiState.value = state.copy(lensFacing = LensFacing.FRONT)
+            return true
+        }
+        val rear = state.rearLensOptions.firstOrNull { "back/${it.id ?: "default"}" == id }
+            ?: return false
+        if (LensFacing.BACK !in state.availableFacings) return false
+        _uiState.value = state.copy(lensFacing = LensFacing.BACK, selectedRearLensId = rear.id)
+        return true
     }
 
     fun setVideoOrientation(orientation: VideoOrientation) {
