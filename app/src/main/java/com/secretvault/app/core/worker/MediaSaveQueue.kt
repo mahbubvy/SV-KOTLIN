@@ -121,7 +121,8 @@ class MediaSaveQueue(
     fun enqueueVideo(
         tempVideoFile: File,
         durationMs: Long,
-        onComplete: ((MediaItem) -> Unit)? = null
+        onComplete: ((MediaItem) -> Unit)? = null,
+        onError: () -> Unit = {}
     ) {
         _savingQueueCount.value += 1
         _isSavingVideo.value = true
@@ -133,8 +134,15 @@ class MediaSaveQueue(
                     _videoSaveProgress.value = (0.05f + progress * 0.95f).coerceIn(0f, 1f)
                 }
                 onComplete?.invoke(mediaItem)
+                androidx.core.content.ContextCompat.getMainExecutor(context).execute {
+                    android.widget.Toast.makeText(context, "Encrypted video saved", android.widget.Toast.LENGTH_SHORT).show()
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
+                onError()
+                androidx.core.content.ContextCompat.getMainExecutor(context).execute {
+                    android.widget.Toast.makeText(context, "Could not save video", android.widget.Toast.LENGTH_SHORT).show()
+                }
             } finally {
                 val remaining = (_savingQueueCount.value - 1).coerceAtLeast(0)
                 _savingQueueCount.value = remaining

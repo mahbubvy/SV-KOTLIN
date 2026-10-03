@@ -27,7 +27,9 @@ data class StreamState(val message: String = "Choose Send or View", val busy: Bo
     val live: Boolean = false, val invitation: String? = null, val endpoint: StreamEndpoint? = null, val config: StreamConfig? = null,
     val encodedFps: Int = 0, val receivedFps: Int = 0, val renderedFps: Int = 0, val startupMs: Long? = null,
     val photoAvailable: Boolean = false, val photoBusy: Boolean = false, val photoMessage: String? = null,
-    val cameraState: StreamCameraState = StreamCameraState(), val cameraBusy: Boolean = false, val cameraMessage: String? = null) {
+    val cameraState: StreamCameraState = StreamCameraState(), val cameraBusy: Boolean = false, val cameraMessage: String? = null,
+    val recordingState: StreamRecordingState = StreamRecordingState(), val recordingBusy: Boolean = false,
+    val recordingRequestedStart: Boolean? = null, val recordingMessage: String? = null) {
     override fun toString(): String = "StreamState($message, credentials hidden)"
 }
 
@@ -82,8 +84,9 @@ class StreamSession(private val context: Context) : Closeable {
 
     fun sendShared(renderer: StreamPreviewRenderer, rotation: Int, viewAspect: Float, pinManager: StreamPinManager? = null,
                    capturePhoto: (suspend () -> Boolean)? = null, cameraState: StateFlow<StreamCameraState>? = null,
-                   selectCamera: (suspend (String) -> Boolean)? = null) {
-        sendSource(pinManager, capturePhoto, cameraState, selectCamera) { onConfig, onFrame, onError ->
+                   selectCamera: (suspend (String) -> Boolean)? = null,
+                   recordingState: StateFlow<StreamRecordingState>? = null, setRecording: (suspend (Boolean) -> Boolean)? = null) {
+        sendSource(pinManager, capturePhoto, cameraState, selectCamera, recordingState, setRecording) { onConfig, onFrame, onError ->
             val video = StreamEncoder(rotation, onConfig, onFrame, onError)
             try { renderer.attachEncoder(video.inputSurface, rotation, viewAspect) }
             catch (error: Exception) { video.close(); throw error }
@@ -96,6 +99,7 @@ class StreamSession(private val context: Context) : Closeable {
 
     private fun sendSource(pinManager: StreamPinManager? = null, capturePhoto: (suspend () -> Boolean)? = null,
                            cameraState: StateFlow<StreamCameraState>? = null, selectCamera: (suspend (String) -> Boolean)? = null,
+                           recordingState: StateFlow<StreamRecordingState>? = null, setRecording: (suspend (Boolean) -> Boolean)? = null,
                            startSource: ((StreamConfig) -> Unit, (StreamFrame) -> Unit, (Throwable) -> Unit) -> Closeable) {
         mutableState.value = StreamState("Starting camera…", busy = true)
         scope.launch {
@@ -108,7 +112,8 @@ class StreamSession(private val context: Context) : Closeable {
                 }
                 val network = wifi()
                 val address = cm.getLinkProperties(network)!!.linkAddresses.first { it.address is Inet4Address }.address
-                val listener = StreamTls.listen(address, pinManager, cameraControls = cameraState != null && selectCamera != null)
+                val listener = StreamTls.listen(address, pinManager, cameraControls = cameraState != null && selectCamera != null,
+                    recordingControls = recordingState != null && setRecording != null)
                 synchronized(this@StreamSession) {
                     if (closed.get()) { listener.close(); return@launch }
                     host = listener
@@ -142,32 +147,39 @@ class StreamSession(private val context: Context) : Closeable {
                         if (closed.get()) { peer.close(); return@launch }
                         socket = peer
                     }
-                    if (capturePhoto != null || selectCamera != null) scope.launch {
+                    if (capturePhoto != null || selectCamera != null || setRecording != null) scope.launch {
                         try {
                             val input = DataInputStream(peer.inputStream)
                             var lastRequest = 0L
                             while (isActive && !closed.get()) {
                                 val type = try { input.readUnsignedByte() } catch (_: SocketTimeoutException) { continue }
                                 val selection = if (type == 7 && selectCamera != null) StreamProtocol.readCameraRequest(input, type) else null
-                                val id = selection?.requestId ?: if (capturePhoto != null) StreamProtocol.readPhotoRequest(input, type)
+                                val recording = if (type == 10 && setRecording != null) StreamProtocol.readRecordingRequest(input, type) else null
+                                val id = selection?.requestId ?: recording?.requestId ?: if (capturePhoto != null) StreamProtocol.readPhotoRequest(input, type)
                                     else throw IOException("Unsupported camera command")
                                 if (!state.value.live || id != lastRequest + 1 ||
                                     selection != null && cameraState?.value?.options?.none { it.id == selection.targetId } != false ||
+                                    recording == null && recordingState?.value?.let { it.recording || it.saving } == true ||
                                     !commandPending.compareAndSet(false, true)) throw IOException("Invalid camera command")
                                 lastRequest = id
-                                mutableState.update { if (closed.get()) it else if (selection == null)
+                                mutableState.update { if (closed.get()) it else if (recording != null)
+                                    it.copy(recordingBusy = true, recordingRequestedStart = recording.start,
+                                        recordingMessage = if (recording.start) "Starting recording…" else "Saving encrypted video…")
+                                    else if (selection == null)
                                     it.copy(photoBusy = true, photoMessage = "Remote photo requested…")
                                     else it.copy(cameraBusy = true, cameraMessage = "Changing camera…") }
                                 scope.launch {
-                                    val success = try { withTimeout(if (selection == null) 25_000L else 10_000L) {
+                                    val success = try { withTimeout(if (recording != null && !recording.start) 60_000L else if (selection == null && recording == null) 25_000L else 10_000L) {
                                         withContext(Dispatchers.Main.immediate) {
-                                            if (selection == null) requireNotNull(capturePhoto)() else requireNotNull(selectCamera)(selection.targetId)
+                                            if (recording != null) requireNotNull(setRecording)(recording.start)
+                                            else if (selection == null) requireNotNull(capturePhoto)() else requireNotNull(selectCamera)(selection.targetId)
                                         }
                                     } }
                                     catch (_: TimeoutCancellationException) { false }
                                     catch (error: CancellationException) { throw error }
                                     catch (_: Exception) { false }
-                                    val result = if (selection == null) StreamPhotoResult(id, success) else StreamCameraResult(id, success)
+                                    val result = if (recording != null) StreamRecordingResult(id, recording.start, success)
+                                        else if (selection == null) StreamPhotoResult(id, success) else StreamCameraResult(id, success)
                                     if (!closed.get() && commandResults.trySend(result).isFailure)
                                         end("Camera response could not be delivered. Start a new session.")
                                 }
@@ -186,12 +198,24 @@ class StreamSession(private val context: Context) : Closeable {
                             if (capturePhoto != null) StreamProtocol.writePhotoAvailable(output, true)
                             var lastCameraState = cameraState?.value
                             lastCameraState?.let { StreamProtocol.writeCameraState(output, it) }
+                            var lastRecordingState = recordingState?.value
+                            lastRecordingState?.let { recording ->
+                                StreamProtocol.writeRecordingState(output, recording)
+                                mutableState.update { if (closed.get()) it else it.copy(recordingState = recording) }
+                            }
                             writeStarted.set(0)
                             frames.clear(); publishing.set(true); requestKeyFrame?.invoke()
                             var sequence = 0L
                             var waitingForKey = true
                             var lastFrame = SystemClock.elapsedRealtime()
                             while (isActive && !closed.get()) {
+                                val latestRecordingState = recordingState?.value
+                                if (latestRecordingState != null && latestRecordingState != lastRecordingState) {
+                                    writeStarted.set(SystemClock.elapsedRealtime())
+                                    StreamProtocol.writeRecordingState(output, latestRecordingState)
+                                    mutableState.update { if (closed.get()) it else it.copy(recordingState = latestRecordingState) }
+                                    writeStarted.set(0); lastRecordingState = latestRecordingState
+                                }
                                 val latestCameraState = cameraState?.value
                                 if (latestCameraState != null && latestCameraState != lastCameraState) {
                                     writeStarted.set(SystemClock.elapsedRealtime())
@@ -212,6 +236,12 @@ class StreamSession(private val context: Context) : Closeable {
                                                 cameraMessage = if (result.applied) "Camera changed" else "Camera change could not be confirmed") }
                                             commandPending.set(false)
                                             StreamProtocol.writeCameraResult(output, result)
+                                        }
+                                        is StreamRecordingResult -> {
+                                            mutableState.update { if (closed.get()) it else it.copy(recordingBusy = false, recordingRequestedStart = null,
+                                                recordingMessage = recordingResultText(result, true)) }
+                                            commandPending.set(false)
+                                            StreamProtocol.writeRecordingResult(output, result)
                                         }
                                         else -> throw IOException("Invalid camera response")
                                     }
@@ -293,6 +323,14 @@ class StreamSession(private val context: Context) : Closeable {
                                 photoMessage = if (message.saved) "Photo saved on camera device" else "Photo could not be confirmed. Check the camera vault.") }
                         }
                         is StreamCameraState -> mutableState.update { if (closed.get()) it else it.copy(cameraState = message) }
+                        is StreamRecordingState -> mutableState.update { if (closed.get()) it else it.copy(recordingState = message) }
+                        is StreamRecordingResult -> {
+                            if (message.requestId != requestIds.get() || !state.value.recordingBusy || state.value.recordingRequestedStart != message.start ||
+                                !commandPending.compareAndSet(true, false)) throw IOException("Unexpected recording result")
+                            commandTimeout?.cancel()
+                            mutableState.update { if (closed.get()) it else it.copy(recordingBusy = false, recordingRequestedStart = null,
+                                recordingMessage = recordingResultText(message, false)) }
+                        }
                         is StreamCameraResult -> {
                             if (message.requestId != requestIds.get() || !state.value.cameraBusy || !commandPending.compareAndSet(true, false))
                                 throw IOException("Unexpected camera result")
@@ -312,7 +350,8 @@ class StreamSession(private val context: Context) : Closeable {
 
     fun takePhoto(): Boolean {
         val output = commandOutput ?: return false
-        if (closed.get() || !state.value.live || !state.value.photoAvailable || !commandPending.compareAndSet(false, true)) return false
+        if (closed.get() || !state.value.live || !state.value.photoAvailable || state.value.recordingState.let { it.recording || it.saving } ||
+            !commandPending.compareAndSet(false, true)) return false
         val id = requestIds.incrementAndGet()
         mutableState.update { if (closed.get()) it else it.copy(photoBusy = true, photoMessage = "Taking photo…") }
         commandTimeout = scope.launch {
@@ -330,6 +369,7 @@ class StreamSession(private val context: Context) : Closeable {
         val output = commandOutput ?: return false
         val current = state.value
         if (closed.get() || !current.live || current.cameraState.selectedId == null || current.cameraState.selectedId == targetId ||
+            current.recordingState.let { it.recording || it.saving } ||
             current.cameraState.options.none { it.id == targetId } || !commandPending.compareAndSet(false, true)) return false
         val id = requestIds.incrementAndGet()
         mutableState.update { if (closed.get()) it else it.copy(cameraBusy = true, cameraMessage = "Changing camera…") }
@@ -342,6 +382,32 @@ class StreamSession(private val context: Context) : Closeable {
             catch (_: Exception) { if (!closed.get()) end("Camera request connection failed. Start a new session.") }
         }
         return true
+    }
+
+    fun setRecording(start: Boolean): Boolean {
+        val output = commandOutput ?: return false
+        val current = state.value
+        if (closed.get() || !current.live || !current.recordingState.available || current.recordingState.saving ||
+            current.cameraState.selectedId == null || current.recordingState.recording == start || !commandPending.compareAndSet(false, true)) return false
+        val id = requestIds.incrementAndGet()
+        mutableState.update { if (closed.get()) it else it.copy(recordingBusy = true, recordingRequestedStart = start,
+            recordingMessage = if (start) "Starting recording…" else "Saving encrypted video…") }
+        commandTimeout = scope.launch {
+            delay(if (start) 15_000 else 65_000)
+            if (commandPending.get()) end("Recording result timed out. Check the camera vault before reconnecting.")
+        }
+        scope.launch {
+            try { StreamProtocol.writeRecordingRequest(output, id, start) }
+            catch (_: Exception) { if (!closed.get()) end("Recording request failed. Check the camera vault.") }
+        }
+        return true
+    }
+
+    private fun recordingResultText(result: StreamRecordingResult, host: Boolean): String = when {
+        !result.success -> "Recording could not be confirmed. Check ${if (host) "this vault" else "the camera vault"}."
+        result.start -> "Recording started"
+        host -> "Video saved in this vault"
+        else -> "Video saved on camera device"
     }
 
     private fun stats() {
@@ -367,6 +433,9 @@ class StreamSession(private val context: Context) : Closeable {
         commandOutput = null; commandResults.cancel()
         mutableState.update { it.copy(message = "Stopping…", stopping = true, busy = true, live = false, invitation = null, endpoint = null,
             photoAvailable = false, photoBusy = false, cameraState = StreamCameraState(), cameraBusy = false,
+            recordingState = StreamRecordingState(), recordingBusy = false, recordingRequestedStart = null,
+            recordingMessage = if (it.recordingBusy || it.recordingState.recording || it.recordingState.saving)
+                "Recording ended. Check the camera vault for the saved video." else it.recordingMessage,
             cameraMessage = if (it.cameraBusy) "Camera selection unknown. Check the camera device." else it.cameraMessage,
             photoMessage = if (it.photoBusy) "Photo result unknown. Check the camera vault." else it.photoMessage) }
         scope.cancel()

@@ -39,6 +39,8 @@ import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.secretvault.app.core.worker.MediaSaveQueue
+import com.secretvault.app.core.stream.StreamRecordingState
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -84,6 +86,10 @@ class CameraManager(
 
     private val _recordingDurationSeconds = MutableStateFlow(0)
     val recordingDurationSeconds: StateFlow<Int> = _recordingDurationSeconds.asStateFlow()
+    private val _streamRecordingState = MutableStateFlow(StreamRecordingState())
+    val streamRecordingState: StateFlow<StreamRecordingState> = _streamRecordingState.asStateFlow()
+    private var streamVideoSaved: CompletableDeferred<Boolean>? = null
+    private var streamVideoFinalized: CompletableDeferred<Unit>? = null
 
     @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
     fun startCamera(
@@ -106,6 +112,7 @@ class CameraManager(
     ) {
         if (activeRecording != null || _isRecording.value) return
         streaming = streamRenderer != null
+        _streamRecordingState.value = StreamRecordingState(saving = _streamRecordingState.value.saving)
         val session = ++cameraSession
         cameraReady = false
         camera = null
@@ -143,9 +150,10 @@ class CameraManager(
                 }.orEmpty()
                 onRearLensOptions(rearLensOptions)
                 val selectedCameraSelector = createCameraSelector(lensFacing, selectedRearLensId)
-                fun bind(capture: UseCase?): Camera? {
+                fun bind(capture: UseCase?, additional: UseCase? = null): Camera? {
                     val group = UseCaseGroup.Builder().addUseCase(requireNotNull(preview))
                     capture?.let(group::addUseCase)
+                    additional?.let(group::addUseCase)
                     streamRenderer?.let { group.addEffect(it.effect) }
                     return cameraProvider?.bindToLifecycle(lifecycleOwner, selectedCameraSelector, group.build())
                 }
@@ -173,7 +181,27 @@ class CameraManager(
                     imageCapture = imageCaptureBuilder.build()
                     videoCapture = null
 
-                    camera = bind(imageCapture)
+                    if (streaming) {
+                        val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(androidx.camera.video.Quality.FHD))
+                            .setExecutor(cameraExecutor).build()
+                        val builder = VideoCapture.Builder(recorder).setTargetFrameRate(Range(30, 30))
+                            .setTargetRotation(videoOrientation.targetRotation)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            physicalCameraId?.let { Camera2Interop.Extender(builder).setPhysicalCameraId(it) }
+                        }
+                        videoCapture = builder.build()
+                        try {
+                            camera = bind(imageCapture, videoCapture)
+                            _streamRecordingState.value = _streamRecordingState.value.copy(available = true,
+                                audio = recordAudio && ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) ==
+                                    android.content.pm.PackageManager.PERMISSION_GRANTED)
+                        } catch (_: IllegalArgumentException) {
+                            cameraProvider?.unbindAll()
+                            videoCapture = null
+                            camera = bind(imageCapture)
+                            Log.i("VaultCamera", "Stream recording unavailable for this camera combination")
+                        }
+                    } else camera = bind(imageCapture)
                 } else {
                     imageCapture = null
                     val cameraInfo = selectedCameraSelector.filter(availableInfos).first()
@@ -399,9 +427,11 @@ class CameraManager(
     @SuppressLint("MissingPermission")
     fun startVideoRecording(
         recordAudio: Boolean,
-        onRecordingStarted: () -> Unit
+        onRecordingStarted: () -> Unit,
+        onRecordingError: () -> Unit = {}
     ): Boolean {
-        if (!cameraReady || activeRecording != null || streaming) return false
+        if (!cameraReady || activeRecording != null || _streamRecordingState.value.saving ||
+            streaming && !_streamRecordingState.value.available) return false
         if (cmfHighFpsActive) {
             val started = cmfCameraView?.startRecording() ?: false
             if (started) {
@@ -414,44 +444,92 @@ class CameraManager(
             return started
         }
         val capture = videoCapture ?: return false
+        val streamVideo = streaming
+        val saved = if (streamVideo) CompletableDeferred<Boolean>().also { streamVideoSaved = it } else null
+        val finalized = if (streamVideo) CompletableDeferred<Unit>().also { streamVideoFinalized = it } else null
         val tempFile = File(context.cacheDir, "temp_rec_${System.currentTimeMillis()}.mp4")
         val outputOptions = FileOutputOptions.Builder(tempFile).build()
 
+        fun failedStart(): Boolean {
+            saved?.complete(false); finalized?.complete(Unit)
+            tempFile.delete(); onRecordingError(); return false
+        }
+
         recordingStartTime = System.currentTimeMillis()
-        val pendingRecording = capture.output.prepareRecording(context, outputOptions)
+        val pendingRecording = try { capture.output.prepareRecording(context, outputOptions) }
+            catch (_: Exception) { return failedStart() }
         if (recordAudio) {
             try {
                 pendingRecording.withAudioEnabled()
             } catch (e: Exception) {
-                // Audio permission missing
+                if (streamVideo) {
+                    return failedStart()
+                }
             }
         }
 
-        activeRecording = pendingRecording.start(ContextCompat.getMainExecutor(context)) { event ->
-            when (event) {
-                is VideoRecordEvent.Start -> {
-                    _isRecording.value = true
-                    onRecordingStarted()
-                }
-                is VideoRecordEvent.Status -> {
-                    val durationMs = event.recordingStats.recordedDurationNanos / 1_000_000L
-                    _recordingDurationSeconds.value = (durationMs / 1000L).toInt()
-                }
-                is VideoRecordEvent.Finalize -> {
-                    activeRecording = null
-                    _isRecording.value = false
-                    _recordingDurationSeconds.value = 0
-                    if (!event.hasError()) {
-                        val totalDurationMs = System.currentTimeMillis() - recordingStartTime
-                        saveQueue.enqueueVideo(tempFile, totalDurationMs)
-                    } else {
-                        if (tempFile.exists()) tempFile.delete()
+        activeRecording = try {
+            pendingRecording.start(ContextCompat.getMainExecutor(context)) { event ->
+                when (event) {
+                    is VideoRecordEvent.Start -> {
+                        _isRecording.value = true
+                        if (streamVideo) _streamRecordingState.value = _streamRecordingState.value.copy(recording = true, seconds = 0)
+                        onRecordingStarted()
+                    }
+                    is VideoRecordEvent.Status -> {
+                        val durationMs = event.recordingStats.recordedDurationNanos / 1_000_000L
+                        _recordingDurationSeconds.value = (durationMs / 1000L).toInt()
+                        if (streamVideo) _streamRecordingState.value = _streamRecordingState.value.copy(seconds = _recordingDurationSeconds.value)
+                    }
+                    is VideoRecordEvent.Finalize -> {
+                        activeRecording = null
+                        _isRecording.value = false
+                        _recordingDurationSeconds.value = 0
+                        if (!event.hasError() || streamVideo && event.error == VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE &&
+                            event.recordingStats.recordedDurationNanos > 0 && tempFile.length() > 0) {
+                            val totalDurationMs = event.recordingStats.recordedDurationNanos / 1_000_000L
+                            if (streamVideo) _streamRecordingState.value = _streamRecordingState.value.copy(recording = false, saving = true)
+                            saveQueue.enqueueVideo(tempFile, totalDurationMs, onComplete = {
+                                ContextCompat.getMainExecutor(context).execute {
+                                    if (streamVideo) _streamRecordingState.value = _streamRecordingState.value.copy(saving = false, seconds = 0)
+                                    saved?.complete(true)
+                                }
+                            }, onError = {
+                                ContextCompat.getMainExecutor(context).execute {
+                                    if (streamVideo) _streamRecordingState.value = _streamRecordingState.value.copy(saving = false, seconds = 0)
+                                    saved?.complete(false)
+                                }
+                            })
+                        } else {
+                            if (tempFile.exists()) tempFile.delete()
+                            if (streamVideo) _streamRecordingState.value = _streamRecordingState.value.copy(recording = false, saving = false, seconds = 0)
+                            saved?.complete(false)
+                            onRecordingError()
+                        }
+                        finalized?.complete(Unit)
                     }
                 }
             }
-        }
+        } catch (_: Exception) { return failedStart() }
         return true
     }
+
+    suspend fun setStreamRecording(start: Boolean, recordAudio: Boolean): Boolean {
+        if (!streaming || !cameraReady) return false
+        if (start) {
+            if (_isRecording.value || activeRecording != null || _streamRecordingState.value.saving) return false
+            val started = CompletableDeferred<Boolean>()
+            if (!startVideoRecording(recordAudio, { started.complete(true) }, { started.complete(false) })) return false
+            try { return started.await() }
+            finally { if (!started.isCompleted) stopVideoRecording() }
+        }
+        val saved = streamVideoSaved ?: return false
+        if (!_isRecording.value && !_streamRecordingState.value.saving) return false
+        stopVideoRecording()
+        return saved.await()
+    }
+
+    suspend fun awaitStreamRecordingFinalized() { streamVideoFinalized?.await() }
 
     fun stopVideoRecording() {
         if (cmfHighFpsActive && _isRecording.value) {
@@ -488,6 +566,8 @@ class CameraManager(
         activeRecording?.stop()
         activeRecording = null
         cameraProvider?.unbindAll()
-        cameraExecutor.shutdown()
+        val finalizing = streamVideoFinalized?.takeIf { !it.isCompleted }
+        if (finalizing == null) cameraExecutor.shutdown()
+        else finalizing.invokeOnCompletion { cameraExecutor.shutdown() }
     }
 }
