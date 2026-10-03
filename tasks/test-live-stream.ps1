@@ -9,6 +9,7 @@ param(
     [switch]$RemotePhoto,
     [switch]$RemoteVideo,
     [switch]$RemoteSettings,
+    [switch]$RemoteInteractions,
     [switch]$ViewerScreenshot,
     [ValidateSet('highest', '1080p30', '1080p60', '4k30', '4k60')][string]$VideoMode = '1080p30',
     [ValidateSet('stop', 'disconnect', 'background')][string]$VideoExit = 'stop',
@@ -30,7 +31,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Debug app is unavailable' }
     }
     $arguments = @('-s', $Sender, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', $testClass, '-e', 'streamRole', 'send', '-e', 'cameraSource', $CameraSource, '-e', 'streamSeconds', $StreamSeconds, '-e', 'cameraChanges', $CameraChanges.IsPresent.ToString().ToLowerInvariant(), '-e', 'remotePhoto', $RemotePhoto.IsPresent.ToString().ToLowerInvariant(), '-e', 'securePairing', $SecurePairing.IsPresent.ToString().ToLowerInvariant(), '-e', 'noStreamPin', $NoStreamPin.IsPresent.ToString().ToLowerInvariant(), $runner)
-    $arguments = $arguments[0..($arguments.Length - 2)] + @('-e', 'remoteVideo', $RemoteVideo.IsPresent.ToString().ToLowerInvariant(), '-e', 'remoteSettings', $RemoteSettings.IsPresent.ToString().ToLowerInvariant(), '-e', 'viewerScreenshot', $ViewerScreenshot.IsPresent.ToString().ToLowerInvariant(), '-e', 'videoMode', $VideoMode, '-e', 'videoExit', $VideoExit, $runner)
+    $arguments = $arguments[0..($arguments.Length - 2)] + @('-e', 'remoteVideo', $RemoteVideo.IsPresent.ToString().ToLowerInvariant(), '-e', 'remoteSettings', $RemoteSettings.IsPresent.ToString().ToLowerInvariant(), '-e', 'remoteInteractions', $RemoteInteractions.IsPresent.ToString().ToLowerInvariant(), '-e', 'viewerScreenshot', $ViewerScreenshot.IsPresent.ToString().ToLowerInvariant(), '-e', 'videoMode', $VideoMode, '-e', 'videoExit', $VideoExit, $runner)
     $hostProcess = Start-Process -FilePath $Adb -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $hostLog -RedirectStandardError (Join-Path $logDirectory 'stream-live-host-error.log')
     $pairingText = $null
     for ($attempt = 0; $attempt -lt 160; $attempt++) {
@@ -43,7 +44,7 @@ try {
     $pairingText | & $Adb -s $Viewer shell 'run-as com.secretvault.app sh -c "cat > cache/stream-test-invitation"'
     if ($LASTEXITCODE -ne 0) { throw 'Private invitation transfer failed' }
     $pairingText = $null
-    & $Adb -s $Viewer shell am instrument -w -r -e class $testClass -e streamRole view -e cameraSource $CameraSource -e streamSeconds $StreamSeconds -e cameraChanges $CameraChanges.IsPresent.ToString().ToLowerInvariant() -e remotePhoto $RemotePhoto.IsPresent.ToString().ToLowerInvariant() -e remoteVideo $RemoteVideo.IsPresent.ToString().ToLowerInvariant() -e remoteSettings $RemoteSettings.IsPresent.ToString().ToLowerInvariant() -e viewerScreenshot $ViewerScreenshot.IsPresent.ToString().ToLowerInvariant() -e videoMode $VideoMode -e videoExit $VideoExit -e noStreamPin $NoStreamPin.IsPresent.ToString().ToLowerInvariant() -e securePairing $SecurePairing.IsPresent.ToString().ToLowerInvariant() $runner | Tee-Object -FilePath $viewerLog
+    & $Adb -s $Viewer shell am instrument -w -r -e class $testClass -e streamRole view -e cameraSource $CameraSource -e streamSeconds $StreamSeconds -e cameraChanges $CameraChanges.IsPresent.ToString().ToLowerInvariant() -e remotePhoto $RemotePhoto.IsPresent.ToString().ToLowerInvariant() -e remoteVideo $RemoteVideo.IsPresent.ToString().ToLowerInvariant() -e remoteSettings $RemoteSettings.IsPresent.ToString().ToLowerInvariant() -e remoteInteractions $RemoteInteractions.IsPresent.ToString().ToLowerInvariant() -e viewerScreenshot $ViewerScreenshot.IsPresent.ToString().ToLowerInvariant() -e videoMode $VideoMode -e videoExit $VideoExit -e noStreamPin $NoStreamPin.IsPresent.ToString().ToLowerInvariant() -e securePairing $SecurePairing.IsPresent.ToString().ToLowerInvariant() $runner | Tee-Object -FilePath $viewerLog
     if (!$hostProcess.WaitForExit(65000)) { throw 'Sender test did not finish' }
     Get-Content -LiteralPath $hostLog
     foreach ($log in @($hostLog, $viewerLog)) {

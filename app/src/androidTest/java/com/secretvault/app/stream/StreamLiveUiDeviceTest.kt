@@ -124,6 +124,43 @@ class StreamLiveUiDeviceTest {
         waitFor("Live camera")
     }
 
+    private fun pinchCamera() {
+        val node = requireNotNull(find { it.stateDescription?.toString()?.startsWith("Camera zoom ") == true })
+        val bounds = Rect().also(node::getBoundsInScreen)
+        val x = bounds.exactCenterX()
+        val y = bounds.top + bounds.height() * 0.4f
+        val start = SystemClock.uptimeMillis()
+        fun event(action: Int, radius: Float, count: Int) {
+            val properties = Array(count) { index -> android.view.MotionEvent.PointerProperties().apply {
+                id = index; toolType = android.view.MotionEvent.TOOL_TYPE_FINGER
+            } }
+            val coordinates = Array(count) { index -> android.view.MotionEvent.PointerCoords().apply {
+                this.x = x + if (index == 0) -radius else radius; this.y = y; pressure = 1f; size = 1f
+            } }
+            val event = android.view.MotionEvent.obtain(start, SystemClock.uptimeMillis(), action, count, properties, coordinates,
+                0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_TOUCHSCREEN, 0)
+            try { assertTrue(instrumentation.uiAutomation.injectInputEvent(event, true)) } finally { event.recycle() }
+        }
+        event(android.view.MotionEvent.ACTION_DOWN, 50f, 1)
+        event(android.view.MotionEvent.ACTION_POINTER_DOWN or (1 shl android.view.MotionEvent.ACTION_POINTER_INDEX_SHIFT), 50f, 2)
+        for (step in 1..12) { SystemClock.sleep(30); event(android.view.MotionEvent.ACTION_MOVE, 50f + step * 10f, 2) }
+        event(android.view.MotionEvent.ACTION_POINTER_UP or (1 shl android.view.MotionEvent.ACTION_POINTER_INDEX_SHIFT), 170f, 2)
+        event(android.view.MotionEvent.ACTION_UP, 170f, 1)
+        SystemClock.sleep(5000)
+        val ratio = requireNotNull(find { it.stateDescription?.toString()?.startsWith("Camera zoom ") == true })
+            .stateDescription.toString().removePrefix("Camera zoom ").removeSuffix("×").toFloat()
+        assertTrue("Pinch did not change hardware zoom", ratio > 1.2f)
+        repeat(8) {
+            val current = requireNotNull(find { it.stateDescription?.toString()?.startsWith("Camera zoom ") == true })
+            if (current.stateDescription.toString().removePrefix("Camera zoom ").removeSuffix("×").toFloat() > 1f) {
+                assertTrue(current.performAction(requireNotNull(current.actionList.firstOrNull { it.label?.toString() == "Zoom out" }).id))
+                SystemClock.sleep(1500)
+            }
+        }
+        assertTrue("Zoom did not decrease", requireNotNull(find { it.stateDescription?.toString()?.startsWith("Camera zoom ") == true })
+            .stateDescription.toString().removePrefix("Camera zoom ").removeSuffix("×").toFloat() <= 1f)
+    }
+
     @Test fun streamsActualCameraThroughUi() {
         val role = InstrumentationRegistry.getArguments().getString("streamRole")
         assumeTrue(role == "send" || role == "view")
@@ -249,6 +286,7 @@ class StreamLiveUiDeviceTest {
                     if (remoteInteractions) {
                         waitFor("Flip Camera", 20000); SystemClock.sleep(2000)
                         zoom("Zoom in", "1.5"); zoom("Zoom out", "1.0")
+                        pinchCamera()
                         instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "send: local hardware zoom acknowledged 1.5x then 1x") })
                     }
                     invitationFile.delete(); tap("Stream"); waitFor("Waiting for a viewer", 20000)
@@ -441,6 +479,7 @@ class StreamLiveUiDeviceTest {
                     }
                     if (remoteInteractions) {
                         zoom("Zoom in", "1.5"); focusViewer(); zoom("Zoom out", "1.0")
+                        pinchCamera()
                         tap("Microphone on"); waitFor("Microphone off"); SystemClock.sleep(2000)
                         tap("Microphone off"); waitFor("Microphone on"); SystemClock.sleep(2000)
                         tap("Microphone on"); waitFor("Microphone off"); SystemClock.sleep(2000)

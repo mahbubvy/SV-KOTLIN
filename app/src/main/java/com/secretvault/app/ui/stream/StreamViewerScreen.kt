@@ -74,6 +74,8 @@ fun StreamViewerScreen(onBack: () -> Unit) {
     val canTakePhoto = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !state.settingsBusy && !state.interactionBusy &&
         !state.recordingState.recording && !state.recordingState.saving && !state.stopping &&
         (state.cameraState.options.isEmpty() || state.cameraState.selectedId != null)
+    val canChangeMicrophone = canChooseCamera && state.recordingState.available && state.interactionState.microphoneAvailable &&
+        state.interactionState.cameraId == state.cameraState.selectedId
     val latestSession by rememberUpdatedState(session)
     var prompt by remember { mutableStateOf<StreamEndpoint?>(null) }
     var selected by remember { mutableStateOf<StreamEndpoint?>(null) }
@@ -199,12 +201,11 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                     if (state.interactionState.cameraId != null) Text("%.1f×".format(java.util.Locale.US, state.interactionState.zoom), color = TextPrimary, fontSize = 12.sp)
                     IconToggleButton(checked = state.recordingState.audio,
                         onCheckedChange = { session.setInteraction(2, if (it) 1f else 0f) },
-                        enabled = canChooseCamera && state.interactionState.microphoneAvailable &&
-                            state.interactionState.cameraId == state.cameraState.selectedId,
+                        enabled = canChangeMicrophone,
                         modifier = Modifier.size(48.dp)) {
                         Icon(if (state.recordingState.audio) Icons.Default.Mic else Icons.Default.MicOff,
                             if (state.recordingState.audio) "Microphone on" else "Microphone off",
-                            tint = if (state.recordingState.audio) VaultAccent else TextPrimary)
+                            tint = if (!canChangeMicrophone) TextMuted else if (state.recordingState.audio) VaultAccent else TextPrimary)
                     }
                 }
                 val notices = listOfNotNull(state.photoMessage, state.cameraMessage, state.recordingMessage, state.settingsMessage, state.interactionMessage)
