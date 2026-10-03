@@ -134,8 +134,8 @@ fun GalleryTopBar(
                 }
 
                 if (onSettingsClick != null) {
-                    IconButton(onClick = onSettingsClick) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = TextSecondary)
+                    IconButton(onClick = onLockClick) {
+                        Icon(Icons.Default.Lock, contentDescription = "Lock Vault", tint = VaultAccent)
                     }
                 }
 
@@ -144,12 +144,10 @@ fun GalleryTopBar(
                     onSortSelected = onSortSelected
                 )
 
-                IconButton(onClick = onLockClick) {
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Lock Vault",
-                        tint = VaultAccent
-                    )
+                IconButton(onClick = onSettingsClick ?: onLockClick) {
+                    Icon(imageVector = if (onSettingsClick != null) Icons.Default.Settings else Icons.Default.Lock,
+                        contentDescription = if (onSettingsClick != null) "Settings" else "Lock Vault",
+                        tint = if (onSettingsClick != null) TextPrimary else VaultAccent)
                 }
             }
         }

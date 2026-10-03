@@ -84,6 +84,7 @@ import com.secretvault.app.ui.camera.components.CameraBottomBar
 import com.secretvault.app.ui.camera.components.CameraPreviewView
 import com.secretvault.app.ui.camera.components.CameraTopBar
 import com.secretvault.app.ui.camera.components.FocusIndicator
+import com.secretvault.app.ui.camera.components.CameraZoomSlider
 import com.secretvault.app.ui.theme.TextMuted
 import com.secretvault.app.ui.theme.TextPrimary
 import com.secretvault.app.ui.theme.TextSecondary
@@ -522,7 +523,7 @@ fun CameraScreen(
             CameraPreviewView(
                 useCmfHighFps = useCmfHighFps,
                 interactions = interaction.copy(cameraId = appliedCameraId),
-                interactionEnabled = cameraIsReady && !streamStopping && !localFlashBusy && !streamState.cameraBusy &&
+                interactionEnabled = cameraIsReady && appliedCameraId != null && !streamStopping && !localFlashBusy && !streamState.cameraBusy &&
                     !streamState.photoBusy && !streamState.settingsBusy && !streamState.recordingBusy && !streamState.interactionBusy && !streamRecording.saving,
                 onZoom = { localZoomTargets.trySend(cameraGeneration to it) },
                 onPreviewViewsCreated = { preview, cmf ->
@@ -546,9 +547,11 @@ fun CameraScreen(
 
             // Focus Circle
             FocusIndicator(focusPoint = uiState.focusPoint)
-            if (interaction.maxZoom > interaction.minZoom) Text("%.1f×".format(java.util.Locale.US, interaction.zoom),
-                color = TextPrimary, fontSize = 14.sp, modifier = Modifier.align(Alignment.CenterStart).padding(16.dp)
-                    .background(VaultDarkBg.copy(alpha = 0.9f), RoundedCornerShape(8.dp)).padding(8.dp))
+            CameraZoomSlider(interaction.copy(cameraId = appliedCameraId),
+                enabled = cameraIsReady && appliedCameraId != null && !streamStopping && !localFlashBusy && !streamState.cameraBusy && !streamState.photoBusy &&
+                    !streamState.settingsBusy && !streamState.recordingBusy && !streamState.interactionBusy && !streamRecording.saving,
+                onZoom = { localZoomTargets.trySend(cameraGeneration to it) },
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp))
 
             // Top Bar
             CameraTopBar(

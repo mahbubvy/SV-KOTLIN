@@ -45,6 +45,7 @@ import com.secretvault.app.core.camera.VideoMode
 import kotlinx.coroutines.flow.first
 import com.secretvault.app.ui.camera.components.cameraInteractionGestures
 import com.secretvault.app.ui.camera.components.FocusIndicator
+import com.secretvault.app.ui.camera.components.CameraZoomSlider
 import com.secretvault.app.core.camera.streamFocusPoint
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntSize
@@ -194,11 +195,14 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                     }
                 }, update = { view -> fitPreview(view, state.config, false) }, modifier = Modifier.fillMaxSize())
                 key(focusPulse) { FocusIndicator(focusTarget) }
+                CameraZoomSlider(state.interactionState,
+                    enabled = state.live && !state.stopping && !state.cameraBusy && !state.photoBusy && !state.settingsBusy &&
+                        !state.recordingBusy && !state.recordingState.saving && (!state.interactionBusy || state.interactionKind == 0),
+                    onZoom = { session.queueZoom(it) }, modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp))
                 if (state.live) Row(Modifier.align(Alignment.TopEnd).padding(12.dp)
                     .background(VaultDarkBg.copy(alpha = 0.9f), RoundedCornerShape(8.dp)).padding(8.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(state.settingsState.mode?.let { VideoMode.entries[it].label }.orEmpty(), color = TextPrimary, fontSize = 12.sp)
-                    if (state.interactionState.cameraId != null) Text("%.1f×".format(java.util.Locale.US, state.interactionState.zoom), color = TextPrimary, fontSize = 12.sp)
                     IconToggleButton(checked = state.recordingState.audio,
                         onCheckedChange = { session.setInteraction(2, if (it) 1f else 0f) },
                         enabled = canChangeMicrophone,
