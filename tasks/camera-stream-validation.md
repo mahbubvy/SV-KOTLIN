@@ -517,3 +517,19 @@ user-reported prototype failure was not reproduced under the tested conditions.
   discovery 411 ms, first frame 689 ms; final Pixel-camera startup: discovery
   283 ms, first frame 1079 ms. Installed hashes match on both phones. No
   broadcasts remain active. The scoped UI gate is remote-camera-controls-ui-gate.md.
+
+## Explicit CMF viewer → Pixel 0.6× check, 2026-10-03
+
+- The user requested a specific Pixel ultrawide check from the CMF viewer. Added
+  test-only readback of the bound rear CameraInfo zoom state after remote choices;
+  production source and the installed app APK are unchanged.
+- CMF menu advertises Rear 0.6×, Rear 1× and Front. Remote 1× → 0.6× → 1×
+  selections report actual CameraX applied zoom 1.0 → 0.615 → 1.0. The existing
+  one-decimal lens label rounds 0.615 to 0.6×. This verifies applied camera zoom,
+  beyond the selected label/model. No camera frame or vault photo was inspected.
+- Discovery 270 ms; PIN to first frame 986 ms. The paired test also checks local
+  camera synchronization, continued live preview, Disconnect, retained video
+  defaults and explicit restart/Stop. No captures are saved.
+- Both device tests passed (Pixel host 46.025 s; CMF viewer 40.346 s). Evidence:
+  `scratch/pixel-ultrawide-remote-host.log` and
+  `scratch/pixel-ultrawide-remote-viewer.log`. The test APK build passed.

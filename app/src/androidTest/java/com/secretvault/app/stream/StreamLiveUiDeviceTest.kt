@@ -204,6 +204,19 @@ class StreamLiveUiDeviceTest {
                                 }
                             } }
                             waitFor("Camera changed", 15000)
+                            if (target != "front") {
+                                val lens = rear.first { "back/${it.id ?: "default"}" == target }
+                                if (lens.physicalCameraId == null) {
+                                    val provider = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context).get()
+                                    val info = LensFacing.BACK.selector.filter(provider.availableCameraInfos).first()
+                                    runBlocking { kotlinx.coroutines.withTimeout(10000) {
+                                        while (info.zoomState.value?.zoomRatio?.let { kotlin.math.abs(it - lens.zoomRatio) < 0.01f } != true)
+                                            kotlinx.coroutines.delay(50)
+                                    } }
+                                    instrumentation.sendStatus(0, Bundle().apply { putString("streamResult",
+                                        "send: ${lens.label} selected remotely; CameraX applied zoom ${info.zoomState.value?.zoomRatio}") })
+                                }
+                            }
                         }
                         instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "send: requested front/rear and ${rear.size} rear lens choices matched camera model") })
                         SystemClock.sleep(7000); tap("Flip Camera"); SystemClock.sleep(2500); tap("Flip Camera")
@@ -282,6 +295,7 @@ class StreamLiveUiDeviceTest {
                         }
                         instrumentation.uiAutomation.windows.forEach { readOptions(it.root) }
                         val rear = labels.distinct().filter { it.startsWith("Rear ") }
+                        instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: available camera choices ${labels.distinct()}") })
                         assertTrue("Camera did not advertise front and rear", "Front" in labels && rear.isNotEmpty())
                         val default = rear.first { it == "Rear 1×" }
                         val order = listOf("Front", default) + rear.filter { it != default } + default
