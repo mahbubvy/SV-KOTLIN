@@ -95,6 +95,7 @@ fun MediaViewerScreen(
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showSetCoverDialog by remember { mutableStateOf(false) }
+    var zoomedMediaId by remember { mutableStateOf<String?>(null) }
 
     Box(
         modifier = modifier
@@ -105,7 +106,8 @@ fun MediaViewerScreen(
         HorizontalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
-            beyondViewportPageCount = 1
+            beyondViewportPageCount = 1,
+            userScrollEnabled = zoomedMediaId != currentItem?.id
         ) { page ->
             val item = uiState.mediaList.getOrNull(page)
             if (item != null) {
@@ -113,7 +115,9 @@ fun MediaViewerScreen(
                     ZoomablePhotoView(
                         item = item,
                         rotationDegrees = mediaRotationById[item.id] ?: 0,
-                        onTap = { viewModel.toggleControls() }
+                        onTap = { viewModel.toggleControls() },
+                        isActivePage = pagerState.currentPage == page,
+                        onZoomChanged = { zoomed -> if (zoomed) zoomedMediaId = item.id else if (zoomedMediaId == item.id) zoomedMediaId = null }
                     )
                 } else {
                     StreamingVideoPlayer(
@@ -122,7 +126,8 @@ fun MediaViewerScreen(
                         controlsVisible = uiState.isControlsVisible,
                         isActivePage = pagerState.currentPage == page,
                         rotationDegrees = mediaRotationById[item.id] ?: 0,
-                        onToggleControls = { viewModel.toggleControls() }
+                        onToggleControls = { viewModel.toggleControls() },
+                        onZoomChanged = { zoomed -> if (zoomed) zoomedMediaId = item.id else if (zoomedMediaId == item.id) zoomedMediaId = null }
                     )
                 }
             }

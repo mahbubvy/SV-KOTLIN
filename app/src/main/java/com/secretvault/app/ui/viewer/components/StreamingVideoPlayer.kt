@@ -47,12 +47,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -74,9 +77,15 @@ fun StreamingVideoPlayer(
     isActivePage: Boolean = true,
     rotationDegrees: Int = 0,
     onToggleControls: () -> Unit,
+    onZoomChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val zoom = rememberMediaZoomState(item.id, rotationDegrees, isActivePage, onZoomChanged)
+    var videoSize by remember(item.id) { mutableStateOf(Size(item.width.toFloat(), item.height.toFloat())) }
+    LaunchedEffect(videoSize, rotationDegrees, zoom.viewport) {
+        zoom.content = if (rotationDegrees % 180 != 0) zoom.viewport else videoSize
+    }
 
     val exoPlayer = remember(item.id) {
         val dataSourceFactory = EncryptedMediaDataSource.Factory(cryptoEngine)
@@ -114,6 +123,9 @@ fun StreamingVideoPlayer(
 
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
+            override fun onVideoSizeChanged(size: VideoSize) {
+                videoSize = Size(size.width * size.pixelWidthHeightRatio, size.height.toFloat())
+            }
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
             }
@@ -149,14 +161,10 @@ fun StreamingVideoPlayer(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onToggleControls
-            ),
+            .clipToBounds(),
         contentAlignment = Alignment.Center
     ) {
-        BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        BoxWithConstraints(Modifier.fillMaxSize().mediaZoomGestures(zoom, onToggleControls), contentAlignment = Alignment.Center) {
             val quarterTurn = rotationDegrees % 180 != 0
             AndroidView(
                 factory = { ctx ->
@@ -185,7 +193,11 @@ fun StreamingVideoPlayer(
                     }
                 },
                 modifier = (if (quarterTurn) Modifier.width(maxHeight).height(maxWidth) else Modifier.fillMaxSize())
-                    .graphicsLayer { rotationZ = rotationDegrees.toFloat() }
+                    .graphicsLayer {
+                        rotationZ = rotationDegrees.toFloat()
+                        scaleX = zoom.scale; scaleY = zoom.scale
+                        translationX = zoom.offset.x; translationY = zoom.offset.y
+                    }
             )
         }
 
