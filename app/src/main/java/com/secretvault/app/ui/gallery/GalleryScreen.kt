@@ -29,6 +29,8 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.Composable
@@ -214,7 +216,19 @@ fun GalleryScreen(
                 )
             } else {
                 // Media Grid for Selected Album
-                if (uiState.mediaList.isEmpty()) {
+                if (uiState.loadError != null || uiState.isLoading && uiState.mediaList.isEmpty()) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            if (uiState.loadError != null) {
+                                Text(requireNotNull(uiState.loadError), color = TextPrimary, fontSize = 14.sp)
+                                TextButton(onClick = galleryViewModel::retryLoad) { Text("Retry", color = VaultAccent) }
+                            } else {
+                                CircularProgressIndicator(color = VaultAccent, modifier = Modifier.size(32.dp))
+                                Text("Loading media…", color = TextSecondary, fontSize = 14.sp)
+                            }
+                        }
+                    }
+                } else if (uiState.mediaList.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()

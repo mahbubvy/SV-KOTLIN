@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 
 data class GalleryUiState(
@@ -21,7 +22,9 @@ data class GalleryUiState(
     val isSelectionMode: Boolean = false,
     val isMoveDialogOpen: Boolean = false,
     val isCreateAlbumDialogOpen: Boolean = false,
-    val favoritesOnly: Boolean = false
+    val favoritesOnly: Boolean = false,
+    val isLoading: Boolean = true,
+    val loadError: String? = null
 )
 
 class GalleryViewModel(
@@ -44,7 +47,9 @@ class GalleryViewModel(
             mediaList = emptyList(),
             selectedIds = emptySet(),
             isSelectionMode = false,
-            favoritesOnly = favoritesOnly
+            favoritesOnly = favoritesOnly,
+            isLoading = true,
+            loadError = null
         )
         loadMedia()
     }
@@ -118,15 +123,21 @@ class GalleryViewModel(
 
     private fun loadMedia() {
         mediaSubscriptionJob?.cancel()
+        _uiState.value = _uiState.value.copy(isLoading = true, loadError = null)
+        val filter = _uiState.value
         mediaSubscriptionJob = viewModelScope.launch {
             mediaRepository.getMedia(
-                albumId = _uiState.value.activeAlbumId,
-                sortOrder = _uiState.value.sortOrder
-            ).collectLatest { list ->
-                val visible = if (_uiState.value.favoritesOnly) list.filter { it.isFavorite } else list
+                albumId = filter.activeAlbumId,
+                sortOrder = filter.sortOrder
+            ).catch {
+                _uiState.value = _uiState.value.copy(isLoading = false, loadError = "Media could not load. Try again.")
+            }.collectLatest { list ->
+                val visible = if (filter.favoritesOnly) list.filter { it.isFavorite } else list
                 val selected = _uiState.value.selectedIds.intersect(visible.map { it.id }.toSet())
-                _uiState.value = _uiState.value.copy(mediaList = visible, selectedIds = selected, isSelectionMode = selected.isNotEmpty())
+                _uiState.value = _uiState.value.copy(mediaList = visible, selectedIds = selected, isSelectionMode = selected.isNotEmpty(), isLoading = false)
             }
         }
     }
+
+    fun retryLoad() = loadMedia()
 }

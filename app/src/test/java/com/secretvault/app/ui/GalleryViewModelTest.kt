@@ -13,6 +13,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -25,6 +27,55 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class GalleryViewModelTest {
+
+    @Test fun changingFoldersDoesNotReportEmptyBeforeTheQueryReturns() = runTest(testDispatcher) {
+        coEvery { mockMediaRepo.getMedia("slow", any()) } returns kotlinx.coroutines.flow.flow {
+            kotlinx.coroutines.delay(100)
+            emit(sampleItems)
+        }
+        viewModel = GalleryViewModel(mockMediaRepo)
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.isLoading)
+        viewModel.setAlbumFilter("slow", "Camera")
+        assertTrue(viewModel.uiState.value.isLoading)
+        assertTrue(viewModel.uiState.value.mediaList.isEmpty())
+        advanceTimeBy(99)
+        runCurrent()
+        assertTrue(viewModel.uiState.value.isLoading)
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.isLoading)
+        assertEquals(sampleItems, viewModel.uiState.value.mediaList)
+    }
+
+    @Test fun emptyFolderIsConfirmedOnlyAfterItsFirstEmissionAndSortingKeepsVisibleMedia() = runTest(testDispatcher) {
+        coEvery { mockMediaRepo.getMedia("empty", any()) } returns kotlinx.coroutines.flow.flow {
+            kotlinx.coroutines.delay(100); emit(emptyList())
+        }
+        viewModel = GalleryViewModel(mockMediaRepo)
+        advanceUntilIdle()
+        viewModel.setSortOrder(SortOrder.OLDEST_FIRST)
+        assertEquals(sampleItems, viewModel.uiState.value.mediaList)
+        advanceUntilIdle()
+        viewModel.setAlbumFilter("empty", "Empty")
+        assertTrue(viewModel.uiState.value.isLoading)
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.isLoading)
+        assertTrue(viewModel.uiState.value.mediaList.isEmpty())
+    }
+
+    @Test fun queryFailureIsAnErrorAndRetryCanLoadMedia() = runTest(testDispatcher) {
+        coEvery { mockMediaRepo.getMedia(any(), any()) } returns kotlinx.coroutines.flow.flow { throw java.io.IOException("test failure") }
+        viewModel = GalleryViewModel(mockMediaRepo)
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.isLoading)
+        assertTrue(viewModel.uiState.value.loadError != null)
+        coEvery { mockMediaRepo.getMedia(any(), any()) } returns flowOf(sampleItems)
+        viewModel.setAlbumFilter("album_camera", "Camera")
+        assertTrue(viewModel.uiState.value.loadError == null)
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.isLoading)
+        assertEquals(sampleItems, viewModel.uiState.value.mediaList)
+    }
 
     @Test fun favoritesUpdateAndClearHiddenSelections() = runTest(testDispatcher) {
         val items = kotlinx.coroutines.flow.MutableStateFlow(sampleItems.map { it.copy(isFavorite = it.id == "m2") })
