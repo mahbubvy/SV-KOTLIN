@@ -207,6 +207,7 @@ fun GalleryScreen(
                 }
                 AlbumsTab(
                     viewModel = albumsViewModel,
+                    mediaItems = allMedia,
                     onAlbumClick = { album ->
                         galleryViewModel.setAlbumFilter(album.id, album.name)
                     }

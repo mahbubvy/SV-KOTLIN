@@ -48,6 +48,7 @@ fun MediaGridItem(
     modifier: Modifier = Modifier
 ) {
     val thumbPath = item.thumbnailPath ?: item.encryptedPath
+    ThumbnailRefreshEffect(item)
 
     Box(
         modifier = modifier
@@ -64,12 +65,14 @@ fun MediaGridItem(
                 onLongClick = onLongClick
             )
     ) {
-        AsyncImage(
+        if (item.thumbnailPath != null || item.mediaType == MediaType.PHOTO) AsyncImage(
             model = EncryptedMediaUri(thumbPath),
             contentDescription = item.filename,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
         )
+        else Icon(Icons.Default.PlayArrow, "Video preview loading", tint = Color.White,
+            modifier = Modifier.align(Alignment.Center).size(32.dp))
 
         if (item.isFavorite) Box(Modifier.align(Alignment.TopStart).padding(8.dp)
             .background(Color.Black.copy(alpha = 0.8f), CircleShape).padding(4.dp)) {

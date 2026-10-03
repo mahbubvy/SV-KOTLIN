@@ -12,6 +12,11 @@ import com.secretvault.app.core.crypto.SecureMemory
 import com.secretvault.app.core.crypto.VaultCryptoEngine
 import com.secretvault.app.core.database.entity.AlbumEntity
 import com.secretvault.app.core.image.applyExifOrientation
+import com.secretvault.app.core.image.GALLERY_THUMBNAIL_SUFFIX
+import com.secretvault.app.core.image.createGalleryThumbnail
+import com.secretvault.app.core.image.galleryThumbnailSampleSize
+import com.secretvault.app.core.image.galleryFrame
+import com.secretvault.app.core.image.encryptedGalleryThumbnail
 import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.model.MediaType
 import com.secretvault.app.core.processing.ExifSanitizer
@@ -145,7 +150,7 @@ class BatchImportManager(
             // 2. Strip sensitive EXIF metadata in-place
             ExifSanitizer.sanitizeInPlace(tempFile)
 
-            // 3. Extract dimensions & micro-thumbnail (200x200)
+            // Keep dimensions and orientation from the original; thumbnails crop independently.
             val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(tempFile.absolutePath, boundsOptions)
             val orientation = runCatching {
@@ -158,12 +163,12 @@ class BatchImportManager(
             val height = if (rotation == 90 || rotation == 270) rawWidth else rawHeight
 
             // Generate thumbnail with sample size
-            val sampleSize = (width / 200).coerceAtLeast(1)
+            val sampleSize = galleryThumbnailSampleSize(rawWidth, rawHeight)
             val thumbOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
             val decodedThumb = BitmapFactory.decodeFile(tempFile.absolutePath, thumbOptions)
             val rawThumb = decodedThumb?.let { applyExifOrientation(it, orientation) }
             val thumbBitmap = if (rawThumb != null) {
-                val scaled = Bitmap.createScaledBitmap(rawThumb, 200, (200f * height / width).toInt().coerceAtLeast(1), true)
+                val scaled = createGalleryThumbnail(rawThumb)
                 if (scaled != rawThumb) rawThumb.recycle()
                 scaled
             } else {
@@ -171,7 +176,7 @@ class BatchImportManager(
             }
 
             val thumbStream = ByteArrayOutputStream()
-            thumbBitmap.compress(Bitmap.CompressFormat.JPEG, 80, thumbStream)
+            thumbBitmap.compress(Bitmap.CompressFormat.JPEG, 90, thumbStream)
             val thumbBytes = thumbStream.toByteArray()
             thumbBitmap.recycle()
             thumbStream.close()
@@ -179,7 +184,7 @@ class BatchImportManager(
             val encThumbBytes = cryptoEngine.encryptBytes(thumbBytes)
             SecureMemory.wipe(thumbBytes)
 
-            val thumbFile = File(context.filesDir, "vault_thumbs/$id.thumb")
+            val thumbFile = File(context.filesDir, "vault_thumbs/$id$GALLERY_THUMBNAIL_SUFFIX")
             thumbFile.parentFile?.mkdirs()
             FileOutputStream(thumbFile).use { it.write(encThumbBytes) }
 
@@ -234,29 +239,23 @@ class BatchImportManager(
             var height = 1080
             var thumbBitmap: Bitmap? = null
 
+            val retriever = MediaMetadataRetriever()
             try {
-                val retriever = MediaMetadataRetriever()
                 retriever.setDataSource(tempFile.absolutePath)
                 durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
                 width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 1920
                 height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 1080
-                thumbBitmap = retriever.frameAtTime
-                retriever.release()
+                thumbBitmap = retriever.galleryFrame()
             } catch (e: Exception) {
                 // Ignore retriever errors
-            }
+            } finally { retriever.release() }
 
             // 2. Encrypt micro-thumbnail
-            val thumbFile = File(context.filesDir, "vault_thumbs/$id.thumb")
+            val thumbFile = File(context.filesDir, "vault_thumbs/$id$GALLERY_THUMBNAIL_SUFFIX")
             thumbFile.parentFile?.mkdirs()
             if (thumbBitmap != null) {
-                val scaled = Bitmap.createScaledBitmap(thumbBitmap, 200, (200f * height / width).toInt().coerceAtLeast(1), true)
-                val thumbStream = ByteArrayOutputStream()
-                scaled.compress(Bitmap.CompressFormat.JPEG, 80, thumbStream)
-                val encThumb = cryptoEngine.encryptBytes(thumbStream.toByteArray())
+                val encThumb = try { encryptedGalleryThumbnail(thumbBitmap, cryptoEngine) } finally { thumbBitmap.recycle() }
                 FileOutputStream(thumbFile).use { it.write(encThumb) }
-                scaled.recycle()
-                thumbBitmap.recycle()
             }
 
             // 3. Encrypt video file

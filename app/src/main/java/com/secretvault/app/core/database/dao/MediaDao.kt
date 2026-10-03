@@ -66,6 +66,9 @@ interface MediaDao {
     @Query("UPDATE media_items SET isFavorite = :favorite WHERE id = :id")
     suspend fun setFavorite(id: String, favorite: Boolean)
 
+    @Query("UPDATE media_items SET thumbnailPath = :newPath WHERE id = :id AND encryptedPath = :sourcePath AND thumbnailPath IS :oldPath")
+    suspend fun replaceThumbnail(id: String, sourcePath: String, oldPath: String?, newPath: String): Int
+
     @Query("SELECT COUNT(*) FROM media_items WHERE albumId = :albumId")
     suspend fun getItemCountForAlbum(albumId: String): Int
 

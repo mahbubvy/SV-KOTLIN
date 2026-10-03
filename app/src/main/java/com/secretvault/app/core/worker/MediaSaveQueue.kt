@@ -10,6 +10,9 @@ import com.secretvault.app.core.crypto.VaultCryptoEngine
 import com.secretvault.app.core.database.entity.AlbumEntity
 import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.model.MediaType
+import com.secretvault.app.core.image.GALLERY_THUMBNAIL_SUFFIX
+import com.secretvault.app.core.image.encryptedGalleryThumbnail
+import com.secretvault.app.core.image.galleryFrame
 import com.secretvault.app.core.processing.FaceBlurProcessor
 import com.secretvault.app.data.repository.MediaRepository
 import kotlinx.coroutines.CoroutineScope
@@ -185,16 +188,8 @@ class MediaSaveQueue(
             }
         }
 
-        // 1. Generate Micro-Thumbnail (200x200)
-        val thumbHeight = (200f * height / width).toInt().coerceAtLeast(1)
-        val thumbBitmap = Bitmap.createScaledBitmap(bitmap, 200, thumbHeight, true)
-        val thumbStream = ByteArrayOutputStream()
-        thumbBitmap.compress(Bitmap.CompressFormat.JPEG, 80, thumbStream)
-        val encryptedThumbBytes = cryptoEngine.encryptBytes(thumbStream.toByteArray())
-        thumbBitmap.recycle()
-        thumbStream.close()
-
-        val thumbFile = File(context.filesDir, "vault_thumbs/$id.thumb")
+        val encryptedThumbBytes = encryptedGalleryThumbnail(bitmap, cryptoEngine)
+        val thumbFile = File(context.filesDir, "vault_thumbs/$id$GALLERY_THUMBNAIL_SUFFIX")
         thumbFile.parentFile?.mkdirs()
         FileOutputStream(thumbFile).use { it.write(encryptedThumbBytes) }
 
@@ -249,31 +244,24 @@ class MediaSaveQueue(
         var height = 1080
         var thumbBitmap: Bitmap? = null
 
+        val retriever = MediaMetadataRetriever()
         try {
-            val retriever = MediaMetadataRetriever()
             retriever.setDataSource(tempFile.absolutePath)
-            thumbBitmap = retriever.frameAtTime
+            thumbBitmap = retriever.galleryFrame()
             val wStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
             val hStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
             if (wStr != null) width = wStr.toIntOrNull() ?: 1920
             if (hStr != null) height = hStr.toIntOrNull() ?: 1080
-            retriever.release()
         } catch (e: Exception) {
             // Ignore retriever failure
-        }
+        } finally { retriever.release() }
 
-        // 1. Generate & Encrypt Micro-Thumbnail
-        val thumbFile = File(context.filesDir, "vault_thumbs/$id.thumb")
+        val thumbFile = File(context.filesDir, "vault_thumbs/$id$GALLERY_THUMBNAIL_SUFFIX")
         thumbFile.parentFile?.mkdirs()
 
         if (thumbBitmap != null) {
-            val scaledThumb = Bitmap.createScaledBitmap(thumbBitmap, 200, (200f * height / width).toInt().coerceAtLeast(1), true)
-            val thumbStream = ByteArrayOutputStream()
-            scaledThumb.compress(Bitmap.CompressFormat.JPEG, 80, thumbStream)
-            val encThumbBytes = cryptoEngine.encryptBytes(thumbStream.toByteArray())
+            val encThumbBytes = try { encryptedGalleryThumbnail(thumbBitmap, cryptoEngine) } finally { thumbBitmap.recycle() }
             FileOutputStream(thumbFile).use { it.write(encThumbBytes) }
-            scaledThumb.recycle()
-            thumbBitmap.recycle()
         }
 
         // 2. Encrypt Video File

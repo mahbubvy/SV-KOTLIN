@@ -13,6 +13,10 @@ import com.secretvault.app.core.database.VaultDatabase
 import com.secretvault.app.core.database.entity.AlbumEntity
 import com.secretvault.app.core.database.entity.MediaEntity
 import com.secretvault.app.core.image.applyExifOrientation
+import com.secretvault.app.core.image.GALLERY_THUMBNAIL_SUFFIX
+import com.secretvault.app.core.image.createGalleryThumbnail
+import com.secretvault.app.core.image.galleryThumbnailSampleSize
+import com.secretvault.app.core.image.galleryFrame
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -209,8 +213,7 @@ class BackupImportManager(
                             val retriever = MediaMetadataRetriever()
                             try {
                                 retriever.setDataSource(tmpVideo.absolutePath)
-                                val frame = retriever.getFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                                    ?: retriever.frameAtTime
+                                val frame = retriever.galleryFrame()
                                 val dur = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                                 entry.durationMs = dur?.toLongOrNull() ?: 0L
                                 val rot = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
@@ -223,7 +226,7 @@ class BackupImportManager(
                                 }
 
                                 val thumbBitmap = if (frame != null) {
-                                    Bitmap.createScaledBitmap(frame, 200, (200f * entry.height / entry.width).toInt().coerceAtLeast(1), true).also {
+                                    createGalleryThumbnail(frame).also {
                                         if (it != frame) frame.recycle()
                                     }
                                 } else {
@@ -262,12 +265,12 @@ class BackupImportManager(
                                 entry.width = w
                                 entry.height = h
 
-                                val sampleSize = (w / 200).coerceAtLeast(1)
+                                val sampleSize = galleryThumbnailSampleSize(rawWidth, rawHeight)
                                 val thumbOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
                                 val decodedThumb = BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size, thumbOpts)
                                 val rawThumb = decodedThumb?.let { applyExifOrientation(it, orientation) }
                                 val thumbBitmap = if (rawThumb != null) {
-                                    Bitmap.createScaledBitmap(rawThumb, 200, (200f * h / w).toInt().coerceAtLeast(1), true).also {
+                                    createGalleryThumbnail(rawThumb).also {
                                         if (it != rawThumb) rawThumb.recycle()
                                     }
                                 } else {
@@ -390,7 +393,7 @@ class BackupImportManager(
                     // New unique item: promote staged files to vault_media/ and vault_thumbs/
                     resolvedItemMap[item.id] = staged.localId
                     val targetEncFile = File(context.filesDir, "vault_media/${staged.localId}.enc").apply { parentFile?.mkdirs() }
-                    val targetThumbFile = File(context.filesDir, "vault_thumbs/${staged.localId}.thumb").apply { parentFile?.mkdirs() }
+                    val targetThumbFile = File(context.filesDir, "vault_thumbs/${staged.localId}$GALLERY_THUMBNAIL_SUFFIX").apply { parentFile?.mkdirs() }
 
                     staged.encFile.copyTo(targetEncFile, overwrite = true)
                     staged.encFile.delete()
@@ -519,7 +522,7 @@ class BackupImportManager(
 
     private fun compressBitmapToJpeg(bitmap: Bitmap): ByteArray {
         val stream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, stream)
         val bytes = stream.toByteArray()
         bitmap.recycle()
         stream.close()

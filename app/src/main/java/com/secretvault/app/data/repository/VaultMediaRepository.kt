@@ -22,6 +22,7 @@ interface MediaRepository {
     suspend fun moveMediaToAlbum(itemIds: List<String>, targetAlbumId: String)
     suspend fun getTotalCount(): Int
     suspend fun setFavorite(id: String, favorite: Boolean)
+    suspend fun replaceThumbnail(item: MediaItem, newPath: String): Boolean
 }
 
 class VaultMediaRepository(
@@ -103,5 +104,9 @@ class VaultMediaRepository(
 
     override suspend fun setFavorite(id: String, favorite: Boolean) = withContext(Dispatchers.IO) {
         mediaDao.setFavorite(id, favorite)
+    }
+
+    override suspend fun replaceThumbnail(item: MediaItem, newPath: String): Boolean = withContext(Dispatchers.IO) {
+        mediaDao.replaceThumbnail(item.id, item.encryptedPath, item.thumbnailPath, newPath) == 1
     }
 }

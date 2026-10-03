@@ -31,6 +31,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.secretvault.app.core.model.Album
+import com.secretvault.app.core.model.MediaItem
+import com.secretvault.app.ui.gallery.components.ThumbnailRefreshEffect
 import com.secretvault.app.ui.gallery.components.AlbumGridItem
 import com.secretvault.app.ui.gallery.components.CreateAlbumDialog
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,9 +52,12 @@ import com.secretvault.app.ui.theme.VaultSurface
 fun AlbumsTab(
     viewModel: AlbumsViewModel,
     onAlbumClick: (Album) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    mediaItems: List<MediaItem> = emptyList()
 ) {
     val albums by viewModel.albums.collectAsState()
+    val mediaById = remember(mediaItems) { mediaItems.associateBy { it.id } }
+    val latestByAlbum = remember(mediaItems) { mediaItems.groupBy { it.albumId }.mapValues { it.value.firstOrNull() } }
 
     var isCreateDialogOpen by remember { mutableStateOf(false) }
     var albumToRename by remember { mutableStateOf<Album?>(null) }
@@ -98,6 +103,7 @@ fun AlbumsTab(
                 modifier = Modifier.fillMaxSize()
             ) {
                 items(albums, key = { it.id }) { album ->
+                    ThumbnailRefreshEffect(album.coverMediaId?.let { mediaById[it] } ?: latestByAlbum[album.id])
                     AlbumGridItem(
                         album = album,
                         onClick = { onAlbumClick(album) },

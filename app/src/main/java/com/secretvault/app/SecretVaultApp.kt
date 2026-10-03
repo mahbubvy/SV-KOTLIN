@@ -38,6 +38,7 @@ class SecretVaultApp : Application(), ImageLoaderFactory {
     lateinit var ephemeralShareManager: com.secretvault.app.core.share.EphemeralShareManager private set
     lateinit var backupImportManager: com.secretvault.app.core.backup.BackupImportManager private set
     lateinit var backupExportManager: com.secretvault.app.core.backup.BackupExportManager private set
+    lateinit var galleryThumbnailManager: com.secretvault.app.core.image.GalleryThumbnailManager private set
 
     override fun onCreate() {
         super.onCreate()
@@ -81,6 +82,9 @@ class SecretVaultApp : Application(), ImageLoaderFactory {
         ephemeralShareManager = com.secretvault.app.core.share.EphemeralShareManager(this, cryptoEngine)
         backupImportManager = com.secretvault.app.core.backup.BackupImportManager(this, cryptoEngine, database)
         backupExportManager = com.secretvault.app.core.backup.BackupExportManager(this, cryptoEngine, database)
+        galleryThumbnailManager = com.secretvault.app.core.image.GalleryThumbnailManager(this, cryptoEngine, mediaRepository) {
+            sessionManager.isUnlocked.value
+        }
 
         // Remove expired share files and restore timers for shares still in progress.
         ephemeralShareManager.purgeAllSharedFiles()
