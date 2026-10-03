@@ -77,6 +77,8 @@ import com.secretvault.app.core.stream.StreamPreviewRenderer
 import com.secretvault.app.core.stream.StreamSession
 import com.secretvault.app.core.stream.StreamCameraState
 import com.secretvault.app.core.stream.StreamCameraOption
+import com.secretvault.app.core.stream.StreamInteractionState
+import kotlinx.coroutines.channels.Channel
 import com.secretvault.app.ui.stream.StreamPinDialog
 import com.secretvault.app.ui.camera.components.CameraBottomBar
 import com.secretvault.app.ui.camera.components.CameraPreviewView
@@ -150,6 +152,7 @@ fun CameraScreen(
     val streamState by stream.state.collectAsState()
     val streamRecording by cameraManager.streamRecordingState.collectAsState()
     val streamSettings by cameraManager.streamSettings.collectAsState()
+    val interaction by cameraManager.interaction.collectAsState()
     var streamVideoMode by remember { mutableStateOf<VideoMode?>(null) }
     var localFlashBusy by remember { mutableStateOf(false) }
     var renderer by remember { mutableStateOf<StreamPreviewRenderer?>(null) }
@@ -244,6 +247,18 @@ fun CameraScreen(
     var cameraIsReady by remember { mutableStateOf(false) }
     var appliedCameraId by remember { mutableStateOf<String?>(null) }
     val remoteCameraState = remember { MutableStateFlow(StreamCameraState()) }
+    val remoteInteractions = remember { MutableStateFlow(StreamInteractionState()) }
+    val localZoomTargets = remember { Channel<Pair<Int, Float>>(Channel.CONFLATED) }
+    LaunchedEffect(interaction, appliedCameraId, previewAspect) {
+        remoteInteractions.value = interaction.copy(cameraId = appliedCameraId, previewAspect = previewAspect.takeIf { it > 0f } ?: 1f)
+    }
+    LaunchedEffect(cameraGeneration) {
+        for ((generation, ratio) in localZoomTargets) {
+            if (generation == cameraGeneration && cameraIsReady && foreground) {
+                kotlinx.coroutines.withTimeoutOrNull(2500) { cameraManager.applyContinuousZoom(ratio) }
+            }
+        }
+    }
     LaunchedEffect(uiState.availableFacings, uiState.rearLensOptions, appliedCameraId) {
         val choices = buildList {
             if (LensFacing.BACK in uiState.availableFacings) uiState.rearLensOptions.take(7).forEach {
@@ -337,6 +352,10 @@ fun CameraScreen(
                                     androidx.compose.runtime.snapshotFlow { cameraGeneration > generation && cameraIsReady && appliedCameraId != null }.first { it }
                                     app.sessionManager.isUnlocked.value && foreground && stream === owner && cameraManager.streamSettings.value.mode == value
                                 }
+                            }, interactionState = remoteInteractions, applyInteraction = { request ->
+                                if (!app.sessionManager.isUnlocked.value || !foreground || !cameraIsReady || stream !== owner ||
+                                    renderer == null || appliedCameraId != request.cameraId || localFlashBusy) false
+                                else request.kind == 0 && kotlinx.coroutines.withTimeoutOrNull(2500) { cameraManager.applyContinuousZoom(request.x) } == true
                             })
                     } else if (gl != null) stream.refreshCameraFrame()
                 },
@@ -479,6 +498,10 @@ fun CameraScreen(
             // Camera Preview View
             CameraPreviewView(
                 useCmfHighFps = useCmfHighFps,
+                interactions = interaction.copy(cameraId = appliedCameraId),
+                interactionEnabled = cameraIsReady && !streamStopping && !localFlashBusy && !streamState.cameraBusy &&
+                    !streamState.photoBusy && !streamState.settingsBusy && !streamState.recordingBusy && !streamState.interactionBusy && !streamRecording.saving,
+                onZoom = { localZoomTargets.trySend(cameraGeneration to it) },
                 onPreviewViewsCreated = { preview, cmf ->
                     previewViewInstance = preview
                     cmfHighFpsViewInstance = cmf
@@ -500,6 +523,9 @@ fun CameraScreen(
 
             // Focus Circle
             FocusIndicator(focusPoint = uiState.focusPoint)
+            if (interaction.maxZoom > interaction.minZoom) Text("%.1f×".format(java.util.Locale.US, interaction.zoom),
+                color = TextPrimary, fontSize = 14.sp, modifier = Modifier.align(Alignment.CenterStart).padding(16.dp)
+                    .background(VaultDarkBg.copy(alpha = 0.9f), RoundedCornerShape(8.dp)).padding(8.dp))
 
             // Top Bar
             CameraTopBar(

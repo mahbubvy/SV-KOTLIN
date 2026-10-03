@@ -41,6 +41,7 @@ import androidx.lifecycle.LifecycleOwner
 import com.secretvault.app.core.worker.MediaSaveQueue
 import com.secretvault.app.core.stream.StreamRecordingState
 import com.secretvault.app.core.stream.StreamSettingsState
+import com.secretvault.app.core.stream.StreamInteractionState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -92,6 +93,8 @@ class CameraManager(
     val streamRecordingState: StateFlow<StreamRecordingState> = _streamRecordingState.asStateFlow()
     private val _streamSettings = MutableStateFlow(StreamSettingsState())
     val streamSettings: StateFlow<StreamSettingsState> = _streamSettings.asStateFlow()
+    private val _interaction = MutableStateFlow(StreamInteractionState())
+    val interaction: StateFlow<StreamInteractionState> = _interaction.asStateFlow()
     private var streamVideoSaved: CompletableDeferred<Boolean>? = null
     private var streamVideoFinalized: CompletableDeferred<Unit>? = null
     private var nativeStopping = false
@@ -120,6 +123,7 @@ class CameraManager(
         streaming = streamRenderer != null
         _streamRecordingState.value = StreamRecordingState(saving = _streamRecordingState.value.saving)
         _streamSettings.value = StreamSettingsState()
+        _interaction.value = StreamInteractionState()
         val session = ++cameraSession
         cameraReady = false
         camera = null
@@ -203,6 +207,7 @@ class CameraManager(
                                 cmfHighFpsActive = true
                                 cmfHighFpsView.start(audio, videoOrientation.recorderOrientationHint, onReady = {
                                     _streamRecordingState.value = _streamRecordingState.value.copy(available = true, audio = audio)
+                                    _interaction.value = StreamInteractionState(maxZoom = cmfHighFpsView.maximumZoom, zoom = cmfHighFpsView.currentZoom)
                                     cameraReady = true; setFlashMode(flashMode); onCameraReady()
                                 }, onError = onCameraError, streamRenderer = streamRenderer)
                                 return@addListener
@@ -248,6 +253,7 @@ class CameraManager(
                             includeAudio = recordAudio && !streaming,
                             orientationHint = videoOrientation.recorderOrientationHint,
                             onReady = {
+                                _interaction.value = StreamInteractionState(maxZoom = cmfHighFpsView.maximumZoom, zoom = cmfHighFpsView.currentZoom)
                                 cameraReady = true
                                 onCameraReady()
                             },
@@ -283,6 +289,11 @@ class CameraManager(
                     }
                 }
                 cameraReady = true
+                val boundCamera = camera
+                boundCamera?.cameraInfo?.zoomState?.observe(lifecycleOwner) { zoom ->
+                    if (camera === boundCamera && session == cameraSession) _interaction.value = _interaction.value.copy(
+                        minZoom = zoom.minZoomRatio, maxZoom = zoom.maxZoomRatio.coerceAtMost(100f), zoom = zoom.zoomRatio)
+                }
                 if (streaming) setFlashMode(flashMode)
                 onCameraReady()
             } catch (e: Exception) {
@@ -400,6 +411,24 @@ class CameraManager(
                 onError("Could not apply camera zoom")
             }
         }, ContextCompat.getMainExecutor(context))
+    }
+
+    suspend fun applyContinuousZoom(ratio: Float): Boolean {
+        val range = _interaction.value
+        if (!cameraReady || !ratio.isFinite() || ratio !in range.minZoom..range.maxZoom || _streamRecordingState.value.saving) return false
+        val generation = cameraSession
+        val applied = CompletableDeferred<Boolean>()
+        if (cmfHighFpsActive) cmfCameraView?.setZoomRatio(ratio) { success ->
+            if (success && generation == cameraSession) _interaction.value = _interaction.value.copy(zoom = ratio)
+            applied.complete(success && generation == cameraSession)
+        } ?: return false
+        else {
+            val bound = camera ?: return false
+            val operation = bound.cameraControl.setZoomRatio(ratio)
+            operation.addListener({ applied.complete(camera === bound && generation == cameraSession &&
+                runCatching { operation.get(); true }.getOrDefault(false)) }, ContextCompat.getMainExecutor(context))
+        }
+        return applied.await()
     }
 
     fun setFlashMode(flashMode: FlashMode, onApplied: (Boolean) -> Unit = {}) {

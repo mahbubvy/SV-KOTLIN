@@ -30,7 +30,9 @@ data class StreamState(val message: String = "Choose Send or View", val busy: Bo
     val cameraState: StreamCameraState = StreamCameraState(), val cameraBusy: Boolean = false, val cameraMessage: String? = null,
     val recordingState: StreamRecordingState = StreamRecordingState(), val recordingBusy: Boolean = false,
     val recordingRequestedStart: Boolean? = null, val recordingMessage: String? = null,
-    val settingsState: StreamSettingsState = StreamSettingsState(), val settingsBusy: Boolean = false, val settingsMessage: String? = null) {
+    val settingsState: StreamSettingsState = StreamSettingsState(), val settingsBusy: Boolean = false, val settingsMessage: String? = null,
+    val interactionState: StreamInteractionState = StreamInteractionState(), val interactionBusy: Boolean = false,
+    val interactionKind: Int? = null, val interactionMessage: String? = null) {
     override fun toString(): String = "StreamState($message, credentials hidden)"
 }
 
@@ -58,6 +60,19 @@ class StreamSession(private val context: Context) : Closeable {
     @Volatile private var decoder: StreamDecoder? = null
     private val mutableState = MutableStateFlow(StreamState())
     val state: StateFlow<StreamState> = mutableState.asStateFlow()
+    private val zoomTargets = Channel<Pair<String, Float>>(Channel.CONFLATED)
+    private val zoomSender = scope.launch {
+        for ((cameraId, ratio) in zoomTargets) {
+            while (isActive && !closed.get()) {
+                val current = state.first { closed.get() || !it.live || it.cameraState.selectedId != cameraId ||
+                    (!it.photoBusy && !it.cameraBusy && !it.settingsBusy && !it.recordingBusy && !it.interactionBusy) }
+                if (closed.get() || !current.live || current.interactionState.cameraId != cameraId ||
+                    ratio !in current.interactionState.minZoom..current.interactionState.maxZoom) break
+                if (setInteraction(0, ratio)) { state.first { !it.interactionBusy }; break }
+                delay(25)
+            }
+        }
+    }
 
     private fun wifi(): Network {
         val network = cm.allNetworks.firstOrNull {
@@ -87,8 +102,9 @@ class StreamSession(private val context: Context) : Closeable {
                    capturePhoto: (suspend () -> Boolean)? = null, cameraState: StateFlow<StreamCameraState>? = null,
                    selectCamera: (suspend (String) -> Boolean)? = null,
                    recordingState: StateFlow<StreamRecordingState>? = null, setRecording: (suspend (Boolean) -> Boolean)? = null,
-                   settingsState: StateFlow<StreamSettingsState>? = null, setSetting: (suspend (Int, Int) -> Boolean)? = null) {
-        sendSource(pinManager, capturePhoto, cameraState, selectCamera, recordingState, setRecording, settingsState, setSetting) { onConfig, onFrame, onError ->
+                   settingsState: StateFlow<StreamSettingsState>? = null, setSetting: (suspend (Int, Int) -> Boolean)? = null,
+                   interactionState: StateFlow<StreamInteractionState>? = null, applyInteraction: (suspend (StreamInteractionRequest) -> Boolean)? = null) {
+        sendSource(pinManager, capturePhoto, cameraState, selectCamera, recordingState, setRecording, settingsState, setSetting, interactionState, applyInteraction) { onConfig, onFrame, onError ->
             val video = StreamEncoder(rotation, onConfig, onFrame, onError)
             try { renderer.attachEncoder(video.inputSurface, rotation, viewAspect) }
             catch (error: Exception) { video.close(); throw error }
@@ -103,6 +119,7 @@ class StreamSession(private val context: Context) : Closeable {
                            cameraState: StateFlow<StreamCameraState>? = null, selectCamera: (suspend (String) -> Boolean)? = null,
                            recordingState: StateFlow<StreamRecordingState>? = null, setRecording: (suspend (Boolean) -> Boolean)? = null,
                            settingsState: StateFlow<StreamSettingsState>? = null, setSetting: (suspend (Int, Int) -> Boolean)? = null,
+                           interactionState: StateFlow<StreamInteractionState>? = null, applyInteraction: (suspend (StreamInteractionRequest) -> Boolean)? = null,
                            startSource: ((StreamConfig) -> Unit, (StreamFrame) -> Unit, (Throwable) -> Unit) -> Closeable) {
         mutableState.value = StreamState("Starting camera…", busy = true)
         scope.launch {
@@ -116,7 +133,8 @@ class StreamSession(private val context: Context) : Closeable {
                 val network = wifi()
                 val address = cm.getLinkProperties(network)!!.linkAddresses.first { it.address is Inet4Address }.address
                 val listener = StreamTls.listen(address, pinManager, cameraControls = cameraState != null && selectCamera != null,
-                    recordingControls = recordingState != null && setRecording != null, settingsControls = settingsState != null && setSetting != null)
+                    recordingControls = recordingState != null && setRecording != null, settingsControls = settingsState != null && setSetting != null,
+                    interactionControls = interactionState != null && applyInteraction != null)
                 synchronized(this@StreamSession) {
                     if (closed.get()) { listener.close(); return@launch }
                     host = listener
@@ -150,7 +168,7 @@ class StreamSession(private val context: Context) : Closeable {
                         if (closed.get()) { peer.close(); return@launch }
                         socket = peer
                     }
-                    if (capturePhoto != null || selectCamera != null || setRecording != null || setSetting != null) scope.launch {
+                    if (capturePhoto != null || selectCamera != null || setRecording != null || setSetting != null || applyInteraction != null) scope.launch {
                         try {
                             val input = DataInputStream(peer.inputStream)
                             var lastRequest = 0L
@@ -159,16 +177,20 @@ class StreamSession(private val context: Context) : Closeable {
                                 val selection = if (type == 7 && selectCamera != null) StreamProtocol.readCameraRequest(input, type) else null
                                 val recording = if (type == 10 && setRecording != null) StreamProtocol.readRecordingRequest(input, type) else null
                                 val setting = if (type == 13 && setSetting != null) StreamProtocol.readSettingsRequest(input, type) else null
-                                val id = selection?.requestId ?: recording?.requestId ?: setting?.requestId ?: if (capturePhoto != null) StreamProtocol.readPhotoRequest(input, type)
+                                val interaction = if (type == 16 && applyInteraction != null) StreamProtocol.readInteractionRequest(input, type) else null
+                                val id = selection?.requestId ?: recording?.requestId ?: setting?.requestId ?: interaction?.requestId ?: if (capturePhoto != null) StreamProtocol.readPhotoRequest(input, type)
                                     else throw IOException("Unsupported camera command")
                                 if (!state.value.live || id != lastRequest + 1 ||
                                     selection != null && cameraState?.value?.options?.none { it.id == selection.targetId } != false ||
                                     setting?.kind == 0 && settingsState?.value?.modes?.contains(setting.value) != true ||
                                     setting?.kind == 1 && settingsState?.value?.flashAvailable != true ||
-                                    recording == null && recordingState?.value?.let { it.saving || it.recording && setting?.kind != 1 } == true ||
+                                    interaction != null && !interactionAllowed(interaction, interactionState?.value, cameraState?.value?.selectedId, recordingState?.value) ||
+                                    recording == null && recordingState?.value?.let { it.saving || it.recording && setting?.kind != 1 && interaction?.kind !in listOf(0, 1) } == true ||
                                     !commandPending.compareAndSet(false, true)) throw IOException("Invalid camera command")
                                 lastRequest = id
-                                mutableState.update { if (closed.get()) it else if (setting != null)
+                                mutableState.update { if (closed.get()) it else if (interaction != null)
+                                    it.copy(interactionBusy = true, interactionKind = interaction.kind, interactionMessage = null)
+                                    else if (setting != null)
                                     it.copy(settingsBusy = true, settingsMessage = "Applying camera setting…")
                                     else if (recording != null)
                                     it.copy(recordingBusy = true, recordingRequestedStart = recording.start,
@@ -177,9 +199,10 @@ class StreamSession(private val context: Context) : Closeable {
                                     it.copy(photoBusy = true, photoMessage = "Remote photo requested…")
                                     else it.copy(cameraBusy = true, cameraMessage = "Changing camera…") }
                                 scope.launch {
-                                    val success = try { withTimeout(if (recording != null && !recording.start) 60_000L else if (selection == null && recording == null && setting == null) 25_000L else 10_000L) {
+                                    val success = try { withTimeout(if (recording != null && !recording.start) 60_000L else if (selection == null && recording == null && setting == null && interaction == null) 25_000L else 10_000L) {
                                         withContext(Dispatchers.Main.immediate) {
-                                            if (setting != null) requireNotNull(setSetting)(setting.kind, setting.value)
+                                            if (interaction != null) requireNotNull(applyInteraction)(interaction)
+                                            else if (setting != null) requireNotNull(setSetting)(setting.kind, setting.value)
                                             else if (recording != null) requireNotNull(setRecording)(recording.start)
                                             else if (selection == null) requireNotNull(capturePhoto)() else requireNotNull(selectCamera)(selection.targetId)
                                         }
@@ -187,7 +210,8 @@ class StreamSession(private val context: Context) : Closeable {
                                     catch (_: TimeoutCancellationException) { false }
                                     catch (error: CancellationException) { throw error }
                                     catch (_: Exception) { false }
-                                    val result = if (setting != null) StreamSettingsResult(id, success)
+                                    val result = if (interaction != null) StreamInteractionResult(id, interaction.kind, success)
+                                        else if (setting != null) StreamSettingsResult(id, success)
                                         else if (recording != null) StreamRecordingResult(id, recording.start, success)
                                         else if (selection == null) StreamPhotoResult(id, success) else StreamCameraResult(id, success)
                                     if (!closed.get() && commandResults.trySend(result).isFailure)
@@ -214,6 +238,8 @@ class StreamSession(private val context: Context) : Closeable {
                                 mutableState.update { if (closed.get()) it else it.copy(recordingState = recording) }
                             }
                             var lastSettingsState = settingsState?.value
+                            var lastInteractionState = interactionState?.value
+                            lastInteractionState?.let { StreamProtocol.writeInteractionState(output, it) }
                             lastSettingsState?.let { settings ->
                                 StreamProtocol.writeSettingsState(output, settings)
                                 mutableState.update { if (closed.get()) it else it.copy(settingsState = settings, photoAvailable = settings.photoAvailable) }
@@ -224,6 +250,12 @@ class StreamSession(private val context: Context) : Closeable {
                             var waitingForKey = true
                             var lastFrame = SystemClock.elapsedRealtime()
                             while (isActive && !closed.get()) {
+                                val latestInteraction = interactionState?.value
+                                if (latestInteraction != null && latestInteraction != lastInteractionState) {
+                                    writeStarted.set(SystemClock.elapsedRealtime())
+                                    StreamProtocol.writeInteractionState(output, latestInteraction)
+                                    writeStarted.set(0); lastInteractionState = latestInteraction
+                                }
                                 val latestSettings = settingsState?.value
                                 if (latestSettings != null && latestSettings != lastSettingsState) {
                                     writeStarted.set(SystemClock.elapsedRealtime())
@@ -247,6 +279,10 @@ class StreamSession(private val context: Context) : Closeable {
                                 commandResults.tryReceive().getOrNull()?.let { result ->
                                     writeStarted.set(SystemClock.elapsedRealtime())
                                     when (result) {
+                                        is StreamInteractionResult -> {
+                                            mutableState.update { if (closed.get()) it else it.copy(interactionBusy = false, interactionKind = null) }
+                                            commandPending.set(false); StreamProtocol.writeInteractionResult(output, result)
+                                        }
                                         is StreamPhotoResult -> {
                                             mutableState.update { if (closed.get()) it else it.copy(photoBusy = false,
                                                 photoMessage = if (result.saved) "Remote photo saved in this vault" else "Photo could not be confirmed. Check this vault.") }
@@ -341,6 +377,14 @@ class StreamSession(private val context: Context) : Closeable {
                 phase = "media"
                 while (isActive && !closed.get()) {
                     when (val message = StreamProtocol.readMessage(input)) {
+                        is StreamInteractionState -> mutableState.update { if (closed.get()) it else it.copy(interactionState = message) }
+                        is StreamInteractionResult -> {
+                            if (message.requestId != requestIds.get() || !state.value.interactionBusy || state.value.interactionKind != message.kind ||
+                                !commandPending.compareAndSet(true, false)) throw IOException("Unexpected interaction result")
+                            commandTimeout?.cancel()
+                            mutableState.update { if (closed.get()) it else it.copy(interactionBusy = false, interactionKind = null,
+                                interactionMessage = if (message.applied) null else "Camera control could not be applied") }
+                        }
                         is StreamFrame -> { received.incrementAndGet(); video.offer(message) }
                         is StreamPhotoAvailable -> mutableState.update { if (closed.get()) it else it.copy(photoAvailable = message.available) }
                         is StreamPhotoResult -> {
@@ -380,6 +424,32 @@ class StreamSession(private val context: Context) : Closeable {
             }
             finally { clearSecret() }
         }.invokeOnCompletion { clearSecret() }
+    }
+
+    fun queueZoom(ratio: Float): Boolean {
+        val current = state.value
+        val controls = current.interactionState
+        val id = controls.cameraId ?: return false
+        if (closed.get() || !current.live || current.stopping || current.recordingState.saving || current.cameraBusy ||
+            current.photoBusy || current.settingsBusy || current.recordingBusy || current.interactionBusy && current.interactionKind != 0 ||
+            id != current.cameraState.selectedId || !ratio.isFinite() || ratio !in controls.minZoom..controls.maxZoom) return false
+        return zoomTargets.trySend(id to ratio).isSuccess
+    }
+
+    fun setInteraction(kind: Int, x: Float, y: Float = 0f): Boolean {
+        val output = commandOutput ?: return false
+        val current = state.value
+        val request = StreamInteractionRequest(requestIds.get() + 1, current.interactionState.cameraId ?: return false, kind, x, y)
+        if (closed.get() || !current.live || current.stopping || !interactionAllowed(request, current.interactionState,
+                current.cameraState.selectedId, current.recordingState) || !commandPending.compareAndSet(false, true)) return false
+        val id = requestIds.incrementAndGet()
+        mutableState.update { if (closed.get()) it else it.copy(interactionBusy = true, interactionKind = kind, interactionMessage = null) }
+        commandTimeout = scope.launch { delay(15_000); if (commandPending.get()) end("Camera control timed out. Check the camera device.") }
+        scope.launch {
+            try { StreamProtocol.writeInteractionRequest(output, request.copy(requestId = id)) }
+            catch (_: Exception) { if (!closed.get()) end("Camera control connection failed") }
+        }
+        return true
     }
 
     fun takePhoto(): Boolean {
@@ -485,7 +555,7 @@ class StreamSession(private val context: Context) : Closeable {
         mutableState.update { it.copy(message = "Stopping…", stopping = true, busy = true, live = false, invitation = null, endpoint = null,
             photoAvailable = false, photoBusy = false, cameraState = StreamCameraState(), cameraBusy = false,
             recordingState = StreamRecordingState(), recordingBusy = false, recordingRequestedStart = null,
-            settingsState = StreamSettingsState(), settingsBusy = false,
+            settingsState = StreamSettingsState(), settingsBusy = false, interactionState = StreamInteractionState(), interactionBusy = false, interactionKind = null,
             settingsMessage = if (it.settingsBusy) "Camera setting unknown. Check the camera device." else it.settingsMessage,
             recordingMessage = if (it.recordingBusy || it.recordingState.recording || it.recordingState.saving)
                 "Recording ended. Check the camera vault for the saved video." else it.recordingMessage,

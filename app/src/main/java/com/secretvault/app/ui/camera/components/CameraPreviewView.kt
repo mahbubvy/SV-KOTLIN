@@ -14,6 +14,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import com.secretvault.app.core.camera.CmfHighFpsCameraView
+import com.secretvault.app.core.stream.StreamInteractionState
 
 private class CameraPreviewHost(context: android.content.Context) : FrameLayout(context) {
     val cameraXPreview = PreviewView(context).apply {
@@ -42,7 +43,10 @@ fun CameraPreviewView(
     useCmfHighFps: Boolean,
     onPreviewViewsCreated: (PreviewView, CmfHighFpsCameraView) -> Unit,
     onTapToFocus: (Float, Float, PreviewView, CmfHighFpsCameraView) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    interactions: StreamInteractionState = StreamInteractionState(),
+    interactionEnabled: Boolean = true,
+    onZoom: (Float) -> Unit = {}
 ) {
     val context = LocalContext.current
     val previewHost = remember { CameraPreviewHost(context) }
@@ -50,10 +54,8 @@ fun CameraPreviewView(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .pointerInput(useCmfHighFps) {
-                detectTapGestures { offset: Offset ->
+            .cameraInteractionGestures(interactions, interactionEnabled, onZoom) { offset ->
                     onTapToFocus(offset.x, offset.y, previewHost.cameraXPreview, previewHost.cmfPreview)
-                }
             }
     ) {
         AndroidView(

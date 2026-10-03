@@ -49,6 +49,12 @@ data class StreamSettingsState(val modes: List<Int> = emptyList(), val mode: Int
 data class StreamSettingsRequest(val requestId: Long, val kind: Int, val value: Int)
 data class StreamSettingsResult(val requestId: Long, val applied: Boolean) : StreamMessage
 
+data class StreamInteractionState(val cameraId: String? = null, val minZoom: Float = 1f,
+    val maxZoom: Float = 1f, val zoom: Float = 1f, val previewAspect: Float = 1f,
+    val focusAvailable: Boolean = false, val microphoneAvailable: Boolean = false) : StreamMessage
+data class StreamInteractionRequest(val requestId: Long, val cameraId: String, val kind: Int, val x: Float, val y: Float = 0f)
+data class StreamInteractionResult(val requestId: Long, val kind: Int, val applied: Boolean) : StreamMessage
+
 class StreamFrameQueue {
     private val frames = ArrayDeque<StreamFrame>()
     private var bytes = 0
@@ -154,6 +160,11 @@ object StreamProtocol {
             val id = input.readLong(); check(id > 0)
             StreamSettingsResult(id, readFlag(input))
         }
+        15 -> StreamInteractionState(readText(input, 32).ifEmpty { null }, input.readFloat(), input.readFloat(),
+            input.readFloat(), input.readFloat(), readFlag(input), readFlag(input)).also(::validateInteractionState)
+        17 -> StreamInteractionResult(input.readLong(), input.readUnsignedByte(), readFlag(input)).also {
+            check(it.requestId > 0 && it.kind in 0..2)
+        }
         else -> throw IOException("Invalid stream message")
     }
 
@@ -256,6 +267,47 @@ object StreamProtocol {
     }
 
     private fun validSetting(kind: Int, value: Int) = kind == 0 && value in 0..3 || kind == 1 && value in 0..2
+    fun writeInteractionState(output: DataOutputStream, state: StreamInteractionState) {
+        validateInteractionState(state)
+        output.writeByte(15); writeText(output, state.cameraId.orEmpty())
+        listOf(state.minZoom, state.maxZoom, state.zoom, state.previewAspect).forEach(output::writeFloat)
+        output.writeByte(if (state.focusAvailable) 1 else 0); output.writeByte(if (state.microphoneAvailable) 1 else 0); output.flush()
+    }
+
+    fun writeInteractionRequest(output: DataOutputStream, request: StreamInteractionRequest) {
+        validateInteractionRequest(request)
+        output.writeByte(16); output.writeLong(request.requestId); writeText(output, request.cameraId)
+        output.writeByte(request.kind); output.writeFloat(request.x); output.writeFloat(request.y); output.flush()
+    }
+
+    fun readInteractionRequest(input: DataInputStream, type: Int): StreamInteractionRequest {
+        check(type == 16)
+        return StreamInteractionRequest(input.readLong(), readText(input, 32), input.readUnsignedByte(), input.readFloat(), input.readFloat())
+            .also(::validateInteractionRequest)
+    }
+
+    fun writeInteractionResult(output: DataOutputStream, result: StreamInteractionResult) {
+        check(result.requestId > 0 && result.kind in 0..2)
+        output.writeByte(17); output.writeLong(result.requestId); output.writeByte(result.kind)
+        output.writeByte(if (result.applied) 1 else 0); output.flush()
+    }
+
+    private fun validateInteractionState(state: StreamInteractionState) {
+        check((state.cameraId == null || validCameraId(state.cameraId)) &&
+            state.minZoom.isFinite() && state.maxZoom.isFinite() && state.zoom.isFinite() &&
+            state.minZoom in 0.05f..100f && state.maxZoom in state.minZoom..100f && state.zoom in state.minZoom..state.maxZoom &&
+            state.previewAspect.isFinite() && state.previewAspect in 0.1f..10f)
+    }
+
+    private fun validateInteractionRequest(request: StreamInteractionRequest) {
+        check(request.requestId > 0 && validCameraId(request.cameraId) && request.x.isFinite() && request.y.isFinite() &&
+            when (request.kind) {
+                0 -> request.x in 0.05f..100f && request.y == 0f
+                1 -> request.x in 0f..1f && request.y in 0f..1f
+                2 -> request.x in listOf(0f, 1f) && request.y == 0f
+                else -> false
+            })
+    }
     private fun validateSettingsState(state: StreamSettingsState) {
         check(state.modes.size <= 4 && state.modes.distinct().size == state.modes.size && state.modes.all { it in 0..3 } &&
             (state.mode == null || state.mode in state.modes) && state.flashMode in 0..2)

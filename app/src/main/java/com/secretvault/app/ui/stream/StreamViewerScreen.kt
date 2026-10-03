@@ -43,6 +43,7 @@ import com.secretvault.app.ui.theme.*
 import com.secretvault.app.SecretVaultApp
 import com.secretvault.app.core.camera.VideoMode
 import kotlinx.coroutines.flow.first
+import com.secretvault.app.ui.camera.components.cameraInteractionGestures
 
 @Composable
 fun StreamViewerScreen(onBack: () -> Unit) {
@@ -63,9 +64,9 @@ fun StreamViewerScreen(onBack: () -> Unit) {
     }
     var session by remember { mutableStateOf(StreamSession(context.applicationContext)) }
     val state by session.state.collectAsState()
-    val canChooseCamera = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !state.settingsBusy &&
+    val canChooseCamera = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !state.settingsBusy && !state.interactionBusy &&
         !state.recordingState.recording && !state.recordingState.saving && !state.stopping && state.cameraState.selectedId != null
-    val canTakePhoto = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !state.settingsBusy &&
+    val canTakePhoto = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !state.settingsBusy && !state.interactionBusy &&
         !state.recordingState.recording && !state.recordingState.saving && !state.stopping &&
         (state.cameraState.options.isEmpty() || state.cameraState.selectedId != null)
     val latestSession by rememberUpdatedState(session)
@@ -152,7 +153,11 @@ fun StreamViewerScreen(onBack: () -> Unit) {
         } else {
             Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp)
                 .clip(RoundedCornerShape(16.dp)).background(androidx.compose.ui.graphics.Color.Black)
-                .semantics { if (state.live) contentDescription = "Live camera" }) {
+                .semantics { if (state.live) contentDescription = "Live camera" }
+                .cameraInteractionGestures(state.interactionState,
+                    state.live && !state.stopping && !state.cameraBusy && !state.photoBusy && !state.settingsBusy && !state.recordingBusy &&
+                        !state.recordingState.saving && (!state.interactionBusy || state.interactionKind == 0),
+                    onZoom = { session.queueZoom(it) }, onTap = {})) {
                 AndroidView(factory = { androidContext ->
                     TextureView(androidContext).apply {
                         surfaceTextureListener = object : TextureView.SurfaceTextureListener {
@@ -174,10 +179,11 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                     .background(VaultDarkBg.copy(alpha = 0.9f), RoundedCornerShape(8.dp)).padding(8.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(state.settingsState.mode?.let { VideoMode.entries[it].label }.orEmpty(), color = TextPrimary, fontSize = 12.sp)
+                    if (state.interactionState.cameraId != null) Text("%.1f×".format(java.util.Locale.US, state.interactionState.zoom), color = TextPrimary, fontSize = 12.sp)
                     Icon(if (state.recordingState.audio) Icons.Default.Mic else Icons.Default.MicOff,
                         if (state.recordingState.audio) "Microphone on" else "Microphone off", tint = TextPrimary, modifier = Modifier.size(16.dp))
                 }
-                val notices = listOfNotNull(state.photoMessage, state.cameraMessage, state.recordingMessage, state.settingsMessage)
+                val notices = listOfNotNull(state.photoMessage, state.cameraMessage, state.recordingMessage, state.settingsMessage, state.interactionMessage)
                     .filter { it !in confirmations && it !in setOf("Taking photo…", "Changing camera…", "Applying camera setting…", "Starting recording…", "Saving encrypted video…") }
                 Column(Modifier.align(Alignment.Center).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -203,7 +209,7 @@ fun StreamViewerScreen(onBack: () -> Unit) {
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val recording = state.recordingState
                 if (recording.available) Button(onClick = { session.setRecording(!recording.recording) },
-                    enabled = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !state.settingsBusy && !recording.saving &&
+                    enabled = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !state.settingsBusy && !state.interactionBusy && !recording.saving &&
                         !state.stopping && state.cameraState.selectedId != null,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = if (recording.recording) VaultError else VaultAccent, contentColor = VaultDarkBg,

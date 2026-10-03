@@ -58,6 +58,10 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
     private var onError: ((String) -> Unit)? = null
     private var focusReset: Runnable? = null
     private var torchEnabled = false
+    private var zoomRatio = 1f
+    val currentZoom: Float get() = zoomRatio
+    val maximumZoom: Float get() = (cameraManager.getCameraCharacteristics(CAMERA_ID)
+        .get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f).coerceIn(1f, 100f)
     private var streamRenderer: com.secretvault.app.core.stream.StreamPreviewRenderer? = null
     private var renderedPreview: com.secretvault.app.core.stream.StreamPreviewRenderer.NativeInput? = null
     private var cameraGeneration = 0
@@ -69,6 +73,7 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
     fun start(includeAudio: Boolean, orientationHint: Int, onReady: () -> Unit, onError: (String) -> Unit,
               streamRenderer: com.secretvault.app.core.stream.StreamPreviewRenderer? = null) {
         stopCamera()
+        zoomRatio = 1f
         this.streamRenderer = streamRenderer
         this.includeAudio = includeAudio
         this.orientationHint = orientationHint
@@ -77,6 +82,16 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
         active = true
         startBackgroundThread()
         if (isAvailable) openCamera()
+    }
+
+    fun setZoomRatio(ratio: Float, onApplied: (Boolean) -> Unit) {
+        if (!sessionReady || !ratio.isFinite() || ratio !in 1f..maximumZoom) { onApplied(false); return }
+        val generation = cameraGeneration
+        backgroundHandler?.post {
+            if (generation != cameraGeneration || !sessionReady) { post { onApplied(false) }; return@post }
+            zoomRatio = ratio
+            applyRepeatingRequest(onApplied)
+        } ?: onApplied(false)
     }
 
     fun focusAt(viewX: Float, viewY: Float) {
@@ -316,6 +331,10 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
         builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(60, 60))
         builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
         builder.set(CaptureRequest.FLASH_MODE, if (torchEnabled) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
+        cameraManager.getCameraCharacteristics(CAMERA_ID).get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)?.let {
+            val crop = zoomCrop(it.left, it.top, it.right, it.bottom, zoomRatio)
+            builder.set(CaptureRequest.SCALER_CROP_REGION, Rect(crop[0], crop[1], crop[2], crop[3]))
+        }
         try { builder.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON) } catch (_: IllegalArgumentException) {}
         try {
             builder.set(CaptureRequest.Key("com.mediatek.streamingfeature.hfpsMode", Int::class.javaObjectType), 1)
@@ -337,10 +356,14 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
                 configureRequest(this)
             }
             val expected = if (torchEnabled) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF
+            val expectedCrop = request.get(CaptureRequest.SCALER_CROP_REGION)
             val completed = java.util.concurrent.atomic.AtomicBoolean(false)
             session.setRepeatingRequest(request.build(), if (onApplied == null) null else object : CameraCaptureSession.CaptureCallback() {
                 override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: android.hardware.camera2.TotalCaptureResult) {
-                    if (result.get(android.hardware.camera2.CaptureResult.FLASH_MODE) == expected && completed.compareAndSet(false, true)) post { onApplied(true) }
+                    val crop = result.get(android.hardware.camera2.CaptureResult.SCALER_CROP_REGION)
+                    val zoomApplied = expectedCrop == null || crop != null && kotlin.math.abs(crop.width() - expectedCrop.width()) <= 16 &&
+                        kotlin.math.abs(crop.height() - expectedCrop.height()) <= 16
+                    if (result.get(android.hardware.camera2.CaptureResult.FLASH_MODE) == expected && zoomApplied && completed.compareAndSet(false, true)) post { onApplied(true) }
                 }
                 override fun onCaptureFailed(session: CameraCaptureSession, request: CaptureRequest, failure: android.hardware.camera2.CaptureFailure) {
                     if (completed.compareAndSet(false, true)) post { onApplied(false) }

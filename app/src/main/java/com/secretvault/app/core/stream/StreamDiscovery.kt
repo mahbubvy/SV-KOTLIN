@@ -94,9 +94,9 @@ class StreamDiscovery(context: Context) : Closeable {
                     }
                     val version = attr("v").toInt()
                     val requiresPin = version % 2 == 0
-                    require(version in 2..9 && attr("a") == if (requiresPin) "1" else "0")
+                    require(version in 2..11 && attr("a") == if (requiresPin) "1" else "0")
                     require(info.host is Inet4Address)
-                    StreamEndpoint(requireNotNull(info.host.hostAddress), info.port, attr("f"), attr("s"), info.serviceName, requiresPin, version >= 4, version >= 6, version >= 8)
+                    StreamEndpoint(requireNotNull(info.host.hostAddress), info.port, attr("f"), attr("s"), info.serviceName, requiresPin, version >= 4, version >= 6, version >= 8, version >= 10)
                 }.getOrNull()
                 finish(endpoint)
             }

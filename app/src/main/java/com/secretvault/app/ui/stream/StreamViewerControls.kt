@@ -33,7 +33,7 @@ internal fun StreamViewerControls(
     val settings = state.settingsState
     val mode = settings.mode?.let { VideoMode.entries[it] }
     val flash = FlashMode.entries[settings.flashMode]
-    val canSetFlash = !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !state.settingsBusy &&
+    val canSetFlash = !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !state.settingsBusy && !state.interactionBusy &&
         !state.recordingState.saving && !state.stopping && state.cameraState.selectedId != null && settings.flashAvailable
     val quality: @Composable (Modifier) -> Unit = { modifier ->
         Box(modifier) {
