@@ -181,3 +181,50 @@ state. Direction remains native dark/mint, ENERGY 1 / RHYTHM 1 / MOTION 1.
 
 Scoped source/build/device gate with stated visual limits; camera image remains
 the primary area, with compact controls and persistent recovery below it.
+
+## Reference-based viewer layout, 2026-10-03
+
+Scope: user's supplied portrait layout, translated into the existing dark/mint
+theme. ENERGY 1 / RHYTHM 1 / MOTION 1; no new assets or motion.
+
+- R-01/R-06–R-10/R-12–R-14/R-19/R-22, C-1/C-2/C-3: the centered device name,
+  larger preview and one bottom menu row follow the reference. Native quality,
+  flash and lens icons communicate the controls. Record is mint/solid;
+  Disconnect remains an outlined recovery action below it. Routine confirmations
+  use short snackbars; connection/command failures remain visible.
+- R-02/R-17/R-18/R-28/R-36/R-38, C-5: quality comes from acknowledged camera
+  state. Microphone status uses an accessible icon; recording time/save progress
+  remain visible. Photo capture remains available at 30 FPS, with the existing
+  60 FPS restriction explained inside the quality menu. No invented capabilities.
+- R-03/R-05/R-11/R-35, C-4: 8/12/16 dp spacing, 12/14/16/20 sp type and
+  48–64 dp controls. Device checks assert quality touch height, horizontal bounds,
+  quality/lens shared row, menus above Record and Disconnect below Record.
+  Controls stack below 320 dp available width or above 1.3 font scale, with a
+  scrollable area inside the preview. Physical landscape/large-font/narrow-width
+  checks remain unperformed; normal portrait bounds and actual Pixel screenshot
+  were reviewed. No keyboard test is claimed.
+- R-04/R-23/R-24/R-26/R-27/R-32: native menus/check marks and explicit accessible
+  names remain. Command guards, pending/disabled states and persistent Disconnect
+  are retained. Quality selection, flash ON/OFF and Record/Stop/Disconnect pass
+  CMF-camera/Pixel-viewer live checks. Preview continues rendering during and
+  after recording; encryption/save acknowledgment passes. The test-only screenshot
+  restores FLAG_SECURE and image visibility in finally; production protection
+  remains enabled.
+- R-15/R-16/R-20/R-21/R-25/R-29–R-31/R-34/R-37: retain app colors/type/shapes,
+  without gradients, blur, decorative cards or animations. Computed WCAG ratios:
+  dark text/mint 7.39:1; dark text/red Stop 5.87:1; secondary text/surface 6.50:1;
+  muted functional outline/surface 5.72:1; primary text/dark background 17.91:1.
+  Screenshot review found inherited white Record text; corrected it to the
+  button's content color and visually verified the resulting dark text.
+- R-33: interface edits use apply_patch. App/test builds pass, 98 unit tests pass,
+  and lint retains the existing 41 errors / 116 warnings. Reversing the new
+  width condition leaves unit tests green: they do not cover Compose reflow.
+  The condition was restored before producing/installing the final APK. Runtime
+  layout assertions and screenshots supply portrait evidence, not a unit-level
+  responsive-layout guarantee.
+
+Scoped portrait source/build/device/visual gate with the stated accessibility
+and responsive verification limits. Screenshot: scratch/pixel-stream-viewer-compact.png.
+Reverse-role checks also pass on the CMF viewer: Pixel front/back and 0.6×/1×,
+local selection synchronization, 30 FPS photo capture/save and Disconnect.
+The CMF photo-control screenshot was reviewed; both installed APK hashes match.

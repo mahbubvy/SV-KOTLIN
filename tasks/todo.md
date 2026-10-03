@@ -536,3 +536,16 @@ remote-camera-controls-ui-gate.md.
   and Pixel 0.6× regressions pass. 60 FPS advertises photo unavailable.
 - [x] Both phones installed; 98 unit checks pass. Lint remains the existing
   41 errors / 116 warnings. Scoped UI gate and measurement report recorded.
+
+## Compact viewer checkpoint, 2026-10-03
+
+- [x] Apply supplied portrait layout using existing dark/mint design.
+- [x] Center device title, enlarge preview, group quality/flash/lens inside it.
+- [x] Keep Record/Disconnect below preview; reduce persistent routine text.
+- [x] Preserve errors, recording/save progress, command guards and 30 FPS photo.
+- [x] Build/install both phones; verify CMF-camera/Pixel-viewer flash and recording.
+- [x] Capture/review actual Pixel UI with live camera image hidden; correct contrast.
+- [x] Verify CMF viewer photo/lens controls with Pixel camera, including 0.6×.
+
+Evidence and responsive/keyboard verification limits are recorded in the scoped
+UI gate and camera-stream-validation.md.

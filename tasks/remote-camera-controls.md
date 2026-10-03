@@ -111,3 +111,19 @@ pairing recovery, photo capture at 30 FPS, Pixel 0.6× and local/remote camera
 synchronization pass. CMF native background recording finalizes and encrypts.
 98 unit checks pass; lint retains 41 errors / 116 warnings. Exact evidence and
 visual/testing limits are in camera-stream-validation.md and the scoped UI gate.
+
+## Viewer layout reference, 2026-10-03
+
+Match the user's supplied layout while retaining the native dark/mint theme.
+Center the connected device name above a larger rounded preview. Put quality,
+flash and camera/lens menus in a single compact row inside its bottom edge;
+keep a full-width mint Record action and outlined Disconnect below the preview.
+The preview's top-right corner shows the selected saved-video quality and a
+microphone icon. Keep camera/session mechanics and command eligibility intact.
+
+Replace persistent routine confirmations with short accessible snackbars. Keep
+connection/command errors visible and retain recording time and save progress.
+Photo capture remains above the lens control at 30 FPS. Explain the existing
+60 FPS photo restriction inside the quality menu, rather than on the idle view.
+Menu controls reflow vertically below 320 dp available width or above 1.3 font
+scale; they can scroll inside the preview. Disconnect stays outside that scroll.

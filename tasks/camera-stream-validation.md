@@ -673,3 +673,41 @@ Restored FLAG_SECURE is asserted on-device. Both sender/viewer checks pass;
 the production app APK and its screenshot protection are unchanged. Only the
 test APK was rebuilt/installed. Screenshot retrieved from app cache for review.
 The current 60 FPS photo-unavailable behavior remains visible in this capture.
+
+## Compact viewer layout, 2026-10-03
+
+User reference implemented with existing dark/mint colors: centered device title,
+larger rounded preview, bottom quality/flash/lens row, full-width Record and
+Disconnect. Routine confirmations are transient snackbars; errors, recording
+time and save progress remain visible. The 30 FPS photo action remains above
+the lens menu; 60 FPS photo guidance moves into the quality dropdown.
+
+Final APK SHA256:
+`61D098451A0B196F7A2C2ABBCAF508F903094EA61452C624E2616B914DE2D4B4`.
+Built and installed on both CMF and Pixel. App/test builds pass, 98 unit tests
+pass. Lint retains 41 errors / 116 warnings; no suppression or baseline added.
+The width-condition mutation stays green under unit tests, identifying missing
+Compose reflow coverage; source was restored before the final build. Portrait
+device assertions check menu alignment/bounds and persistent recovery placement.
+
+CMF camera → Pixel viewer passes quality selection to 1080p60, flash ON/OFF,
+Record/Stop, disabled lens during recording, moving preview during/after stop,
+encrypted clip/thumbnail/database save and Disconnect. New silent clip:
+1920×1080, 59.4438 FPS from 288 sample timestamps, duration 4861 ms, rotation 90.
+Logs: scratch/viewer-layout-cmf-pixel-{host,viewer}.log (flash), and
+scratch/viewer-layout-cmf-pixel-record-{host,viewer}.log (final record check).
+
+Final actual Pixel screenshot: scratch/pixel-stream-viewer-compact.png,
+1080×2340. The camera image is hidden only by the opt-in instrumentation;
+FLAG_SECURE and image visibility restore in finally and are asserted. An existing
+device/system volume overlay appears at the right edge; it is not app UI.
+Normal portrait visual review passes; physical large-font/landscape/narrow-width
+and keyboard checks remain unperformed. See remote-camera-controls-ui-gate.md.
+
+Reverse-role check passes: Pixel camera → CMF viewer at 1080p30, front/back,
+Rear 0.6×/1× selection (camera-side zoom 0.615/1.0), local camera synchronization,
+remote photo with encrypted save acknowledgment, continued preview and cleanup.
+CMF photo-control screenshot: scratch/cmf-stream-viewer-compact-photo.png.
+Logs: scratch/viewer-layout-pixel-cmf-photo-lens-{host,viewer}.log.
+Both installed base.apk hashes match the final SHA256 above. Only temporary
+debug screenshot cache files were removed; test media remains in the vault.

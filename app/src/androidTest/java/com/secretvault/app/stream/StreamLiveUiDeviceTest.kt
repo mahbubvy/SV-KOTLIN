@@ -372,6 +372,22 @@ class StreamLiveUiDeviceTest {
                     val qualityBounds = Rect().also(qualityControl::getBoundsInScreen)
                     assertTrue("Video quality touch target is too small", qualityBounds.height() >= 48 * context.resources.displayMetrics.density - 1)
                     assertTrue("Video quality control exceeds viewport", qualityBounds.left >= 0 && qualityBounds.right <= context.resources.displayMetrics.widthPixels)
+                    val cameraBounds = Rect().also { waitFor("Choose camera").getBoundsInScreen(it) }
+                    val recordBounds = Rect().also { waitFor("Record video").let { node ->
+                        var button = node
+                        while (!button.isClickable && button.parent != null) button = button.parent
+                        button.getBoundsInScreen(it)
+                    } }
+                    val disconnectBounds = Rect().also { waitFor("Disconnect").let { node ->
+                        var button = node
+                        while (!button.isClickable && button.parent != null) button = button.parent
+                        button.getBoundsInScreen(it)
+                    } }
+                    assertTrue("Camera menus must sit above recording", qualityBounds.bottom <= recordBounds.top && cameraBounds.bottom <= recordBounds.top)
+                    assertTrue("Disconnect must remain below recording", recordBounds.bottom <= disconnectBounds.top)
+                    if (context.resources.configuration.fontScale <= 1.3f && context.resources.configuration.screenWidthDp >= 360) {
+                        assertTrue("Quality and lens must share the compact row", kotlin.math.abs(qualityBounds.bottom - cameraBounds.bottom) <= 2)
+                    }
                     val highestMode = if (native) VideoMode.UHD_30 else VideoMode.UHD_60
                     waitFor(highestMode.label)
                     instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: highest default ${highestMode.label}") })
@@ -380,6 +396,7 @@ class StreamLiveUiDeviceTest {
                     }
                     if (viewerScreenshot) {
                         val file = File(context.cacheDir, "stream-viewer-review.png")
+                        SystemClock.sleep(4500)
                         try {
                             activity.onActivity { screen ->
                                 viewerTexture.get().alpha = 0f
@@ -400,7 +417,9 @@ class StreamLiveUiDeviceTest {
                     }
                     if (remoteSettings) {
                         fun flash(mode: String) {
-                            val current = find { it.text?.toString() in listOf("Flash auto", "Flash on", "Flash off") }?.text?.toString() ?: throw AssertionError("Flash control missing")
+                            val names = listOf("Flash auto", "Flash on", "Flash off")
+                            val control = find { it.text?.toString() in names || it.contentDescription?.toString() in names } ?: throw AssertionError("Flash control missing")
+                            val current = control.contentDescription?.toString()?.takeIf { it in names } ?: control.text.toString()
                             tap(current); tap("Flash $mode"); waitFor("Camera setting applied", 15000); waitFor("Flash $mode")
                         }
                         flash("on"); SystemClock.sleep(2000); flash("off"); SystemClock.sleep(500)

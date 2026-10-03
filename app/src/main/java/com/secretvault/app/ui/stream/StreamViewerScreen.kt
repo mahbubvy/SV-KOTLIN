@@ -13,24 +13,25 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.Cameraswitch
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.FlashAuto
-import androidx.compose.material.icons.filled.FlashOn
-import androidx.compose.material.icons.filled.FlashOff
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -41,7 +42,6 @@ import com.secretvault.app.core.stream.*
 import com.secretvault.app.ui.theme.*
 import com.secretvault.app.SecretVaultApp
 import com.secretvault.app.core.camera.VideoMode
-import com.secretvault.app.core.camera.FlashMode
 import kotlinx.coroutines.flow.first
 
 @Composable
@@ -73,13 +73,19 @@ fun StreamViewerScreen(onBack: () -> Unit) {
     var selected by remember { mutableStateOf<StreamEndpoint?>(null) }
     var pendingPin by remember { mutableStateOf<CharArray?>(null) }
     var surface by remember { mutableStateOf<Surface?>(null) }
-    var cameraMenu by remember { mutableStateOf(false) }
-    var qualityMenu by remember { mutableStateOf(false) }
-    var flashMenu by remember { mutableStateOf(false) }
+    val snackbar = remember { SnackbarHostState() }
+    val confirmations = setOf("Photo saved on camera device", "Camera changed", "Recording started",
+        "Video saved on camera device", "Camera setting applied")
+    listOf(state.photoMessage, state.cameraMessage, state.recordingMessage, state.settingsMessage).forEach { message ->
+        LaunchedEffect(session, message) {
+            if (message in confirmations) {
+                snackbar.currentSnackbarData?.dismiss()
+                snackbar.showSnackbar(requireNotNull(message), duration = SnackbarDuration.Short)
+            }
+        }
+    }
     fun disconnect() {
-        cameraMenu = false
-        qualityMenu = false
-        flashMenu = false
+        snackbar.currentSnackbarData?.dismiss()
         session.close(); pendingPin?.fill('\u0000'); pendingPin = null; selected = null; discovery.search()
         if (bluetoothEnabled) bluetooth.search()
     }
@@ -111,9 +117,12 @@ fun StreamViewerScreen(onBack: () -> Unit) {
         }
     }
     Column(Modifier.fillMaxSize().background(VaultDarkBg).statusBarsPadding().navigationBarsPadding().imePadding()) {
-        Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { session.close(); onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextPrimary) }
-            Text("View stream", color = TextPrimary, fontSize = 20.sp)
+        Box(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+            IconButton(onClick = { session.close(); onBack() }, modifier = Modifier.align(Alignment.CenterStart).size(48.dp)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextPrimary)
+            }
+            Text(selected?.name ?: "View stream", color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 56.dp))
         }
         if (selected == null) {
             Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -141,7 +150,9 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                 }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Use Bluetooth too", color = VaultAccent) }
             }
         } else {
-            Box(Modifier.weight(1f).fillMaxWidth().background(androidx.compose.ui.graphics.Color.Black)) {
+            Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp)
+                .clip(RoundedCornerShape(16.dp)).background(androidx.compose.ui.graphics.Color.Black)
+                .semantics { if (state.live) contentDescription = "Live camera" }) {
                 AndroidView(factory = { androidContext ->
                     TextureView(androidContext).apply {
                         surfaceTextureListener = object : TextureView.SurfaceTextureListener {
@@ -159,117 +170,54 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                         }
                     }
                 }, update = { view -> fitPreview(view, state.config, false) }, modifier = Modifier.fillMaxSize())
-            }
-            Column(Modifier.fillMaxWidth().heightIn(max = (LocalConfiguration.current.screenHeightDp / 2).dp)
-                .verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(selected?.name.orEmpty(), color = TextPrimary)
-                        Text(state.message, color = TextSecondary)
-                    }
-                    if (state.photoAvailable) IconButton(onClick = { session.takePhoto() },
-                        enabled = canTakePhoto,
+                if (state.live) Row(Modifier.align(Alignment.TopEnd).padding(12.dp)
+                    .background(VaultDarkBg.copy(alpha = 0.9f), RoundedCornerShape(8.dp)).padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(state.settingsState.mode?.let { VideoMode.entries[it].label }.orEmpty(), color = TextPrimary, fontSize = 12.sp)
+                    Icon(if (state.recordingState.audio) Icons.Default.Mic else Icons.Default.MicOff,
+                        if (state.recordingState.audio) "Microphone on" else "Microphone off", tint = TextPrimary, modifier = Modifier.size(16.dp))
+                }
+                val notices = listOfNotNull(state.photoMessage, state.cameraMessage, state.recordingMessage, state.settingsMessage)
+                    .filter { it !in confirmations && it !in setOf("Taking photo…", "Changing camera…", "Applying camera setting…", "Starting recording…", "Saving encrypted video…") }
+                Column(Modifier.align(Alignment.Center).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!state.live) Text(state.message, color = TextPrimary,
+                        modifier = Modifier.background(VaultDarkBg, RoundedCornerShape(8.dp)).padding(12.dp).semantics { liveRegion = LiveRegionMode.Polite })
+                    notices.forEach { message -> Text(message, color = TextPrimary,
+                        modifier = Modifier.background(VaultDarkBg, RoundedCornerShape(8.dp)).padding(12.dp).semantics { liveRegion = LiveRegionMode.Polite }) }
+                }
+                SnackbarHost(snackbar, modifier = Modifier.align(Alignment.TopCenter).padding(top = 56.dp, start = 8.dp, end = 8.dp))
+                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp),
+                    horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (state.recordingState.recording) Text("Recording %02d:%02d".format(state.recordingState.seconds / 60, state.recordingState.seconds % 60),
+                        color = TextPrimary, modifier = Modifier.background(VaultDarkBg, RoundedCornerShape(8.dp)).padding(8.dp))
+                    if (state.photoAvailable) IconButton(onClick = { session.takePhoto() }, enabled = canTakePhoto,
                         modifier = Modifier.size(64.dp).clip(CircleShape).background(if (canTakePhoto) VaultAccent else VaultSurface)) {
-                        Icon(Icons.Default.CameraAlt, contentDescription = "Take photo",
-                            tint = if (canTakePhoto) VaultDarkBg else TextMuted)
+                        Icon(Icons.Default.CameraAlt, "Take photo", tint = if (canTakePhoto) VaultDarkBg else TextMuted)
                     }
-                }
-                state.photoMessage?.let { Text(it, color = TextPrimary,
-                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
-                state.cameraMessage?.let { Text(it, color = TextPrimary,
-                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
-                state.recordingMessage?.let { Text(it, color = TextPrimary,
-                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
-                state.settingsMessage?.let { Text(it, color = TextPrimary,
-                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
-                if (selected?.settingsControls == true && state.live) {
-                    val settings = state.settingsState
-                    val canSetFlash = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !state.settingsBusy &&
-                        !state.recordingState.saving && !state.stopping && state.cameraState.selectedId != null && settings.flashAvailable
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Box(Modifier.weight(1f)) {
-                            OutlinedButton(onClick = { qualityMenu = true }, enabled = canChooseCamera && settings.mode != null,
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Video quality", fontSize = 12.sp)
-                                    Text(settings.mode?.let { VideoMode.entries[it].label } ?: "Preparing…", fontSize = 14.sp)
-                                }
-                            }
-                            DropdownMenu(expanded = qualityMenu && canChooseCamera, onDismissRequest = { qualityMenu = false }, containerColor = VaultSurface) {
-                                settings.modes.forEach { mode ->
-                                    DropdownMenuItem(text = { Text(VideoMode.entries[mode].label, color = TextPrimary) },
-                                        onClick = { qualityMenu = false; session.setSetting(0, mode) },
-                                        trailingIcon = { if (mode == settings.mode) Icon(Icons.Default.Check, "Selected", tint = TextPrimary) },
-                                        modifier = Modifier.heightIn(min = 48.dp))
-                                }
-                            }
-                        }
-                        Box(Modifier.weight(1f)) {
-                            val flash = FlashMode.entries[settings.flashMode]
-                            OutlinedButton(onClick = { flashMenu = true }, enabled = canSetFlash,
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) {
-                                Icon(when (flash) { FlashMode.AUTO -> Icons.Default.FlashAuto; FlashMode.ON -> Icons.Default.FlashOn; FlashMode.OFF -> Icons.Default.FlashOff }, null)
-                                Spacer(Modifier.width(8.dp))
-                                Text(if (settings.flashAvailable) "Flash ${flash.name.lowercase()}" else "No flash", fontSize = 14.sp)
-                            }
-                            DropdownMenu(expanded = flashMenu && canSetFlash, onDismissRequest = { flashMenu = false }, containerColor = VaultSurface) {
-                                listOf(FlashMode.OFF, FlashMode.AUTO, FlashMode.ON).forEach { mode ->
-                                    DropdownMenuItem(text = { Column {
-                                        Text("Flash ${mode.name.lowercase()}", color = TextPrimary)
-                                        if (mode != FlashMode.OFF) Text(if (mode == FlashMode.AUTO) "Photos only" else "Continuous light", color = TextSecondary, fontSize = 12.sp)
-                                    } },
-                                        onClick = { flashMenu = false; session.setSetting(1, mode.ordinal) },
-                                        trailingIcon = { if (mode == flash) Icon(Icons.Default.Check, "Selected", tint = TextPrimary) },
-                                        modifier = Modifier.heightIn(min = 48.dp))
-                                }
-                            }
-                        }
-                    }
-                    if (settings.mode != null && !settings.photoAvailable) Text("Select 30 FPS to take photos", color = TextSecondary)
-                }
-                if (state.recordingState.available) {
-                    val recording = state.recordingState
-                    Text(if (recording.recording) "Recording %02d:%02d".format(recording.seconds / 60, recording.seconds % 60)
-                        else if (recording.saving) "Saving encrypted video…"
-                        else "${state.settingsState.mode?.let { VideoMode.entries[it].label } ?: "1080p · 30 FPS"} · Microphone ${if (recording.audio) "on" else "off"}", color = TextPrimary)
-                    OutlinedButton(onClick = { session.setRecording(!recording.recording) },
-                        enabled = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !state.settingsBusy && !recording.saving &&
-                            !state.stopping && state.cameraState.selectedId != null,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = if (recording.recording) VaultError else TextPrimary)) {
-                        Icon(if (recording.recording) Icons.Default.Stop else Icons.Default.Videocam, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (state.recordingBusy) { if (state.recordingRequestedStart == true) "Starting recording…" else "Saving video…" }
-                            else if (recording.recording) "Stop recording" else "Record video")
-                    }
-                } else if (selected?.recordingControls == true && state.live) Text("Video recording unavailable for this camera", color = TextSecondary)
-                if (state.cameraState.options.size > 1) Box {
-                    OutlinedButton(onClick = { cameraMenu = true },
-                        enabled = canChooseCamera,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) {
-                        Icon(Icons.Default.Cameraswitch, "Choose camera")
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (state.cameraBusy) "Changing camera…" else
-                            state.cameraState.options.firstOrNull { it.id == state.cameraState.selectedId }?.label ?: "Preparing camera…")
-                    }
-                    DropdownMenu(expanded = cameraMenu && canChooseCamera,
-                        onDismissRequest = { cameraMenu = false },
-                        containerColor = VaultSurface) {
-                        state.cameraState.options.forEach { option ->
-                            DropdownMenuItem(text = { Text(option.label, color = TextPrimary) },
-                                onClick = { cameraMenu = false; session.selectCamera(option.id) },
-                                trailingIcon = { if (option.id == state.cameraState.selectedId) Icon(Icons.Default.Check, "Selected", tint = TextPrimary) },
-                                modifier = Modifier.heightIn(min = 48.dp))
-                        }
-                    }
+                    if (state.live) StreamViewerControls(state = state, settingsAvailable = selected?.settingsControls == true,
+                        canChooseCamera = canChooseCamera, onSetting = { kind, value -> session.setSetting(kind, value) },
+                        onCamera = { session.selectCamera(it) })
                 }
             }
-            OutlinedButton(onClick = ::disconnect, modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp).heightIn(min = 48.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) {
-                Text(if (state.busy) "Disconnect" else "Back to cameras")
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val recording = state.recordingState
+                if (recording.available) Button(onClick = { session.setRecording(!recording.recording) },
+                    enabled = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !state.settingsBusy && !recording.saving &&
+                        !state.stopping && state.cameraState.selectedId != null,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (recording.recording) VaultError else VaultAccent, contentColor = VaultDarkBg,
+                        disabledContainerColor = VaultSurfaceVariant, disabledContentColor = TextMuted)) {
+                    Icon(if (recording.recording) Icons.Default.Stop else Icons.Default.Videocam, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (state.recordingBusy || recording.saving) { if (state.recordingRequestedStart == true) "Starting recording…" else "Saving video…" }
+                        else if (recording.recording) "Stop recording" else "Record video", fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                        color = LocalContentColor.current)
+                } else if (selected?.recordingControls == true && state.live) Text("Recording unavailable", color = TextSecondary)
+                OutlinedButton(onClick = ::disconnect, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), border = BorderStroke(1.dp, TextMuted),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) {
+                    Text(if (state.busy) "Disconnect" else "Back to cameras", fontSize = 16.sp)
+                }
             }
         }
     }
