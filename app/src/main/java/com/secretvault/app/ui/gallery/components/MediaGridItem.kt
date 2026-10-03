@@ -29,8 +29,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
-import com.secretvault.app.core.image.EncryptedMediaUri
 import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.model.MediaType
 import com.secretvault.app.ui.theme.VaultAccent
@@ -65,12 +63,8 @@ fun MediaGridItem(
                 onLongClick = onLongClick
             )
     ) {
-        if (item.thumbnailPath != null || item.mediaType == MediaType.PHOTO) AsyncImage(
-            model = EncryptedMediaUri(thumbPath),
-            contentDescription = item.filename,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
+        if (item.thumbnailPath != null || item.mediaType == MediaType.PHOTO) StableEncryptedThumbnail(
+            identity = item.id, path = thumbPath, description = item.filename, modifier = Modifier.fillMaxSize())
         else Icon(Icons.Default.PlayArrow, "Video preview loading", tint = Color.White,
             modifier = Modifier.align(Alignment.Center).size(32.dp))
 

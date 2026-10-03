@@ -10,6 +10,7 @@ import coil.fetch.FetchResult
 import coil.fetch.Fetcher
 import coil.key.Keyer
 import coil.request.Options
+import coil.size.Dimension
 import com.secretvault.app.core.crypto.VaultCryptoEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -68,8 +69,8 @@ class EncryptedThumbnailFetcher(
             if (rawWidth > 0 && rawHeight > 0) {
                 // Calculate appropriate sample size for screen/display
                 val displayMetrics = options.context.resources.displayMetrics
-                val targetWidth = displayMetrics.widthPixels.coerceAtLeast(1080)
-                val targetHeight = displayMetrics.heightPixels.coerceAtLeast(1920)
+                val targetWidth = (options.size.width as? Dimension.Pixels)?.px ?: displayMetrics.widthPixels.coerceAtLeast(1080)
+                val targetHeight = (options.size.height as? Dimension.Pixels)?.px ?: displayMetrics.heightPixels.coerceAtLeast(1920)
 
                 var sampleSize = 1
                 while ((rawWidth / sampleSize) > targetWidth * 1.5 || (rawHeight / sampleSize) > targetHeight * 1.5) {

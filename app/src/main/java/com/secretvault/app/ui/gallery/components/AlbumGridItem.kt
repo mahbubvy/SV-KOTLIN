@@ -40,9 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.secretvault.app.core.database.entity.AlbumEntity
-import com.secretvault.app.core.image.EncryptedMediaUri
 import com.secretvault.app.core.model.Album
 import com.secretvault.app.ui.theme.TextMuted
 import com.secretvault.app.ui.theme.TextPrimary
@@ -97,12 +95,8 @@ fun AlbumGridItem(
                 contentAlignment = Alignment.Center
             ) {
                 if (album.coverThumbnailPath != null) {
-                    AsyncImage(
-                        model = EncryptedMediaUri(album.coverThumbnailPath),
-                        contentDescription = album.name,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    StableEncryptedThumbnail(identity = album.coverMediaId ?: album.id, path = album.coverThumbnailPath,
+                        description = album.name, modifier = Modifier.fillMaxSize())
                 } else {
                     val defaultIcon = when (album.id) {
                         AlbumEntity.ALBUM_CAMERA_ID -> Icons.Default.CameraAlt
