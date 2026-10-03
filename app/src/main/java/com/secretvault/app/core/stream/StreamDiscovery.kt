@@ -25,7 +25,7 @@ class StreamDiscovery(context: Context) : Closeable {
         stopAdvertising()
         val info = NsdServiceInfo().apply {
             serviceName = endpoint.name; serviceType = TYPE; port = endpoint.port
-            setAttribute("v", if (endpoint.requiresPin) "2" else "3"); setAttribute("s", endpoint.sessionId); setAttribute("f", endpoint.fingerprint)
+            setAttribute("v", endpoint.version.toString()); setAttribute("s", endpoint.sessionId); setAttribute("f", endpoint.fingerprint)
             setAttribute("n", endpoint.name); setAttribute("a", if (endpoint.requiresPin) "1" else "0")
         }
         val listener = object : NsdManager.RegistrationListener {
@@ -92,9 +92,11 @@ class StreamDiscovery(context: Context) : Closeable {
                         val bytes = requireNotNull(info.attributes[name]); require(bytes.size <= 128)
                         return bytes.toString(Charsets.UTF_8)
                     }
-                    val requiresPin = attr("v") == "2"
-                    require((requiresPin && attr("a") == "1" || attr("v") == "3" && attr("a") == "0") && info.host is Inet4Address)
-                    StreamEndpoint(requireNotNull(info.host.hostAddress), info.port, attr("f"), attr("s"), info.serviceName, requiresPin)
+                    val version = attr("v").toInt()
+                    val requiresPin = version == 2 || version == 4
+                    require(version in 2..5 && attr("a") == if (requiresPin) "1" else "0")
+                    require(info.host is Inet4Address)
+                    StreamEndpoint(requireNotNull(info.host.hostAddress), info.port, attr("f"), attr("s"), info.serviceName, requiresPin, version >= 4)
                 }.getOrNull()
                 finish(endpoint)
             }

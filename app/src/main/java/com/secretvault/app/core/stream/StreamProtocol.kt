@@ -36,6 +36,10 @@ sealed interface StreamMessage
 data class StreamFrame(val sequence: Long, val ptsUs: Long, val flags: Int, val bytes: ByteArray) : StreamMessage
 data class StreamPhotoAvailable(val available: Boolean) : StreamMessage
 data class StreamPhotoResult(val requestId: Long, val saved: Boolean) : StreamMessage
+data class StreamCameraOption(val id: String, val label: String)
+data class StreamCameraState(val options: List<StreamCameraOption> = emptyList(), val selectedId: String? = null) : StreamMessage
+data class StreamCameraRequest(val requestId: Long, val targetId: String)
+data class StreamCameraResult(val requestId: Long, val applied: Boolean) : StreamMessage
 
 class StreamFrameQueue {
     private val frames = ArrayDeque<StreamFrame>()
@@ -116,6 +120,16 @@ object StreamProtocol {
             val requestId = input.readLong(); check(requestId > 0)
             StreamPhotoResult(requestId, readFlag(input))
         }
+        6 -> {
+            val count = input.readUnsignedByte(); check(count <= 8)
+            val selected = readText(input, 32).ifEmpty { null }
+            StreamCameraState(List(count) { StreamCameraOption(readText(input, 32), readText(input, 48)) }, selected)
+                .also(::validateCameraState)
+        }
+        8 -> {
+            val requestId = input.readLong(); check(requestId > 0)
+            StreamCameraResult(requestId, readFlag(input))
+        }
         else -> throw IOException("Invalid stream message")
     }
 
@@ -136,6 +150,48 @@ object StreamProtocol {
     fun readPhotoRequest(input: DataInputStream, type: Int): Long {
         check(type == 5)
         return input.readLong().also { check(it > 0) }
+    }
+
+    fun writeCameraState(output: DataOutputStream, state: StreamCameraState) {
+        validateCameraState(state)
+        output.writeByte(6); output.writeByte(state.options.size); writeText(output, state.selectedId.orEmpty())
+        state.options.forEach { writeText(output, it.id); writeText(output, it.label) }
+        output.flush()
+    }
+
+    fun writeCameraRequest(output: DataOutputStream, requestId: Long, targetId: String) {
+        check(requestId > 0 && validCameraId(targetId))
+        output.writeByte(7); output.writeLong(requestId); writeText(output, targetId); output.flush()
+    }
+
+    fun readCameraRequest(input: DataInputStream, type: Int): StreamCameraRequest {
+        check(type == 7)
+        val id = input.readLong(); val target = readText(input, 32)
+        check(id > 0 && validCameraId(target))
+        return StreamCameraRequest(id, target)
+    }
+
+    fun writeCameraResult(output: DataOutputStream, result: StreamCameraResult) {
+        check(result.requestId > 0)
+        output.writeByte(8); output.writeLong(result.requestId); output.writeByte(if (result.applied) 1 else 0); output.flush()
+    }
+
+    private fun validCameraId(id: String) = id.matches(Regex("[A-Za-z0-9_./:-]{1,32}"))
+
+    private fun validateCameraState(state: StreamCameraState) {
+        check(state.options.size <= 8 && state.options.map { it.id }.distinct().size == state.options.size &&
+            state.options.all { validCameraId(it.id) && it.label.toByteArray(Charsets.UTF_8).size in 1..48 && it.label.none(Char::isISOControl) } &&
+            (state.selectedId == null || state.options.any { it.id == state.selectedId }))
+    }
+
+    private fun writeText(output: DataOutputStream, text: String) {
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        output.writeByte(bytes.size); output.write(bytes)
+    }
+
+    private fun readText(input: DataInputStream, maximum: Int): String {
+        val size = input.readUnsignedByte(); check(size <= maximum)
+        return ByteArray(size).also(input::readFully).toString(Charsets.UTF_8)
     }
 
     private fun readFlag(input: DataInputStream): Boolean = input.readUnsignedByte().also { check(it in 0..1) } == 1

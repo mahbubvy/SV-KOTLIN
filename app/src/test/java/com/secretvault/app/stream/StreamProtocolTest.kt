@@ -6,6 +6,33 @@ import org.junit.Test
 import java.io.*
 
 class StreamProtocolTest {
+    @Test fun cameraSelectionMessagesAreBoundedAndPreserveVideoOrdering() {
+        val state = StreamCameraState(listOf(StreamCameraOption("back/default", "Rear 1×"),
+            StreamCameraOption("front", "Front")), "back/default")
+        val bytes = ByteArrayOutputStream().also { raw ->
+            val output = DataOutputStream(raw)
+            StreamProtocol.writeCameraState(output, state)
+            StreamProtocol.writeFrame(output, StreamFrame(0, 1, 1, byteArrayOf(7)))
+            StreamProtocol.writeCameraResult(output, StreamCameraResult(1, true))
+        }.toByteArray()
+        val input = DataInputStream(ByteArrayInputStream(bytes))
+        assertEquals(state, StreamProtocol.readMessage(input))
+        assertArrayEquals(byteArrayOf(7), StreamProtocol.readFrame(input).bytes)
+        assertEquals(StreamCameraResult(1, true), StreamProtocol.readMessage(input))
+        val request = ByteArrayOutputStream().also { StreamProtocol.writeCameraRequest(DataOutputStream(it), 1, "front") }.toByteArray()
+        val command = DataInputStream(ByteArrayInputStream(request))
+        assertEquals(StreamCameraRequest(1, "front"), StreamProtocol.readCameraRequest(command, command.readUnsignedByte()))
+        for (invalid in listOf(state.copy(selectedId = "missing"), state.copy(options = state.options + state.options),
+            StreamCameraState(List(9) { StreamCameraOption("camera/$it", "Camera $it") }),
+            state.copy(options = listOf(StreamCameraOption("x".repeat(33), "Front"))),
+            state.copy(options = listOf(StreamCameraOption("front", "x".repeat(49)))))) {
+            assertThrows(IOException::class.java) { StreamProtocol.writeCameraState(DataOutputStream(ByteArrayOutputStream()), invalid) }
+        }
+        assertThrows(IOException::class.java) { StreamProtocol.readMessage(DataInputStream(ByteArrayInputStream(byteArrayOf(6, 9)))) }
+        assertThrows(IOException::class.java) { StreamProtocol.writeCameraRequest(DataOutputStream(ByteArrayOutputStream()), 0, "front") }
+        assertThrows(IOException::class.java) { StreamProtocol.writeCameraRequest(DataOutputStream(ByteArrayOutputStream()), 1, "bad\nID") }
+    }
+
     @Test fun openHandshakeIsBoundedAndBoundToTheSelectedSession() {
         val session = "a".repeat(32)
         val bytes = ByteArrayOutputStream().also { StreamProtocol.writeOpenAuth(DataOutputStream(it), session) }.toByteArray()
