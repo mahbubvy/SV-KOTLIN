@@ -32,7 +32,10 @@ private fun ByteArray.hex(): String = joinToString("") { "%02x".format(it.toInt(
 
 data class StreamConfig(val width: Int, val height: Int, val fps: Int, val rotation: Int,
     val csd0: ByteArray, val csd1: ByteArray)
-data class StreamFrame(val sequence: Long, val ptsUs: Long, val flags: Int, val bytes: ByteArray)
+sealed interface StreamMessage
+data class StreamFrame(val sequence: Long, val ptsUs: Long, val flags: Int, val bytes: ByteArray) : StreamMessage
+data class StreamPhotoAvailable(val available: Boolean) : StreamMessage
+data class StreamPhotoResult(val requestId: Long, val saved: Boolean) : StreamMessage
 
 class StreamFrameQueue {
     private val frames = ArrayDeque<StreamFrame>()
@@ -91,7 +94,41 @@ object StreamProtocol {
     }
 
     fun readFrame(input: DataInputStream): StreamFrame {
-        check(input.readUnsignedByte() == 2)
+        return readMessage(input) as? StreamFrame ?: throw IOException("Expected video frame")
+    }
+
+    fun readMessage(input: DataInputStream): StreamMessage = when (input.readUnsignedByte()) {
+        2 -> readFramePayload(input)
+        3 -> StreamPhotoAvailable(readFlag(input))
+        4 -> {
+            val requestId = input.readLong(); check(requestId > 0)
+            StreamPhotoResult(requestId, readFlag(input))
+        }
+        else -> throw IOException("Invalid stream message")
+    }
+
+    fun writePhotoAvailable(output: DataOutputStream, available: Boolean) {
+        output.writeByte(3); output.writeByte(if (available) 1 else 0); output.flush()
+    }
+
+    fun writePhotoResult(output: DataOutputStream, result: StreamPhotoResult) {
+        check(result.requestId > 0)
+        output.writeByte(4); output.writeLong(result.requestId); output.writeByte(if (result.saved) 1 else 0); output.flush()
+    }
+
+    fun writePhotoRequest(output: DataOutputStream, requestId: Long) {
+        check(requestId > 0)
+        output.writeByte(5); output.writeLong(requestId); output.flush()
+    }
+
+    fun readPhotoRequest(input: DataInputStream, type: Int): Long {
+        check(type == 5)
+        return input.readLong().also { check(it > 0) }
+    }
+
+    private fun readFlag(input: DataInputStream): Boolean = input.readUnsignedByte().also { check(it in 0..1) } == 1
+
+    private fun readFramePayload(input: DataInputStream): StreamFrame {
         val sequence = input.readLong(); val pts = input.readLong(); val flags = input.readInt()
         check(sequence >= 0 && pts >= 0 && flags in 0..1)
         return StreamFrame(sequence, pts, flags, readBytes(input, MAX_FRAME))

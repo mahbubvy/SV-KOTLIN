@@ -6,6 +6,29 @@ import org.junit.Test
 import java.io.*
 
 class StreamProtocolTest {
+    @Test fun photoCommandsAndResultsAreBoundedAndDoNotCorruptVideo() {
+        val bytes = ByteArrayOutputStream().also { raw ->
+            val output = DataOutputStream(raw)
+            StreamProtocol.writePhotoAvailable(output, true)
+            StreamProtocol.writeFrame(output, StreamFrame(0, 1, 1, byteArrayOf(7)))
+            StreamProtocol.writePhotoResult(output, StreamPhotoResult(1, true))
+            StreamProtocol.writePhotoResult(output, StreamPhotoResult(2, false))
+        }.toByteArray()
+        val input = DataInputStream(ByteArrayInputStream(bytes))
+        assertEquals(StreamPhotoAvailable(true), StreamProtocol.readMessage(input))
+        assertArrayEquals(byteArrayOf(7), StreamProtocol.readFrame(input).bytes)
+        assertEquals(StreamPhotoResult(1, true), StreamProtocol.readMessage(input))
+        assertEquals(StreamPhotoResult(2, false), StreamProtocol.readMessage(input))
+        val request = ByteArrayOutputStream().also { StreamProtocol.writePhotoRequest(DataOutputStream(it), 1) }.toByteArray()
+        val command = DataInputStream(ByteArrayInputStream(request))
+        assertEquals(1L, StreamProtocol.readPhotoRequest(command, command.readUnsignedByte()))
+        for (invalid in listOf(byteArrayOf(3, 2), byteArrayOf(4, 0), byteArrayOf(9))) {
+            assertThrows(IOException::class.java) { StreamProtocol.readMessage(DataInputStream(ByteArrayInputStream(invalid))) }
+        }
+        assertThrows(IOException::class.java) { StreamProtocol.writePhotoRequest(DataOutputStream(ByteArrayOutputStream()), 0) }
+        assertThrows(IOException::class.java) { StreamProtocol.readPhotoRequest(DataInputStream(ByteArrayInputStream(request)), 9) }
+    }
+
     @Test fun frameQueueRejectsBacklogAndReleasesCapacityAfterPolling() {
         val queue = StreamFrameQueue()
         repeat(6) { queue.offer(StreamFrame(it.toLong(), it.toLong(), 0, byteArrayOf(1))) }
