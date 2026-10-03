@@ -167,6 +167,7 @@ class StreamLiveUiDeviceTest {
         val cameraChanges = InstrumentationRegistry.getArguments().getString("cameraChanges") == "true"
         val remoteVideo = InstrumentationRegistry.getArguments().getString("remoteVideo") == "true"
         val remoteSettings = InstrumentationRegistry.getArguments().getString("remoteSettings") == "true"
+        val viewerScreenshot = InstrumentationRegistry.getArguments().getString("viewerScreenshot") == "true"
         val requestedMode = when (InstrumentationRegistry.getArguments().getString("videoMode")) {
             "1080p60" -> VideoMode.FHD_60
             "4k30" -> VideoMode.UHD_30
@@ -196,7 +197,7 @@ class StreamLiveUiDeviceTest {
         val cameraModel = CameraViewModel(if (native) VideoMode.FHD_60 else VideoMode.UHD_60).apply { setCameraMode(CameraMode.VIDEO) }
         val viewerTexture = AtomicReference<android.view.TextureView>()
         try {
-            if ((remotePhoto || remoteVideo || cameraChanges || remoteSettings) && role == "send") app.sessionManager.unlock()
+            if ((remotePhoto || remoteVideo || cameraChanges || remoteSettings || viewerScreenshot) && role == "send") app.sessionManager.unlock()
             if (remoteVideo) cameraModel.toggleRecordAudio()
             if (role == "send") {
                 StreamPinManager(context).setPinRequired(!noStreamPin)
@@ -377,6 +378,26 @@ class StreamLiveUiDeviceTest {
                     if (requestedMode != highestMode) {
                         tap("Video quality"); tap(requestedMode.label); waitFor("Camera setting applied", 20000); waitFor(requestedMode.label)
                     }
+                    if (viewerScreenshot) {
+                        val file = File(context.cacheDir, "stream-viewer-review.png")
+                        try {
+                            activity.onActivity { screen ->
+                                viewerTexture.get().alpha = 0f
+                                screen.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                            }
+                            SystemClock.sleep(500)
+                            val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+                            try { file.outputStream().use { assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) } }
+                            finally { bitmap.recycle() }
+                            instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: review screenshot saved with live camera image hidden") })
+                        } finally {
+                            activity.onActivity { screen ->
+                                screen.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                                viewerTexture.get().alpha = 1f
+                                assertTrue("Screenshot protection not restored", screen.window.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_SECURE != 0)
+                            }
+                        }
+                    }
                     if (remoteSettings) {
                         fun flash(mode: String) {
                             val current = find { it.text?.toString() in listOf("Flash auto", "Flash on", "Flash off") }?.text?.toString() ?: throw AssertionError("Flash control missing")
@@ -479,7 +500,7 @@ class StreamLiveUiDeviceTest {
             }
         } finally {
             invitationFile.delete()
-            if ((remotePhoto || remoteVideo || cameraChanges || remoteSettings) && role == "send" && !wasUnlocked) app.sessionManager.lock()
+            if ((remotePhoto || remoteVideo || cameraChanges || remoteSettings || viewerScreenshot) && role == "send" && !wasUnlocked) app.sessionManager.lock()
             if (role == "send") {
                 val edit = prefs.edit().clear()
                 saved.forEach { (key, value) -> when (value) {

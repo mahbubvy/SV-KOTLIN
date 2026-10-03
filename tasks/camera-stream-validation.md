@@ -662,3 +662,14 @@ Local logs (ignored scratch files):
 `remote-quality-pixel-1080p60-{host,viewer}.log`.
 Additional failed-layout logs are retained locally. Test clips remain in the
 Camera albums; no user media was removed. No push or release performed.
+
+## Pixel viewer screenshot for layout review, 2026-10-03
+
+Captured the actual Pixel StreamViewerScreen while CMF streams with 1080p60
+selected. Image: `scratch/pixel-stream-viewer-1080p60.png` (1080×2340).
+Opt-in `-ViewerScreenshot` instrumentation hides the TextureView image, clears
+FLAG_SECURE only for the screenshot, and restores the flag and image in finally.
+Restored FLAG_SECURE is asserted on-device. Both sender/viewer checks pass;
+the production app APK and its screenshot protection are unchanged. Only the
+test APK was rebuilt/installed. Screenshot retrieved from app cache for review.
+The current 60 FPS photo-unavailable behavior remains visible in this capture.
