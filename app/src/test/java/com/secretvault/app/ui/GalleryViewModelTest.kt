@@ -70,7 +70,7 @@ class GalleryViewModelTest {
         assertFalse(viewModel.uiState.value.isLoading)
         assertTrue(viewModel.uiState.value.loadError != null)
         coEvery { mockMediaRepo.getMedia(any(), any()) } returns flowOf(sampleItems)
-        viewModel.setAlbumFilter("album_camera", "Camera")
+        viewModel.retryLoad()
         assertTrue(viewModel.uiState.value.loadError == null)
         advanceUntilIdle()
         assertFalse(viewModel.uiState.value.isLoading)

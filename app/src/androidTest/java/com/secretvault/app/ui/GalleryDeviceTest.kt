@@ -9,6 +9,10 @@ import android.view.*
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.foundation.layout.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.rememberNavController
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -33,6 +37,153 @@ import java.util.UUID
 class GalleryDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val app = instrumentation.targetContext.applicationContext as SecretVaultApp
+
+    @Test fun encryptedThumbnailKeepsOldPreviewDuringUpgrade(): Unit = runBlocking {
+        waitUntil("Unlock Pixel for thumbnail UI check", 120000) { !app.getSystemService(KeyguardManager::class.java).isDeviceLocked }
+        val directory = File(app.cacheDir, "thumbnail-continuity-${UUID.randomUUID()}").apply { mkdirs() }
+        val old = File(directory, "old.thumb")
+        val upgraded = File(directory, "new.thumb")
+        fun encryptedColor(file: File, color: Int) {
+            val bitmap = Bitmap.createBitmap(1200, 1800, Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(color)
+            val bytes = java.io.ByteArrayOutputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it); it.toByteArray() }
+            bitmap.recycle()
+            try { file.writeBytes(app.cryptoEngine.encryptBytes(bytes)) } finally { bytes.fill(0) }
+        }
+        encryptedColor(old, Color.RED); encryptedColor(upgraded, Color.BLUE)
+        val originalLoader = coil.Coil.imageLoader(app)
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val started = java.util.concurrent.atomic.AtomicBoolean(false)
+        val loader = coil.ImageLoader.Builder(app).components {
+            add(EncryptedThumbnailKeyer())
+            add(object : coil.fetch.Fetcher.Factory<EncryptedMediaUri> {
+                override fun create(data: EncryptedMediaUri, options: coil.request.Options, imageLoader: coil.ImageLoader) = object : coil.fetch.Fetcher {
+                    override suspend fun fetch(): coil.fetch.FetchResult? {
+                        if (data.filePath == upgraded.absolutePath) { started.set(true); release.await() }
+                        val result = EncryptedThumbnailFetcher(data, options, app.cryptoEngine).fetch()
+                        val bitmap = ((result as coil.fetch.DrawableResult).drawable as android.graphics.drawable.BitmapDrawable).bitmap
+                        assertTrue("Grid image decoded at full screen size", bitmap.width <= 768 && bitmap.height <= 768)
+                        return result
+                    }
+                }
+            })
+        }.build()
+        val path = mutableStateOf(old.absolutePath)
+        try {
+            coil.Coil.setImageLoader(loader)
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { activity -> activity.setContent { SecretVaultTheme {
+                    Box(Modifier.fillMaxSize()) {
+                        com.secretvault.app.ui.gallery.components.StableEncryptedThumbnail("synthetic", path.value, "Synthetic preview", Modifier.fillMaxSize())
+                    }
+                } } }
+                wait("Synthetic preview"); SystemClock.sleep(1000)
+                scenario.onActivity { it.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+                try {
+                    fun centerColor(): Int {
+                        val image = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+                        try { return image.getPixel(image.width / 2, image.height / 2) } finally { image.recycle() }
+                    }
+                    waitUntil("Initial synthetic preview did not load") { Color.red(centerColor()) > 200 }
+                    scenario.onActivity { path.value = upgraded.absolutePath }
+                    waitUntil("Upgrade fetch did not start") { started.get() }
+                    repeat(4) {
+                        SystemClock.sleep(150)
+                        assertTrue("Thumbnail cleared while replacement was loading", Color.red(centerColor()) > 200)
+                    }
+                    release.complete(Unit)
+                    waitUntil("Upgraded synthetic preview did not load") { Color.blue(centerColor()) > 200 }
+                } finally {
+                    scenario.onActivity { it.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+                }
+            }
+            instrumentation.sendStatus(0, android.os.Bundle().apply { putString("galleryResult", "Synthetic encrypted preview remained visible throughout delayed upgrade; grid decode bounded to 768px") })
+        } finally {
+            release.complete(Unit); coil.Coil.setImageLoader(originalLoader); loader.shutdown()
+            directory.listFiles()?.forEach { it.delete() }; directory.delete()
+        }
+    }
+
+    @Test fun populatedCameraFolderDoesNotFlashEmptyOrRestartVisibleImages(): Unit = runBlocking {
+        waitUntil("Unlock Pixel for camera-folder stress check", 120000) { !app.getSystemService(KeyguardManager::class.java).isDeviceLocked }
+        val suffix = UUID.randomUUID().toString()
+        val directory = File(app.cacheDir, "camera-grid-$suffix").apply { mkdirs() }
+        val source = File(directory, "source.enc")
+        val bitmap = Bitmap.createBitmap(640, 960, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.rgb(150, 45, 45)) }
+        val bytes = java.io.ByteArrayOutputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 92, it); it.toByteArray() }
+        bitmap.recycle()
+        source.writeBytes(app.cryptoEngine.encryptBytes(bytes)); bytes.fill(0)
+        val fixtures = (0 until 96).map { index ->
+            val original = File(directory, "photo_${suffix}_$index.enc"); source.copyTo(original)
+            val thumbnail = File(directory, "photo_${suffix}_$index.thumb"); source.copyTo(thumbnail)
+            MediaItem("camera-grid-$suffix-$index", "Camera grid test $index.jpg", "Synthetic", MediaType.PHOTO, "image/jpeg",
+                original.absolutePath, thumbnail.absolutePath, original.length(), width = 640, height = 960,
+                albumId = AlbumEntity.ALBUM_CAMERA_ID, createdAt = System.currentTimeMillis() + 60000 + index)
+        }
+        val wasUnlocked = app.sessionManager.isUnlocked.value
+        val fetches = java.util.concurrent.atomic.AtomicInteger()
+        val originalLoader = coil.Coil.imageLoader(app)
+        val loader = coil.ImageLoader.Builder(app).components {
+            add(EncryptedThumbnailKeyer())
+            add(object : coil.fetch.Fetcher.Factory<EncryptedMediaUri> {
+                override fun create(data: EncryptedMediaUri, options: coil.request.Options, imageLoader: coil.ImageLoader) = object : coil.fetch.Fetcher {
+                    override suspend fun fetch(): coil.fetch.FetchResult? {
+                        if (data.filePath.contains(suffix)) fetches.incrementAndGet()
+                        return EncryptedThumbnailFetcher(data, options, app.cryptoEngine).fetch()
+                    }
+                }
+            })
+        }.build()
+        val repository = object : com.secretvault.app.data.repository.MediaRepository by app.mediaRepository {
+            override fun getMedia(albumId: String?, sortOrder: SortOrder) = kotlinx.coroutines.flow.flow {
+                kotlinx.coroutines.delay(600)
+                app.mediaRepository.getMedia(albumId, sortOrder).collect { emit(it) }
+            }
+        }
+        val gallery = com.secretvault.app.ui.gallery.GalleryViewModel(repository)
+        val albums = com.secretvault.app.ui.gallery.AlbumsViewModel(app.albumRepository)
+        val settingsClicks = java.util.concurrent.atomic.AtomicInteger()
+        val lockClicks = java.util.concurrent.atomic.AtomicInteger()
+        try {
+            app.mediaRepository.insertAll(fixtures); coil.Coil.setImageLoader(loader)
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    app.sessionManager.unlock()
+                    activity.setContent { SecretVaultTheme {
+                        com.secretvault.app.ui.gallery.GalleryScreen(app, gallery, albums, {}, {}, { lockClicks.incrementAndGet() },
+                            { settingsClicks.incrementAndGet() }, {})
+                    } }
+                }
+                wait("Settings")
+                val settingsBounds = Rect().also { wait("Settings").getBoundsInScreen(it) }
+                val lockBounds = Rect().also { wait("Lock Vault").getBoundsInScreen(it) }
+                assertTrue("Settings did not replace the rightmost lock position", settingsBounds.left > lockBounds.right)
+                click("Settings"); click("Lock Vault")
+                assertEquals(1, settingsClicks.get()); assertEquals(1, lockClicks.get())
+                repeat(3) {
+                    click("Camera")
+                    wait("Loading media…")
+                    assertTrue("Populated camera folder flashes an empty message", find { it.text?.toString() == "No media in Camera" } == null)
+                    wait("Camera grid test 95.jpg")
+                    if (it < 2) click("Back")
+                }
+                repeat(3) { find { it.isScrollable }?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD); SystemClock.sleep(1500) }
+                repeat(3) { find { it.isScrollable }?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD); SystemClock.sleep(1500) }
+                wait("Camera grid test 95.jpg")
+                waitUntil("Visible preview upgrade did not finish") { gallery.uiState.value.mediaList.take(12).all { it.thumbnailPath?.endsWith(GALLERY_THUMBNAIL_SUFFIX) == true } }
+                SystemClock.sleep(1500)
+                val before = fetches.get()
+                repeat(6) { scenario.onActivity { gallery.toggleItemSelection(fixtures.last().id) }; SystemClock.sleep(120) }
+                assertEquals("Selection recomposition restarted unchanged thumbnails", before, fetches.get())
+                instrumentation.sendStatus(0, android.os.Bundle().apply { putString("galleryResult", "96 synthetic Camera items; three folder reentries without false empty state; scrolling and live upgrades; stable visible requests across six selection updates; Settings/Lock positions and callbacks pass") })
+            }
+        } finally {
+            coil.Coil.setImageLoader(originalLoader); loader.shutdown()
+            app.mediaRepository.deleteByIds(fixtures.map { it.id })
+            directory.listFiles()?.forEach { it.delete() }; directory.delete()
+            if (!wasUnlocked) app.sessionManager.lock()
+        }
+    }
 
     @Test fun thumbnailCropKeepsCirclesRoundAndDoesNotRecycleOriginal() {
         val source = Bitmap.createBitmap(720, 1280, Bitmap.Config.ARGB_8888)
