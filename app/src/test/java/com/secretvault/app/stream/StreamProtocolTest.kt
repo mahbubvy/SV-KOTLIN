@@ -6,6 +6,32 @@ import org.junit.Test
 import java.io.*
 
 class StreamProtocolTest {
+    @Test fun recordingCommandsPreserveFramesAndRejectInvalidStates() {
+        val state = StreamRecordingState(true, true, false, false, 4)
+        val bytes = ByteArrayOutputStream().also { raw ->
+            val output = DataOutputStream(raw)
+            StreamProtocol.writeRecordingState(output, state)
+            StreamProtocol.writeFrame(output, StreamFrame(0, 1, 1, byteArrayOf(7)))
+            StreamProtocol.writeRecordingResult(output, StreamRecordingResult(2, false, true))
+        }.toByteArray()
+        val input = DataInputStream(ByteArrayInputStream(bytes))
+        assertEquals(state, StreamProtocol.readMessage(input))
+        assertArrayEquals(byteArrayOf(7), StreamProtocol.readFrame(input).bytes)
+        assertEquals(StreamRecordingResult(2, false, true), StreamProtocol.readMessage(input))
+        for (start in listOf(true, false)) {
+            val request = ByteArrayOutputStream().also { StreamProtocol.writeRecordingRequest(DataOutputStream(it), 1, start) }.toByteArray()
+            val command = DataInputStream(ByteArrayInputStream(request))
+            assertEquals(StreamRecordingRequest(1, start), StreamProtocol.readRecordingRequest(command, command.readUnsignedByte()))
+            request[9] = 2
+            val malformed = DataInputStream(ByteArrayInputStream(request))
+            assertThrows(IOException::class.java) { StreamProtocol.readRecordingRequest(malformed, malformed.readUnsignedByte()) }
+        }
+        for (invalid in listOf(state.copy(seconds = -1), state.copy(saving = true), state.copy(available = false))) {
+            assertThrows(IOException::class.java) { StreamProtocol.writeRecordingState(DataOutputStream(ByteArrayOutputStream()), invalid) }
+        }
+        assertThrows(IOException::class.java) { StreamProtocol.writeRecordingRequest(DataOutputStream(ByteArrayOutputStream()), 0, true) }
+        assertThrows(IOException::class.java) { StreamProtocol.readMessage(DataInputStream(ByteArrayInputStream(byteArrayOf(9, 2)))) }
+    }
     @Test fun cameraSelectionMessagesAreBoundedAndPreserveVideoOrdering() {
         val state = StreamCameraState(listOf(StreamCameraOption("back/default", "Rear 1×"),
             StreamCameraOption("front", "Front")), "back/default")

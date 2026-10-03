@@ -40,6 +40,10 @@ data class StreamCameraOption(val id: String, val label: String)
 data class StreamCameraState(val options: List<StreamCameraOption> = emptyList(), val selectedId: String? = null) : StreamMessage
 data class StreamCameraRequest(val requestId: Long, val targetId: String)
 data class StreamCameraResult(val requestId: Long, val applied: Boolean) : StreamMessage
+data class StreamRecordingState(val available: Boolean = false, val recording: Boolean = false,
+    val saving: Boolean = false, val audio: Boolean = false, val seconds: Int = 0) : StreamMessage
+data class StreamRecordingRequest(val requestId: Long, val start: Boolean)
+data class StreamRecordingResult(val requestId: Long, val start: Boolean, val success: Boolean) : StreamMessage
 
 class StreamFrameQueue {
     private val frames = ArrayDeque<StreamFrame>()
@@ -130,6 +134,12 @@ object StreamProtocol {
             val requestId = input.readLong(); check(requestId > 0)
             StreamCameraResult(requestId, readFlag(input))
         }
+        9 -> StreamRecordingState(readFlag(input), readFlag(input), readFlag(input), readFlag(input), input.readInt())
+            .also(::validateRecordingState)
+        11 -> {
+            val requestId = input.readLong(); check(requestId > 0)
+            StreamRecordingResult(requestId, readFlag(input), readFlag(input))
+        }
         else -> throw IOException("Invalid stream message")
     }
 
@@ -177,6 +187,34 @@ object StreamProtocol {
     }
 
     private fun validCameraId(id: String) = id.matches(Regex("[A-Za-z0-9_./:-]{1,32}"))
+
+    fun writeRecordingState(output: DataOutputStream, state: StreamRecordingState) {
+        validateRecordingState(state)
+        output.writeByte(9)
+        listOf(state.available, state.recording, state.saving, state.audio).forEach { output.writeByte(if (it) 1 else 0) }
+        output.writeInt(state.seconds); output.flush()
+    }
+
+    fun writeRecordingRequest(output: DataOutputStream, id: Long, start: Boolean) {
+        check(id > 0)
+        output.writeByte(10); output.writeLong(id); output.writeByte(if (start) 1 else 0); output.flush()
+    }
+
+    fun readRecordingRequest(input: DataInputStream, type: Int): StreamRecordingRequest {
+        check(type == 10)
+        val id = input.readLong(); check(id > 0)
+        return StreamRecordingRequest(id, readFlag(input))
+    }
+
+    fun writeRecordingResult(output: DataOutputStream, result: StreamRecordingResult) {
+        check(result.requestId > 0)
+        output.writeByte(11); output.writeLong(result.requestId)
+        output.writeByte(if (result.start) 1 else 0); output.writeByte(if (result.success) 1 else 0); output.flush()
+    }
+
+    private fun validateRecordingState(state: StreamRecordingState) {
+        check(state.seconds >= 0 && !(state.recording && state.saving) && (!state.recording || state.available))
+    }
 
     private fun validateCameraState(state: StreamCameraState) {
         check(state.options.size <= 8 && state.options.map { it.id }.distinct().size == state.options.size &&

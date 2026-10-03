@@ -51,3 +51,23 @@ Next: remote video start/stop, with visible camera-side recording state and
 confirmed save through the existing encrypted queue. Simultaneous streaming and
 recording must be verified against the selected camera's capabilities before
 enabling a recording control; keep this as a separate increment.
+
+## Remote video increment
+
+- Bind streaming Preview + ImageCapture + VideoCapture at 1080p30. Advertise
+  recording only after the selected camera successfully binds the combination;
+  otherwise keep preview/photos available and show recording unavailable.
+  Ordinary recording defaults remain untouched. Microphone follows the camera's
+  existing setting and permission; the viewer shows its actual audio state.
+- Explicit start/stop commands share the sequential request IDs and pending-command
+  guard with photos and camera selection. Do not retry timed-out commands.
+- Start confirmation follows CameraX's Start event. Stop confirmation follows
+  Finalize and successful encrypted media/thumbnail/database storage. Display
+  elapsed recording time and saving state on both devices. Disable photo/lens
+  changes while recording or saving. Stop locally or remotely; disconnect,
+  background and navigation stop the recording and enqueue its save.
+- New endpoint versions prevent older viewers from reading unknown video messages.
+  Verify protocol bounds/order, lifecycle cleanup, two-phone start/stop and an
+  encrypted saved clip. No saved-video FPS/orientation claim without device evidence.
+- UI retains dark/mint styling, 48 dp minimum controls, native icons/menu, and
+  restrained recording color. Keep the relocated photo button above the lens menu.

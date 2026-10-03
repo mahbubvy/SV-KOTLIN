@@ -3,9 +3,12 @@ package com.secretvault.app.core.stream
 import org.json.JSONObject
 
 data class StreamEndpoint(val host: String, val port: Int, val fingerprint: String,
-                          val sessionId: String, val name: String, val requiresPin: Boolean = true, val cameraControls: Boolean = false) {
-    val version: Int get() = if (cameraControls) { if (requiresPin) 4 else 5 } else { if (requiresPin) 2 else 3 }
+                          val sessionId: String, val name: String, val requiresPin: Boolean = true, val cameraControls: Boolean = false,
+                          val recordingControls: Boolean = false) {
+    val version: Int get() = if (recordingControls) { if (requiresPin) 6 else 7 }
+        else if (cameraControls) { if (requiresPin) 4 else 5 } else { if (requiresPin) 2 else 3 }
     init {
+        require(!recordingControls || cameraControls)
         require(host.length <= 15)
         val parts = host.split('.').map { it.toIntOrNull() }
         require(host.length <= 15 && parts.size == 4 && parts.all { it != null && it in 0..255 })
@@ -24,9 +27,9 @@ data class StreamEndpoint(val host: String, val port: Int, val fingerprint: Stri
         fun fromPublicBytes(bytes: ByteArray): StreamEndpoint {
             require(bytes.size in 1..512)
             val data = JSONObject(bytes.toString(Charsets.UTF_8))
-            require(data.length() == 6 && data.get("v") in listOf(2, 3, 4, 5) && data.get("p") is Int)
+            require(data.length() == 6 && data.get("v") in listOf(2, 3, 4, 5, 6, 7) && data.get("p") is Int)
             val version = data.getInt("v")
-            return StreamEndpoint(data.getString("h"), data.getInt("p"), data.getString("f"), data.getString("s"), data.getString("n"), version == 2 || version == 4, version >= 4)
+            return StreamEndpoint(data.getString("h"), data.getInt("p"), data.getString("f"), data.getString("s"), data.getString("n"), version % 2 == 0, version >= 4, version >= 6)
         }
     }
 }
