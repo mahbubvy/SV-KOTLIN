@@ -126,3 +126,31 @@ frames. Local camera changes update the applied selection on the viewer. Camera
 and lens controls are unavailable while a photo/selection command is pending.
 Stopping restores ordinary recording configuration; simultaneous video recording
 is still separate work.
+
+## Remote video recording
+
+Recording-control endpoints advertise protected v6 or open v7 in both NSD and
+BLE. TLS/PIN authentication is unchanged; previous viewers ignore those versions.
+Updated viewers retain support for v2 through v5 cameras.
+
+Type 9 carries four strict 0/1 flags (available, recording, saving, audio) and a
+nonnegative 32-bit elapsed-second count. Recording requires available=true and
+cannot coexist with saving. Type 10 is a positive 64-bit sequential request ID
+and a strict 0/1 start flag. Type 11 acknowledges that ID/action and a 0/1 success
+flag. These commands share one pending slot and the same sequence as photos and
+camera selection. Every outbound message uses the single frame writer.
+
+Start is acknowledged after CameraX's Start event. Stop is acknowledged after
+Finalize and successful encrypted save, thumbnail and database insertion. Host
+start/stop limits are 10/60 seconds; viewer limits are 15/65 seconds. A timeout
+does not retry. Saving can finish after timeout/disconnect; check the camera vault.
+Photos and camera selection are blocked while recording/saving or a command is
+pending. Foreground/unlocked ownership checks precede camera operations.
+
+The camera attempts Preview + ImageCapture + FHD30 VideoCapture with the existing
+preview effect; an unsupported binding retains preview/photos and reports video
+unavailable. Ordinary saved-video quality defaults are retained. Microphone uses
+the camera setting and permission. Disconnect/background/navigation stop active
+recording. SOURCE_INACTIVE with recorded frames retains its valid output for
+encryption, following the Android Finalize contract:
+https://developer.android.com/reference/androidx/camera/video/VideoRecordEvent.Finalize

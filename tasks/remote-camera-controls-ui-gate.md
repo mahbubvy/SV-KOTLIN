@@ -107,3 +107,40 @@ The existing dark/mint identity and ENERGY 1 / RHYTHM 1 / MOTION 1 remain.
   No new copy or claims. Remaining gate items above are unchanged by this relocation.
 - Validation: `:app:assembleDebug` passed; reviewed the diff and whitespace.
   This is source/build evidence, not a fresh device test or a lint pass.
+
+## Remote recording controls, 2026-10-03
+
+Scope: Record video / Stop recording, elapsed time, save status and control
+eligibility on camera and viewer. Direction remains dark/mint, native Material
+controls, ENERGY 1 / RHYTHM 1 / MOTION 1. Existing photo placement is retained.
+
+- R-02/R-17/R-18/R-28/R-36/R-38, C-5: no em dash, invented claims, testimonials
+  or filler. Availability follows successful camera binding; recording duration
+  follows CameraX stats and save confirmation follows encryption/database success.
+  FHD30 is the requested mode and both test devices produce approximately 29.9 FPS.
+- R-03/R-05/R-11/R-35, C-4: new record controls are full-width with 48 dp minimum
+  height, 8/16 dp group spacing and the existing capped scrollable footer. Status
+  text wraps; the preview remains flexible. Both-phone runtime tests activate
+  controls and existing selector bounds checks pass on Pixel-camera/CMF-viewer.
+  Landscape/large-font physical review has not been performed.
+- R-04/R-23/R-24/R-26/R-27/R-32, C-1/C-2: reuse Material Videocam/Stop icons,
+  native buttons and the existing session. No generated assets or new navigation.
+  Explicit command text supplies accessibility names; pending/saving buttons
+  disable. Photo/lens controls disable during recording; camera has a local stop.
+  Start, stop, Disconnect and background cleanup pass; no new focus trap. A
+  physical keyboard test is not claimed. Existing menu Back dismissal passed.
+- R-25/R-34/R-37: existing theme retained. TextPrimary/background contrast is
+  17.91:1; recording Stop text (VaultError #FF5252 / #121212) is 5.87:1. No new
+  palette, gradient, texture, blur, card or animation treatment.
+- R-33: interface edits were applied directly with apply_patch. Build and 97
+  unit tests pass; lint remains 41 errors / 116 warnings. Verification details
+  and current APK hash are in camera-stream-validation.md.
+- Purpose gate R-01/R-06–R-10/R-12–R-14/R-19/R-22, quality locks
+  R-15/R-16/R-20/R-21/R-29–R-31 and C-3: previous scoped findings are unchanged;
+  added controls serve recording and recovery, without decoration or filler.
+- Liveliness/craft: mint photo capture remains the primary capture accent; video
+  is a secondary outline control, with restrained red for Stop. The camera image
+  stays the focal point and selected/pending states remain tied to real responses.
+
+Scoped source/build/device interaction gate complete with visual/keyboard limits
+stated above; this does not claim an exhaustive visual audit or clean lint.

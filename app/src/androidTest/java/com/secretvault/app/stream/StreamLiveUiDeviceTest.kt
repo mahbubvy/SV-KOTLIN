@@ -37,6 +37,8 @@ import android.graphics.Rect
 import java.util.concurrent.atomic.AtomicReference
 import com.secretvault.app.ui.theme.SecretVaultTheme
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -155,12 +157,14 @@ class StreamLiveUiDeviceTest {
         val remotePhoto = InstrumentationRegistry.getArguments().getString("remotePhoto") == "true"
         val noStreamPin = InstrumentationRegistry.getArguments().getString("noStreamPin") == "true"
         val cameraChanges = InstrumentationRegistry.getArguments().getString("cameraChanges") == "true"
+        val remoteVideo = InstrumentationRegistry.getArguments().getString("remoteVideo") == "true"
+        val videoExit = InstrumentationRegistry.getArguments().getString("videoExit") ?: "stop"
         assumeTrue(role == "send" || role == "view")
         val context = instrumentation.targetContext
         val app = context.applicationContext as SecretVaultApp
         val wasUnlocked = app.sessionManager.isUnlocked.value
         val photoTestStartedAt = System.currentTimeMillis()
-        val mediaBefore = if (remotePhoto && role == "send") runBlocking { app.mediaRepository.getTotalCount() } else 0
+        val mediaBefore = if ((remotePhoto || remoteVideo) && role == "send") runBlocking { app.mediaRepository.getTotalCount() } else 0
         assertTrue("Unlock the phone locally before the live camera check", !context.getSystemService(KeyguardManager::class.java).isDeviceLocked)
         instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
@@ -174,8 +178,10 @@ class StreamLiveUiDeviceTest {
         } else prefs.all
         val invitationFile = File(context.cacheDir, "stream-test-invitation")
         val cameraModel = CameraViewModel(if (native) VideoMode.FHD_60 else VideoMode.UHD_60).apply { setCameraMode(CameraMode.VIDEO) }
+        val viewerTexture = AtomicReference<android.view.TextureView>()
         try {
-            if ((remotePhoto || cameraChanges) && role == "send") app.sessionManager.unlock()
+            if ((remotePhoto || remoteVideo || cameraChanges) && role == "send") app.sessionManager.unlock()
+            if (remoteVideo) cameraModel.toggleRecordAudio()
             if (role == "send") {
                 StreamPinManager(context).setPinRequired(!noStreamPin)
                 if (!noStreamPin) {
@@ -191,7 +197,7 @@ class StreamLiveUiDeviceTest {
                 if (role == "send") {
                     invitationFile.delete(); tap("Stream"); waitFor("Waiting for a viewer", 20000)
                     invitationFile.writeText("svstream2://ready/" + java.net.URLEncoder.encode("SV ${Build.MODEL.take(48)}", "UTF-8"))
-                    waitFor("Viewer connected · Stop stream to record", 60000)
+                    waitFor("Viewer connected", 60000)
                     if (cameraChanges) {
                         val rear = cameraModel.uiState.value.rearLensOptions
                         val selections = listOf("front") + (listOfNotNull(rear.firstOrNull { it.id == null }) + rear.filter { it.id != null } +
@@ -231,8 +237,62 @@ class StreamLiveUiDeviceTest {
                             File(it.encryptedPath).length() > 0 && File(requireNotNull(it.thumbnailPath)).length() > 0 && it.width > 0 && it.height > 0
                         })
                     }
-                    repeat(10) { SystemClock.sleep(1000); waitFor("Viewer connected · Stop stream to record", 500) }
-                    waitFor("Viewer disconnected or connection stalled. Start a new session.", if (remotePhoto) 60000 else 20000)
+                    if (remoteVideo) {
+                        waitFor("Stop recording", 25000)
+                        assertTrue("Camera did not enter recording state", cameraModel.uiState.value.isRecording)
+                        if (videoExit == "background") { SystemClock.sleep(6000); activity.moveToState(androidx.lifecycle.Lifecycle.State.CREATED) }
+                        if (videoExit == "stop") waitFor("Video saved in this vault", 70000)
+                        else runBlocking { kotlinx.coroutines.withTimeout(70000) {
+                            app.mediaRepository.getMedia(AlbumEntity.ALBUM_CAMERA_ID).first { items ->
+                                items.any { it.createdAt >= photoTestStartedAt && it.mediaType == MediaType.VIDEO }
+                            }
+                        } }
+                        assertTrue("Video still recording after save", !cameraModel.uiState.value.isRecording)
+                        assertEquals(mediaBefore + 1 + if (remotePhoto) 1 else 0, runBlocking { app.mediaRepository.getTotalCount() })
+                        val captured = runBlocking { app.mediaRepository.getMedia(AlbumEntity.ALBUM_CAMERA_ID).first() }
+                            .filter { it.createdAt >= photoTestStartedAt && it.mediaType == MediaType.VIDEO }
+                        assertEquals("Remote video not saved once in Camera album", 1, captured.size)
+                        val item = captured.single()
+                        assertTrue("Encrypted recording or thumbnail missing", File(item.encryptedPath).length() > 0 &&
+                            File(requireNotNull(item.thumbnailPath)).length() > 0 && (item.durationMs ?: 0) >= 2500)
+                        assertEquals(1920, item.width); assertEquals(1080, item.height)
+                        val plaintext = File(context.cacheDir, "remote-video-metadata-test.mp4")
+                        try {
+                            app.cryptoEngine.decryptFile(File(item.encryptedPath), plaintext)
+                            val retriever = android.media.MediaMetadataRetriever()
+                            try {
+                                retriever.setDataSource(plaintext.absolutePath)
+                                val rotation = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                                val fps = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
+                                val hasAudio = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO)
+                                assertEquals("Portrait recording metadata", "90", rotation)
+                                assertTrue("Silent test recorded audio", hasAudio != "yes")
+                                fps?.toFloatOrNull()?.let { assertTrue("Wrong capture FPS", kotlin.math.abs(it - 30f) < 0.5f) }
+                                instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "send: decrypted test clip metadata rotation=$rotation captureFPS=$fps audio=$hasAudio; exit=$videoExit") })
+                            } finally { retriever.release() }
+                            val extractor = android.media.MediaExtractor()
+                            try {
+                                extractor.setDataSource(plaintext.absolutePath)
+                                val track = (0 until extractor.trackCount).first { extractor.getTrackFormat(it).getString(android.media.MediaFormat.KEY_MIME)?.startsWith("video/") == true }
+                                extractor.selectTrack(track)
+                                var count = 0
+                                val first = extractor.sampleTime
+                                var last = first
+                                while (extractor.sampleTime >= 0) { last = extractor.sampleTime; count++; if (!extractor.advance()) break }
+                                assertTrue("No valid recorded video samples", count > 30 && last > first)
+                                val actualFps = (count - 1) * 1_000_000.0 / (last - first)
+                                assertTrue("Wrong recorded FPS: $actualFps", actualFps in 28.0..32.0)
+                                instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "send: test clip video samples=$count averagePTSfps=$actualFps") })
+                            } finally { extractor.release() }
+                        } finally { plaintext.delete() }
+                        instrumentation.sendStatus(0, Bundle().apply { putString("streamResult",
+                            "send: remote video encrypted with thumbnail and database record; ${item.width}x${item.height}; duration ${item.durationMs}ms") })
+                    }
+                    if (videoExit == "background") activity.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+                    else {
+                        if (videoExit != "disconnect") repeat(10) { SystemClock.sleep(1000); waitFor("Viewer connected", 500) }
+                        waitFor("Viewer disconnected or connection stalled. Start a new session.", if (remotePhoto || remoteVideo) 60000 else 20000)
+                    }
                     waitFor("Stream"); assertTrue("Camera mode changed", cameraModel.uiState.value.cameraMode == CameraMode.VIDEO)
                     assertTrue("Recording default changed", cameraModel.uiState.value.videoMode == if (native) VideoMode.FHD_60 else VideoMode.UHD_60)
                     tap("Stream"); waitFor("Waiting for a viewer", 20000); tap("Stop stream"); waitFor("Stream")
@@ -266,6 +326,7 @@ class StreamLiveUiDeviceTest {
                             return null
                         }
                         val view = requireNotNull(texture(screen.window.decorView))
+                        viewerTexture.set(view)
                         val matrix = FloatArray(9)
                         view.getTransform(android.graphics.Matrix()).getValues(matrix)
                         assertTrue("Portrait stream has no viewer quarter-turn: ${matrix.toList()}",
@@ -314,14 +375,40 @@ class StreamLiveUiDeviceTest {
                         waitFor("Live camera")
                         instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: remote photo saved acknowledgment; live preview remained active") })
                     }
-                    repeat(15) { SystemClock.sleep(1000); waitFor("Live camera", 500) }
-                    tap("Disconnect"); waitFor("Refresh")
+                    if (remoteVideo) {
+                        waitFor("Record video", 10000); tap("Record video"); waitFor("Recording started", 20000)
+                        waitFor("Stop recording")
+                        val selector = waitFor("Choose camera").let { node ->
+                            var parent = node
+                            while (!parent.isClickable && parent.parent != null) parent = parent.parent
+                            parent
+                        }
+                        assertFalse("Lens controls remain enabled while recording", selector.isEnabled)
+                        var previousTimestamp = 0L
+                        repeat(4) {
+                            SystemClock.sleep(1000); waitFor("Live camera", 500)
+                            activity.onActivity {
+                                val timestamp = requireNotNull(viewerTexture.get().surfaceTexture).timestamp
+                                assertTrue("Viewer stopped rendering during recording", timestamp > previousTimestamp)
+                                previousTimestamp = timestamp
+                            }
+                        }
+                        if (videoExit == "disconnect") { tap("Disconnect"); waitFor("Refresh") }
+                        else if (videoExit == "background") waitFor("Could not receive camera. Check Wi-Fi and the streaming PIN, then try again.", 25000)
+                        else {
+                            tap("Stop recording"); waitFor("Video saved on camera device", 70000)
+                            waitFor("Record video"); waitFor("Live camera")
+                        }
+                        instrumentation.sendStatus(0, Bundle().apply { putString("streamResult",
+                            "view: remote start + four-second rendered preview; lens disabled; exit=$videoExit") })
+                    }
+                    if (videoExit == "stop") { repeat(15) { SystemClock.sleep(1000); waitFor("Live camera", 500) }; tap("Disconnect"); waitFor("Refresh") }
                 }
                 instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "$role: normal camera + discovery + selected PIN policy + live view + cleanup passed") })
             }
         } finally {
             invitationFile.delete()
-            if ((remotePhoto || cameraChanges) && role == "send" && !wasUnlocked) app.sessionManager.lock()
+            if ((remotePhoto || remoteVideo || cameraChanges) && role == "send" && !wasUnlocked) app.sessionManager.lock()
             if (role == "send") {
                 val edit = prefs.edit().clear()
                 saved.forEach { (key, value) -> when (value) {

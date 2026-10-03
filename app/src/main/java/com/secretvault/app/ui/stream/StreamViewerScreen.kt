@@ -15,6 +15,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -56,7 +58,10 @@ fun StreamViewerScreen(onBack: () -> Unit) {
     }
     var session by remember { mutableStateOf(StreamSession(context.applicationContext)) }
     val state by session.state.collectAsState()
-    val canTakePhoto = state.live && !state.photoBusy && !state.cameraBusy && !state.stopping &&
+    val canChooseCamera = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy &&
+        !state.recordingState.recording && !state.recordingState.saving && !state.stopping && state.cameraState.selectedId != null
+    val canTakePhoto = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy &&
+        !state.recordingState.recording && !state.recordingState.saving && !state.stopping &&
         (state.cameraState.options.isEmpty() || state.cameraState.selectedId != null)
     val latestSession by rememberUpdatedState(session)
     var prompt by remember { mutableStateOf<StreamEndpoint?>(null) }
@@ -164,9 +169,27 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
                 state.cameraMessage?.let { Text(it, color = TextPrimary,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+                state.recordingMessage?.let { Text(it, color = TextPrimary,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+                if (state.recordingState.available) {
+                    val recording = state.recordingState
+                    Text(if (recording.recording) "Recording %02d:%02d".format(recording.seconds / 60, recording.seconds % 60)
+                        else if (recording.saving) "Saving encrypted video…"
+                        else "1080p 30 FPS · Microphone ${if (recording.audio) "on" else "off"}", color = TextPrimary)
+                    OutlinedButton(onClick = { session.setRecording(!recording.recording) },
+                        enabled = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !recording.saving &&
+                            !state.stopping && state.cameraState.selectedId != null,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = if (recording.recording) VaultError else TextPrimary)) {
+                        Icon(if (recording.recording) Icons.Default.Stop else Icons.Default.Videocam, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (state.recordingBusy) { if (state.recordingRequestedStart == true) "Starting recording…" else "Saving video…" }
+                            else if (recording.recording) "Stop recording" else "Record video")
+                    }
+                } else if (selected?.recordingControls == true) Text("Video recording unavailable for this camera", color = TextSecondary)
                 if (state.cameraState.options.size > 1) Box {
                     OutlinedButton(onClick = { cameraMenu = true },
-                        enabled = state.live && !state.photoBusy && !state.cameraBusy && state.cameraState.selectedId != null && !state.stopping,
+                        enabled = canChooseCamera,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) {
                         Icon(Icons.Default.Cameraswitch, "Choose camera")
@@ -174,7 +197,7 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                         Text(if (state.cameraBusy) "Changing camera…" else
                             state.cameraState.options.firstOrNull { it.id == state.cameraState.selectedId }?.label ?: "Preparing camera…")
                     }
-                    DropdownMenu(expanded = cameraMenu && state.live && !state.cameraBusy && !state.photoBusy && state.cameraState.selectedId != null,
+                    DropdownMenu(expanded = cameraMenu && canChooseCamera,
                         onDismissRequest = { cameraMenu = false },
                         containerColor = VaultSurface) {
                         state.cameraState.options.forEach { option ->

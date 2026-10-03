@@ -1,8 +1,7 @@
 # Remote camera controls
 
 The viewer controls the camera phone through its existing paired TLS stream.
-Photo capture is complete. This increment adds camera/lens selection; remote
-video recording is the following increment.
+Photo capture, camera/lens selection and remote video start/stop are complete.
 
 ## Camera and lens selection
 
@@ -47,10 +46,9 @@ acknowledgments, local changes, retained recording defaults, menu touch-target
 bounds and session cleanup pass. All 96 unit tests pass. Lint retains the recorded
 41 errors and 116 warnings. See camera-stream-validation.md and the scoped UI gate.
 
-Next: remote video start/stop, with visible camera-side recording state and
-confirmed save through the existing encrypted queue. Simultaneous streaming and
-recording must be verified against the selected camera's capabilities before
-enabling a recording control; keep this as a separate increment.
+Remote video start/stop now uses visible camera-side recording state and confirmed
+save through the existing encrypted queue. Simultaneous streaming/recording was
+verified on both phones; enable recording only after successful camera binding.
 
 ## Remote video increment
 
@@ -71,3 +69,10 @@ enabling a recording control; keep this as a separate increment.
   encrypted saved clip. No saved-video FPS/orientation claim without device evidence.
 - UI retains dark/mint styling, 48 dp minimum controls, native icons/menu, and
   restrained recording color. Keep the relocated photo button above the lens menu.
+
+Completed 2026-10-03: app/test builds and 97 unit tests pass. Both roles work,
+including protected Pixel and PIN-off CMF sessions, photo regression, Pixel 0.6×,
+normal stop, viewer disconnect and camera background. Saved test clips are
+1920×1080, have portrait rotation metadata and approximately 29.9 FPS measured
+from MP4 sample timestamps. See camera-stream-validation.md for exact evidence
+and remote-camera-controls-ui-gate.md for the scoped interface review.

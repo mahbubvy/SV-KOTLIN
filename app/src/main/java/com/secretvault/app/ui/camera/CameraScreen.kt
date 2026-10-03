@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -146,6 +147,7 @@ fun CameraScreen(
     val discoveryState by discovery.state.collectAsState()
     var stream by remember { mutableStateOf(StreamSession(context.applicationContext)) }
     val streamState by stream.state.collectAsState()
+    val streamRecording by cameraManager.streamRecordingState.collectAsState()
     var renderer by remember { mutableStateOf<StreamPreviewRenderer?>(null) }
     var streamStarted by remember { mutableStateOf(false) }
     var streamStopping by remember { mutableStateOf(false) }
@@ -158,6 +160,7 @@ fun CameraScreen(
 
     fun stopStream() {
         streamStopping = true
+        if (renderer != null) cameraManager.stopVideoRecording()
         val oldRenderer = renderer
         val oldStream = stream
         discovery.stopAdvertising()
@@ -165,6 +168,7 @@ fun CameraScreen(
         oldStream.close()
         scope.launch {
             oldStream.state.first { !it.busy }
+            cameraManager.awaitStreamRecordingFinalized()
             if (renderer === oldRenderer) { renderer = null; streamStarted = false; streamStopping = false }
             oldRenderer?.close()
         }
@@ -221,14 +225,6 @@ fun CameraScreen(
     val isSavingVideo by app.mediaSaveQueue.isSavingVideo.collectAsState()
     val videoSaveProgress by app.mediaSaveQueue.videoSaveProgress.collectAsState()
     val savingQueueCount by app.mediaSaveQueue.savingQueueCount.collectAsState()
-    var wasSavingVideo by remember { mutableStateOf(false) }
-
-    LaunchedEffect(isSavingVideo) {
-        if (wasSavingVideo && !isSavingVideo) {
-            Toast.makeText(context, "Encrypted video saved", Toast.LENGTH_SHORT).show()
-        }
-        wasSavingVideo = isSavingVideo
-    }
 
     var previewViewInstance by remember { mutableStateOf<PreviewView?>(null) }
     var cmfHighFpsViewInstance by remember { mutableStateOf<CmfHighFpsCameraView?>(null) }
@@ -308,7 +304,7 @@ fun CameraScreen(
                             }, cameraState = remoteCameraState, selectCamera = { target ->
                                 if (!app.sessionManager.isUnlocked.value || !foreground || !cameraIsReady || stream !== owner ||
                                     renderer == null || appliedCameraId == null || viewModel.uiState.value.isRecording ||
-                                    remoteCameraState.value.options.none { it.id == target }) false
+                                    cameraManager.streamRecordingState.value.saving || remoteCameraState.value.options.none { it.id == target }) false
                                 else if (appliedCameraId == target) true
                                 else {
                                     appliedCameraId = null
@@ -318,6 +314,10 @@ fun CameraScreen(
                                         app.sessionManager.isUnlocked.value && foreground && cameraIsReady && stream === owner
                                     }
                                 }
+                            }, recordingState = cameraManager.streamRecordingState, setRecording = { start ->
+                                if (!app.sessionManager.isUnlocked.value || !foreground || !cameraIsReady || stream !== owner ||
+                                    renderer == null || appliedCameraId == null) false
+                                else cameraManager.setStreamRecording(start, cameraManager.streamRecordingState.value.audio)
                             })
                     } else if (gl != null) stream.refreshCameraFrame()
                 },
@@ -504,15 +504,22 @@ fun CameraScreen(
                     .clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.85f)).padding(8.dp)
             ) {
                 val status = when {
-                    renderer != null -> if (!streamStarted) "Preparing camera…" else if (streamState.live) "Viewer connected · Stop stream to record" else streamState.message
+                    renderer != null -> if (!streamStarted) "Preparing camera…" else if (streamState.live) "Viewer connected" else streamState.message
                     streamError != null -> streamError
                     else -> null
                 }
                 status?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) }
                 streamState.photoMessage?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
                 streamState.cameraMessage?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
-                if (renderer != null && !streamState.live && uiState.cameraMode == CameraMode.VIDEO) {
-                    Text("Stop stream to record", color = TextSecondary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                streamState.recordingMessage?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
+                if (renderer != null) {
+                    Text(if (streamRecording.recording) "Recording %02d:%02d".format(streamRecording.seconds / 60, streamRecording.seconds % 60)
+                        else if (streamRecording.saving) "Saving encrypted video…"
+                        else if (streamRecording.available) "Remote video: 1080p 30 FPS · Microphone ${if (streamRecording.audio) "on" else "off"}"
+                        else "Remote video unavailable for this camera",
+                        color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp))
+                    if (streamRecording.recording) androidx.compose.material3.TextButton(onClick = { cameraManager.stopVideoRecording() },
+                        modifier = Modifier.heightIn(min = 48.dp)) { Text("Stop recording", color = VaultAccent) }
                 }
                 if (renderer != null && discoveryState.message.startsWith("Could not")) {
                     Text(discoveryState.message, color = TextPrimary, modifier = Modifier.padding(8.dp))
@@ -558,12 +565,15 @@ fun CameraScreen(
                         }
                     }
                 },
-                onFlipCamera = { if (!streamState.photoBusy && !streamState.cameraBusy) viewModel.toggleLensFacing() },
+                onFlipCamera = { if (!streamState.photoBusy && !streamState.cameraBusy && !streamState.recordingBusy &&
+                    !streamRecording.recording && !streamRecording.saving) viewModel.toggleLensFacing() },
                 latestMediaItem = latestMediaItem,
                 rearLensOptions = if (uiState.lensFacing == LensFacing.BACK) uiState.rearLensOptions else emptyList(),
                 selectedRearLensId = uiState.selectedRearLensId,
-                onRearLensSelect = { if (!streamState.photoBusy && !streamState.cameraBusy) viewModel.selectRearLens(it) },
-                cameraControlsEnabled = !streamState.photoBusy && !streamState.cameraBusy,
+                onRearLensSelect = { if (!streamState.photoBusy && !streamState.cameraBusy && !streamState.recordingBusy &&
+                    !streamRecording.recording && !streamRecording.saving) viewModel.selectRearLens(it) },
+                cameraControlsEnabled = !streamState.photoBusy && !streamState.cameraBusy && !streamState.recordingBusy &&
+                    !streamRecording.recording && !streamRecording.saving,
                 onGalleryClick = {
                     val item = latestMediaItem
                     if (item != null) {

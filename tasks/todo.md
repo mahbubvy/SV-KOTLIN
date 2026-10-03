@@ -511,3 +511,15 @@ $testClass = 'com.secretvault.app.stream.<test class>'
 If a device test needs paired sender/viewer roles, document its concrete role
 arguments and session-detail transfer commands when implemented. Never place
 tokens in committed logs, report content, or process command-line arguments.
+
+## Remote-control checkpoint, 2026-10-03
+
+- [x] Remote photo capture with encrypted save acknowledgment.
+- [x] Front/back and available rear lenses, including Pixel logical 0.6×.
+- [x] Remote video start/stop at 1080p30 while preview stays live; camera-side
+  timer/local stop, encrypted save confirmation and lifecycle/disconnect stop.
+- [x] Both phones built/installed; roles universal, protected and PIN-off tests.
+  97 unit tests pass. Lint remains the pre-existing 41 errors / 116 warnings.
+
+Evidence and remaining verification limits: camera-stream-validation.md and
+remote-camera-controls-ui-gate.md. No further feature increment has been chosen.

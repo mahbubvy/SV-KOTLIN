@@ -533,3 +533,53 @@ user-reported prototype failure was not reproduced under the tested conditions.
 - Both device tests passed (Pixel host 46.025 s; CMF viewer 40.346 s). Evidence:
   `scratch/pixel-ultrawide-remote-host.log` and
   `scratch/pixel-ultrawide-remote-viewer.log`. The test APK build passed.
+
+## Remote video start/stop, 2026-10-03
+
+- Viewer Record video / Stop recording controls reuse the paired TLS channel.
+  Both phones successfully bind Preview + ImageCapture + FHD30 VideoCapture.
+  Start follows the CameraX Start event; stop success follows encrypted video,
+  thumbnail and Camera-album database insertion. No recording defaults change.
+- Protected Pixel camera → CMF viewer normal start/stop passes; front, rear and
+  0.6× remote choices and local synchronization still pass. Applied zoom remains
+  0.615 at 0.6×. Clip 1920×1080, 4555 ms, rotation metadata 90°, silent.
+  Logs: `scratch/remote-video-final-pixel-host.log`,
+  `scratch/remote-video-final-cmf-viewer.log`.
+- Final Pixel camera disconnect test passes: stopping the viewer while recording
+  finalizes/encrypts one clip. 1920×1080, 4651 ms, 140 video samples, average PTS
+  rate 29.8846 FPS, rotation 90°, silent. Viewer texture timestamps advance for
+  each of four recording-second checks; lens selection is disabled. Logs:
+  `scratch/remote-video-disconnect-pixel-host.log`,
+  `scratch/remote-video-disconnect-cmf-viewer.log`.
+- CMF camera → Pixel viewer in PIN-off mode passes normal stop and remote photo
+  regression with the new video output. One photo plus one video saved. Clip
+  1920×1080, 4580 ms, 138 video samples, average PTS rate 29.9067 FPS, rotation 90°,
+  silent; four recording-second viewer texture timestamp checks pass. Discovery
+  334 ms; connection-to-first-frame 557 ms. Logs:
+  `scratch/remote-video-final-cmf-host.log`,
+  `scratch/remote-video-final-pixel-viewer.log`.
+- Camera lifecycle background test passes on CMF: the recording stops and saves
+  a 7021 ms 1920×1080 clip with 90° rotation. Viewer terminates, camera resumes
+  ordinary capture, defaults are retained, and an explicit restart/Stop succeeds.
+  Logs: `scratch/remote-video-background-cmf-host.log`,
+  `scratch/remote-video-background-pixel-viewer.log`.
+- Final app and instrumentation builds pass; 97 unit tests, zero failures/errors.
+  Deliberately accepting duration -1 made the recording-boundary test fail; the
+  mutation was restored and the full suite passes. Lint is the unchanged baseline:
+  41 errors / 116 warnings; a newly introduced physical-camera API guard finding
+  was fixed before final verification. No lint suppression/baseline changes.
+- Reviewed startup exceptions, cancellation, save failure, shared command
+  sequencing and lifecycle finalization. SOURCE_INACTIVE can contain valid frames
+  according to the Android Finalize contract; retain/encrypt those for stream
+  recordings. Recorder executor shutdown waits for Finalize. Save toasts now
+  follow the actual per-video success/failure callback instead of queue-idle state.
+- Latest app APK SHA-256:
+  `7FE9A6364D06D9195278CE3E41F29168E24ADDB86EEEDD457CAF9CA2A0A0D69F`.
+  Installed on both phones. Six short test videos and one photo remain in their
+  Camera albums. Private decrypted test metadata files are deleted in finally.
+  All tests end the stream and restore streaming settings; no active broadcast.
+- Limits: microphone-on recordings, long-session thermals, landscape/large-font
+  physical visual review and unsupported-device fallback are not live-tested.
+  Tests inspect only metadata/timestamps from their own captures, never images or
+  vault media from before the test. Nominal capture-FPS metadata is absent, so the
+  measured FPS above comes from video sample PTS rather than that metadata key.
