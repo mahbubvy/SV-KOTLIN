@@ -3,6 +3,7 @@ package com.secretvault.app.stream
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.secretvault.app.core.stream.StreamInvitation
 import com.secretvault.app.core.stream.StreamTls
+import com.secretvault.app.core.stream.StreamPinManager
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -20,6 +21,50 @@ import org.junit.Assume.assumeTrue
 
 @RunWith(AndroidJUnit4::class)
 class StreamTlsDeviceTest {
+    @Test fun openStreamingWorksWithoutPinAndCannotDowngradeProtectedListener() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val prefsName = "stream_open_test_${java.util.UUID.randomUUID()}"
+        val prefs = context.getSharedPreferences(prefsName, android.content.Context.MODE_PRIVATE)
+        val pins = StreamPinManager(context, prefs)
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        val network = cm.allNetworks.first { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true }
+        val address = cm.getLinkProperties(network)!!.linkAddresses.first { it.address is Inet4Address }.address
+        val executor = Executors.newSingleThreadExecutor()
+        val pin = charArrayOf('7', '4', '2', '6')
+        try {
+            pins.setPinRequired(false)
+            assertFalse(pins.isConfigured())
+            StreamTls.listen(address, pins).use { host ->
+                val endpoint = requireNotNull(host.endpoint)
+                assertFalse(endpoint.requiresPin)
+                val accepted = executor.submit<javax.net.ssl.SSLSocket> { host.accept() }
+                StreamTls.connect(endpoint).use { client ->
+                    accepted.get(8, TimeUnit.SECONDS).use { server ->
+                        server.outputStream.write(42); server.outputStream.flush()
+                        assertEquals(42, client.inputStream.read())
+                    }
+                }
+            }
+            pins.setPin(pin); pins.setPinRequired(true)
+            StreamTls.listen(address, pins).use { host ->
+                val endpoint = requireNotNull(host.endpoint)
+                assertTrue(endpoint.requiresPin)
+                val rejected = executor.submit<Boolean> {
+                    try { host.accept().close(); false } catch (_: IOException) { true }
+                }
+                assertThrows(IOException::class.java) { StreamTls.connect(endpoint.copy(requiresPin = false)).close() }
+                assertTrue("Open handshake bypassed required PIN", rejected.get(8, TimeUnit.SECONDS))
+                val accepted = executor.submit<javax.net.ssl.SSLSocket> { host.accept() }
+                StreamTls.connect(endpoint, pin.copyOf()).use { client ->
+                    accepted.get(8, TimeUnit.SECONDS).use { server ->
+                        server.outputStream.write(43); server.outputStream.flush()
+                        assertEquals(43, client.inputStream.read())
+                    }
+                }
+            }
+        } finally { pin.fill('\u0000'); executor.shutdownNow(); context.deleteSharedPreferences(prefsName) }
+    }
+
     @Test fun pinPairingRejectsWrongPinAndChangedSessionBeforeMedia() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

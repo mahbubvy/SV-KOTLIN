@@ -73,6 +73,7 @@ fun SettingsScreen(pinManager: PinManager, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val streamPins = remember { StreamPinManager(context.applicationContext) }
+    var streamPinRequired by remember { mutableStateOf(streamPins.isPinRequired()) }
     val streamPrefs = remember { context.getSharedPreferences("sv_stream_config", android.content.Context.MODE_PRIVATE) }
     var showStreamPin by remember { mutableStateOf(false) }
     var savingStreamPin by remember { mutableStateOf(false) }
@@ -106,6 +107,28 @@ fun SettingsScreen(pinManager: PinManager, onBack: () -> Unit) {
             Text("Settings", color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
         Column(Modifier.verticalScroll(rememberScrollState())) {
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                    .toggleable(value = streamPinRequired, role = Role.Switch, onValueChange = { required ->
+                        try {
+                            streamPins.setPinRequired(required)
+                            streamPinRequired = required
+                        } catch (_: Exception) {
+                            Toast.makeText(context, "Could not save streaming PIN preference", Toast.LENGTH_SHORT).show()
+                        }
+                    }).padding(horizontal = 24.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Require streaming PIN", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Text(if (streamPinRequired) "Viewers enter your four-digit streaming PIN"
+                        else "Anyone on your Wi-Fi can view and control an active stream", color = TextSecondary, fontSize = 14.sp)
+                }
+                Switch(checked = streamPinRequired, onCheckedChange = null,
+                    colors = SwitchDefaults.colors(checkedThumbColor = VaultDarkBg, checkedTrackColor = VaultAccent,
+                        uncheckedTrackColor = VaultSurface, uncheckedBorderColor = TextSecondary))
+            }
             Row(
                 Modifier.fillMaxWidth().heightIn(min = 64.dp)
                     .clickable(role = Role.Button) { streamPinError = null; showStreamPin = true }

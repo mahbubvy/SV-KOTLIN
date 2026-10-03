@@ -53,7 +53,19 @@ object StreamProtocol {
     const val MAX_FRAME = 1024 * 1024
     const val MAX_CONFIG = 64 * 1024
     private const val MAGIC = 0x53565331
+    private const val OPEN_MAGIC = 0x53564F33
     private fun check(value: Boolean) { if (!value) throw IOException("Invalid stream message") }
+
+    fun writeOpenAuth(output: DataOutputStream, sessionId: String) {
+        check(sessionId.matches(Regex("[0-9a-f]{32}")))
+        output.writeInt(OPEN_MAGIC); output.write(sessionId.toByteArray(Charsets.US_ASCII)); output.flush()
+    }
+
+    fun readOpenAuth(input: DataInputStream, sessionId: String) {
+        check(sessionId.matches(Regex("[0-9a-f]{32}")) && input.readInt() == OPEN_MAGIC)
+        val received = ByteArray(32).also(input::readFully)
+        check(MessageDigest.isEqual(received, sessionId.toByteArray(Charsets.US_ASCII)))
+    }
 
     fun writeAuth(output: DataOutputStream, token: ByteArray) {
         check(token.size == 16)

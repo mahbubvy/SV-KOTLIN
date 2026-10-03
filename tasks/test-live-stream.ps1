@@ -7,6 +7,7 @@ param(
     [switch]$SecurePairing,
     [switch]$CameraChanges,
     [switch]$RemotePhoto,
+    [switch]$NoStreamPin,
     [string]$Adb = "$env:LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe"
 )
 $ErrorActionPreference = 'Stop'
@@ -23,7 +24,7 @@ try {
         & $Adb -s $device shell run-as com.secretvault.app rm -f cache/stream-test-invitation
         if ($LASTEXITCODE -ne 0) { throw 'Debug app is unavailable' }
     }
-    $arguments = @('-s', $Sender, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', $testClass, '-e', 'streamRole', 'send', '-e', 'cameraSource', $CameraSource, '-e', 'streamSeconds', $StreamSeconds, '-e', 'cameraChanges', $CameraChanges.IsPresent.ToString().ToLowerInvariant(), '-e', 'remotePhoto', $RemotePhoto.IsPresent.ToString().ToLowerInvariant(), '-e', 'securePairing', $SecurePairing.IsPresent.ToString().ToLowerInvariant(), $runner)
+    $arguments = @('-s', $Sender, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', $testClass, '-e', 'streamRole', 'send', '-e', 'cameraSource', $CameraSource, '-e', 'streamSeconds', $StreamSeconds, '-e', 'cameraChanges', $CameraChanges.IsPresent.ToString().ToLowerInvariant(), '-e', 'remotePhoto', $RemotePhoto.IsPresent.ToString().ToLowerInvariant(), '-e', 'securePairing', $SecurePairing.IsPresent.ToString().ToLowerInvariant(), '-e', 'noStreamPin', $NoStreamPin.IsPresent.ToString().ToLowerInvariant(), $runner)
     $hostProcess = Start-Process -FilePath $Adb -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $hostLog -RedirectStandardError (Join-Path $logDirectory 'stream-live-host-error.log')
     $pairingText = $null
     for ($attempt = 0; $attempt -lt 160; $attempt++) {
@@ -36,8 +37,8 @@ try {
     $pairingText | & $Adb -s $Viewer shell 'run-as com.secretvault.app sh -c "cat > cache/stream-test-invitation"'
     if ($LASTEXITCODE -ne 0) { throw 'Private invitation transfer failed' }
     $pairingText = $null
-    & $Adb -s $Viewer shell am instrument -w -r -e class $testClass -e streamRole view -e streamSeconds $StreamSeconds -e cameraChanges $CameraChanges.IsPresent.ToString().ToLowerInvariant() -e remotePhoto $RemotePhoto.IsPresent.ToString().ToLowerInvariant() -e securePairing $SecurePairing.IsPresent.ToString().ToLowerInvariant() $runner | Tee-Object -FilePath $viewerLog
-    if (!$hostProcess.WaitForExit(10000)) { throw 'Sender test did not finish' }
+    & $Adb -s $Viewer shell am instrument -w -r -e class $testClass -e streamRole view -e streamSeconds $StreamSeconds -e cameraChanges $CameraChanges.IsPresent.ToString().ToLowerInvariant() -e remotePhoto $RemotePhoto.IsPresent.ToString().ToLowerInvariant() -e noStreamPin $NoStreamPin.IsPresent.ToString().ToLowerInvariant() -e securePairing $SecurePairing.IsPresent.ToString().ToLowerInvariant() $runner | Tee-Object -FilePath $viewerLog
+    if (!$hostProcess.WaitForExit(65000)) { throw 'Sender test did not finish' }
     Get-Content -LiteralPath $hostLog
     foreach ($log in @($hostLog, $viewerLog)) {
         if ((Get-Content -LiteralPath $log -Raw) -notmatch 'OK \(1 test\)') { throw "Live stream check failed: $log" }

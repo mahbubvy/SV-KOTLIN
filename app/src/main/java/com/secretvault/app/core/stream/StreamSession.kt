@@ -98,8 +98,10 @@ class StreamSession(private val context: Context) : Closeable {
         scope.launch {
             try {
                 pinManager?.let { pins ->
-                    val pin = pins.readPin() ?: throw IOException("Set a streaming PIN first")
-                    pin.fill('\u0000')
+                    if (pins.isPinRequired()) {
+                        val pin = pins.readPin() ?: throw IOException("Set a streaming PIN first")
+                        pin.fill('\u0000')
+                    }
                 }
                 val network = wifi()
                 val address = cm.getLinkProperties(network)!!.linkAddresses.first { it.address is Inet4Address }.address
@@ -211,6 +213,10 @@ class StreamSession(private val context: Context) : Closeable {
 
     fun view(endpoint: StreamEndpoint, pin: CharArray, surface: Surface) {
         viewSource(surface, { pin.fill('\u0000') }) { network, onSocket -> StreamTls.connect(endpoint, pin, network.socketFactory, onSocket) }
+    }
+
+    fun view(endpoint: StreamEndpoint, surface: Surface) {
+        viewSource(surface) { network, onSocket -> StreamTls.connect(endpoint, network.socketFactory, onSocket) }
     }
 
     private fun viewSource(surface: Surface, clearSecret: () -> Unit = {},

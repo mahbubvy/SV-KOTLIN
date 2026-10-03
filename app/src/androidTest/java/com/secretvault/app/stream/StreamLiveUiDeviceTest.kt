@@ -152,6 +152,7 @@ class StreamLiveUiDeviceTest {
         val role = InstrumentationRegistry.getArguments().getString("streamRole")
         val native = InstrumentationRegistry.getArguments().getString("cameraSource") == "native"
         val remotePhoto = InstrumentationRegistry.getArguments().getString("remotePhoto") == "true"
+        val noStreamPin = InstrumentationRegistry.getArguments().getString("noStreamPin") == "true"
         assumeTrue(role == "send" || role == "view")
         val context = instrumentation.targetContext
         val app = context.applicationContext as SecretVaultApp
@@ -174,8 +175,11 @@ class StreamLiveUiDeviceTest {
         try {
             if (remotePhoto && role == "send") app.sessionManager.unlock()
             if (role == "send") {
-                val pin = FIXTURE_PIN.toCharArray()
-                try { StreamPinManager(context).setPin(pin) } finally { pin.fill('\u0000') }
+                StreamPinManager(context).setPinRequired(!noStreamPin)
+                if (!noStreamPin) {
+                    val pin = FIXTURE_PIN.toCharArray()
+                    try { StreamPinManager(context).setPin(pin) } finally { pin.fill('\u0000') }
+                }
             }
             ActivityScenario.launch(MainActivity::class.java).use { activity ->
                 activity.onActivity { screen -> screen.setContent { SecretVaultTheme {
@@ -205,19 +209,25 @@ class StreamLiveUiDeviceTest {
                     val cameraName = java.net.URLDecoder.decode(invitationFile.readText().trim().substringAfter("/ready/"), "UTF-8")
                     val searchAt = SystemClock.elapsedRealtime()
                     waitFor(cameraName, 20000); val discoveryMs = SystemClock.elapsedRealtime() - searchAt
-                    tap(cameraName); waitFor("Enter streaming PIN")
-                    var field = requireNotNull(find { it.isEditable })
-                    assertTrue("PIN field is not masked", field.isPassword)
-                    assertTrue(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
-                        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "0000")
-                    }))
-                    tap("Connect"); waitFor("Could not receive camera. Check Wi-Fi and the streaming PIN, then try again.")
-                    tap("Back to cameras"); waitFor(cameraName, 20000); tap(cameraName); waitFor("Enter streaming PIN")
-                    field = requireNotNull(find { it.isEditable })
-                    assertTrue(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
-                        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, FIXTURE_PIN)
-                    }))
-                    val connectAt = SystemClock.elapsedRealtime(); tap("Connect"); waitFor("Live camera", 20000)
+                    tap(cameraName)
+                    if (!noStreamPin) {
+                        waitFor("Enter streaming PIN")
+                        var field = requireNotNull(find { it.isEditable })
+                        assertTrue("PIN field is not masked", field.isPassword)
+                        assertTrue(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+                            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "0000")
+                        }))
+                        tap("Connect"); waitFor("Could not receive camera. Check Wi-Fi and the streaming PIN, then try again.")
+                        tap("Back to cameras"); waitFor(cameraName, 20000); tap(cameraName); waitFor("Enter streaming PIN")
+                        field = requireNotNull(find { it.isEditable })
+                        assertTrue(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+                            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, FIXTURE_PIN)
+                        }))
+                        }
+                    val connectAt = SystemClock.elapsedRealtime()
+                    if (!noStreamPin) tap("Connect")
+                    waitFor("Live camera", 20000)
+                    if (noStreamPin) assertTrue("PIN-off viewer showed a PIN prompt", find { it.text?.toString() == "Enter streaming PIN" } == null)
                     activity.onActivity { screen ->
                         fun texture(view: android.view.View): android.view.TextureView? {
                             if (view is android.view.TextureView) return view
@@ -232,7 +242,7 @@ class StreamLiveUiDeviceTest {
                             kotlin.math.abs(matrix[android.graphics.Matrix.MSCALE_Y]) < 0.001f &&
                             kotlin.math.abs(matrix[android.graphics.Matrix.MSKEW_X]) > 0.01f)
                     }
-                    instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: NSD discovery ${discoveryMs}ms; PIN to first-frame ${SystemClock.elapsedRealtime() - connectAt}ms") })
+                    instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: NSD discovery ${discoveryMs}ms; connection to first-frame ${SystemClock.elapsedRealtime() - connectAt}ms") })
                     if (remotePhoto) {
                         tap("Take photo"); waitFor("Photo saved on camera device", 40000)
                         waitFor("Live camera")
@@ -241,7 +251,7 @@ class StreamLiveUiDeviceTest {
                     repeat(15) { SystemClock.sleep(1000); waitFor("Live camera", 500) }
                     tap("Disconnect"); waitFor("Refresh")
                 }
-                instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "$role: normal camera + discovery + masked PIN + live view + cleanup passed") })
+                instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "$role: normal camera + discovery + selected PIN policy + live view + cleanup passed") })
             }
         } finally {
             invitationFile.delete()
@@ -317,7 +327,7 @@ class StreamLiveUiDeviceTest {
         val saved = prefs.all
         val pins = StreamPinManager(context)
         val cameraModel = CameraViewModel()
-        prefs.edit().remove("pin").commit()
+        prefs.edit().remove("pin").putBoolean("require_pin", true).commit()
         fun fillPin(value: String) {
             val fields = mutableListOf<AccessibilityNodeInfo>()
             fun visit(node: AccessibilityNodeInfo?) {
@@ -352,6 +362,14 @@ class StreamLiveUiDeviceTest {
                     try { assertTrue("Settings did not persist streaming PIN", stored.concatToString() == value) } finally { stored.fill('\u0000') }
                 }
                 openSettings()
+                tap("Require streaming PIN")
+                assertTrue("PIN-off preference did not persist", !StreamPinManager(context).isPinRequired())
+                assertTrue("PIN-off unexpectedly required PIN setup", !pins.isConfigured())
+                openCamera(); tap("Stream"); waitFor("Waiting for a viewer", 20000)
+                assertTrue("PIN-off prompted for setup", find { it.text?.toString() == "Confirm PIN" } == null)
+                tap("Stop stream"); waitFor("Stream")
+                openSettings(); tap("Require streaming PIN")
+                assertTrue("PIN-on preference did not persist", StreamPinManager(context).isPinRequired())
                 saveSettingsPin(FIXTURE_PIN)
                 openCamera()
                 val streamBounds = Rect().also { requireNotNull(find { it.contentDescription?.toString() == "Stream" }).getBoundsInScreen(it) }

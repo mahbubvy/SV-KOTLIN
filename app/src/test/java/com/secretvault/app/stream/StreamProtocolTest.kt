@@ -6,6 +6,17 @@ import org.junit.Test
 import java.io.*
 
 class StreamProtocolTest {
+    @Test fun openHandshakeIsBoundedAndBoundToTheSelectedSession() {
+        val session = "a".repeat(32)
+        val bytes = ByteArrayOutputStream().also { StreamProtocol.writeOpenAuth(DataOutputStream(it), session) }.toByteArray()
+        assertEquals(36, bytes.size)
+        StreamProtocol.readOpenAuth(DataInputStream(ByteArrayInputStream(bytes)), session)
+        assertThrows(IOException::class.java) { StreamProtocol.readOpenAuth(DataInputStream(ByteArrayInputStream(bytes)), "b".repeat(32)) }
+        assertThrows(IOException::class.java) { StreamProtocol.writeOpenAuth(DataOutputStream(ByteArrayOutputStream()), "short") }
+        bytes[0] = 0
+        assertThrows(IOException::class.java) { StreamProtocol.readOpenAuth(DataInputStream(ByteArrayInputStream(bytes)), session) }
+    }
+
     @Test fun photoCommandsAndResultsAreBoundedAndDoNotCorruptVideo() {
         val bytes = ByteArrayOutputStream().also { raw ->
             val output = DataOutputStream(raw)

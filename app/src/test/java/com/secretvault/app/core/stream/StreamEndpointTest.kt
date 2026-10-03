@@ -7,6 +7,10 @@ class StreamEndpointTest {
     @Test fun publicMetadataIsBoundedAndRejectsUntrustedEndpoints() {
         val endpoint = StreamEndpoint("192.168.0.143", 34567, "a".repeat(64), "b".repeat(32), "SV camera")
         assertEquals(endpoint, StreamEndpoint.fromPublicBytes(endpoint.publicBytes()))
+        val open = endpoint.copy(requiresPin = false)
+        assertEquals(open, StreamEndpoint.fromPublicBytes(open.publicBytes()))
+        assertFalse(StreamEndpoint.fromPublicBytes(open.publicBytes()).requiresPin)
+        assertTrue(StreamEndpoint.fromPublicBytes(endpoint.publicBytes()).requiresPin)
         assertTrue(endpoint.publicBytes().size <= 512)
         fun rejected(bytes: ByteArray) { try { StreamEndpoint.fromPublicBytes(bytes); fail("Accepted invalid metadata") } catch (_: Exception) { } }
         rejected(ByteArray(513))

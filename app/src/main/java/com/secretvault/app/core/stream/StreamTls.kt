@@ -38,9 +38,10 @@ object StreamTls {
         private val pending = AtomicReference<SSLSocket?>()
         private val peer = AtomicReference<SSLSocket?>()
         private val deadlines = Executors.newSingleThreadScheduledExecutor()
+        private val requiresPin = pinManager?.isPinRequired() != false
         val endpoint = if (pinManager != null) StreamEndpoint(invitation.host, invitation.port,
             invitation.fingerprint.joinToString("") { "%02x".format(it.toInt() and 255) },
-            UUID.randomUUID().toString().replace("-", ""), "SV ${android.os.Build.MODEL.take(48)}") else null
+            UUID.randomUUID().toString().replace("-", ""), "SV ${android.os.Build.MODEL.take(48)}", requiresPin) else null
 
         fun accept(): SSLSocket {
             val socket = listener.accept() as SSLSocket
@@ -53,6 +54,7 @@ object StreamTls {
                 socket.soTimeout = 5000
                 socket.startHandshake()
                 if (pinManager == null) StreamProtocol.readAuth(DataInputStream(socket.inputStream), invitation.token)
+                else if (!requiresPin) StreamProtocol.readOpenAuth(DataInputStream(socket.inputStream), requireNotNull(endpoint).sessionId)
                 else {
                     pinManager.beginPairingAttempt()
                     val pin = pinManager.readPin() ?: throw IOException("Set a streaming PIN first")
@@ -61,7 +63,7 @@ object StreamTls {
                     finally { pin.fill('\u0000') }
                 }
                 if (closed.get() || !peer.compareAndSet(null, socket)) throw IOException("Session ended")
-                pinManager?.pairingSucceeded()
+                if (requiresPin) pinManager?.pairingSucceeded()
                 socket.outputStream.write(1); socket.outputStream.flush()
                 socket.soTimeout = 3000
                 return socket
@@ -120,11 +122,20 @@ object StreamTls {
 
     fun connect(endpoint: StreamEndpoint, pin: CharArray, socketFactory: SocketFactory = SocketFactory.getDefault(),
         onSocket: (Socket) -> Unit = {}): SSLSocket = try {
+        require(endpoint.requiresPin) { "This camera does not require a PIN" }
         connectTls(endpoint.host, endpoint.port, endpoint.fingerprintBytes(), socketFactory, onSocket) { socket ->
             StreamPairing.authenticate(DataInputStream(socket.inputStream), DataOutputStream(socket.outputStream),
                 pin, endpoint.fingerprintBytes(), endpoint.sessionId, false)
         }
     } finally { pin.fill('\u0000') }
+
+    fun connect(endpoint: StreamEndpoint, socketFactory: SocketFactory = SocketFactory.getDefault(),
+        onSocket: (Socket) -> Unit = {}): SSLSocket {
+        require(!endpoint.requiresPin) { "This camera requires a streaming PIN" }
+        return connectTls(endpoint.host, endpoint.port, endpoint.fingerprintBytes(), socketFactory, onSocket) { socket ->
+            StreamProtocol.writeOpenAuth(DataOutputStream(socket.outputStream), endpoint.sessionId)
+        }
+    }
 
     private fun connectTls(host: String, port: Int, fingerprint: ByteArray, socketFactory: SocketFactory,
                            onSocket: (Socket) -> Unit, authenticate: (SSLSocket) -> Unit): SSLSocket {

@@ -67,15 +67,17 @@ fun StreamViewerScreen(onBack: () -> Unit) {
     LaunchedEffect(selected, surface) {
         val camera = selected ?: return@LaunchedEffect
         val output = surface ?: return@LaunchedEffect
-        val pin = pendingPin ?: return@LaunchedEffect
+        val pin = if (camera.requiresPin) pendingPin ?: return@LaunchedEffect else null
         pendingPin = null
         discovery.stopSearching(); bluetooth.stopSearching(); session.close()
         var handedOff = false
         try {
             session.state.first { !it.busy }
-            session = StreamSession(context.applicationContext).also { it.view(camera, pin, output) }
+            session = StreamSession(context.applicationContext).also {
+                if (camera.requiresPin) it.view(camera, requireNotNull(pin), output) else it.view(camera, output)
+            }
             handedOff = true
-        } finally { if (!handedOff) pin.fill('\u0000') }
+        } finally { if (!handedOff) pin?.fill('\u0000') }
     }
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) {
@@ -97,8 +99,15 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(devices.message, color = TextSecondary, fontSize = 16.sp)
                 cameras.forEach { camera ->
-                    OutlinedButton(onClick = { prompt = camera }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) { Text(camera.name) }
+                    OutlinedButton(onClick = {
+                        if (camera.requiresPin) prompt = camera else { pendingPin = null; selected = camera }
+                    }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(camera.name)
+                            if (!camera.requiresPin) Text("No PIN required", color = TextSecondary, fontSize = 14.sp)
+                        }
+                    }
                 }
                 TextButton(onClick = { discovery.search(); if (bluetoothEnabled) bluetooth.search() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Refresh", color = VaultAccent) }
                 if (bluetoothEnabled) Text(nearby.message, color = TextSecondary)

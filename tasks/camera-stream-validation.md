@@ -445,3 +445,33 @@ user-reported prototype failure was not reproduced under the tested conditions.
   SHA-256: `C06ABCDD8F9B047AC86C29F95505AE2C0982CCA2D01637D56F431020F11AD701`.
   Installed on both phones without clearing app data. Hardware save-failure and
   the full capture-timeout paths have not been deliberately induced.
+
+## Optional streaming PIN — 2026-10-03
+
+- Added persistent Settings → Require streaming PIN, enabled by default. Off
+  skips setup and viewer PIN entry; TLS encryption remains enabled. Protected
+  v2 and open v3 endpoints are distinct, with the sender's selected mode fixed
+  when starting. Existing saved PINs and protected retry limits are retained.
+- All 95 unit tests and app/instrumentation APK builds pass. Open handshake
+  bounds/session checks and public endpoint mode round trips are covered.
+  On both phones, isolated native TLS/storage tests pass: open mode without a
+  saved PIN, protected listener downgrade rejection, correct protected pairing,
+  persisted switch and retained PIN. Settings switch/setup/background checks
+  also pass on both devices.
+- Two-phone no-PIN production-flow checks pass in both directions. CMF → Pixel:
+  discovery 337 ms, connection to first frame 485 ms. Pixel → CMF: discovery
+  329 ms, connection to first frame 499 ms. Both verify absence of the PIN dialog,
+  the actual portrait transform, fifteen seconds of continued live viewing,
+  Disconnect, retained recording defaults and explicit restart/Stop.
+- The first live attempt stopped because Android still reported the Pixel's
+  lock screen. After local unlock, both directions passed. The test harness now
+  allows the sender's timeout/finally cleanup to finish before terminating it;
+  no-PIN live tests no longer remove an existing saved PIN. These test-only
+  cleanup edits compile but a failed-viewer cleanup path was not re-induced.
+- No captures were taken for this increment. Logs: scratch/no-pin-cmf-host.log,
+  scratch/no-pin-pixel-viewer.log, scratch/no-pin-pixel-host.log and
+  scratch/no-pin-cmf-viewer.log. Lint still reports 41 existing errors and 116
+  warnings; it is not passing or suppressed. Bluetooth open-mode discovery was
+  not tested separately from the successful NSD flow.
+- Installed on CMF and Pixel without clearing app data. APK SHA-256:
+  `94D4529785930DD7D6A0B0C1F8314E76C675C152A2A086AA45F0C70D926C8B22`.

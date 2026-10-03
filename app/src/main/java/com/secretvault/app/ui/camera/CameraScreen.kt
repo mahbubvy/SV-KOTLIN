@@ -169,7 +169,7 @@ fun CameraScreen(
     fun startStream() {
         if (renderer != null || streamStopping || !foreground || uiState.isRecording) return
         streamError = null
-        if (!pins.isConfigured()) { startAfterPin = true; showStreamPin = true; return }
+        if (pins.isPinRequired() && !pins.isConfigured()) { startAfterPin = true; showStreamPin = true; return }
         stream = StreamSession(context.applicationContext)
         streamStarted = false
         try {

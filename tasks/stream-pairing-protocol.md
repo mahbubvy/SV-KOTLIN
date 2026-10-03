@@ -1,4 +1,4 @@
-# Local camera PIN pairing, protocol v2
+# Local camera pairing, protected v2 and optional-PIN v3
 
 The existing TLS media connection remains in use. PIN authentication uses the
 Bouncy Castle lightweight J-PAKE API, not a PIN hash or home-made PAKE arithmetic.
@@ -40,9 +40,29 @@ stored six-digit PINs require explicit setup of a new PIN; they are not truncate
   An aborted attempt is charged. Verified pairing resets the budget. Stop/Start
   does not reset it. PIN and proof material are absent from logs/discovery.
 - The random-token prototype remains a separate debug route. A PIN-protected
-  listener never accepts its v1 auth magic, and discovery will advertise only
-  PIN-protected endpoints. Changing the configured PIN must close the current
-  session through the camera UI before saving it.
+  listener never accepts its v1 auth magic or the open v3 handshake. Changing
+  the configured PIN must close the current session through the camera UI
+  before saving it.
+
+## Optional streaming PIN
+
+Settings has a persistent Require streaming PIN switch, enabled by default.
+Disabling it requires no saved PIN and keeps any existing PIN for re-enabling.
+The vault unlock PIN and protected pairing retry budget are unaffected.
+
+Open streams advertise discovery version 3 and NSD auth flag 0; protected streams
+retain version 2 and flag 1. BLE public endpoint records use the same versions.
+The sender snapshots its mode when starting the listener. Open viewers skip the
+PIN dialog and use the existing certificate-pinned TLS connection, followed by
+SVO3 magic and the exact 32-byte ASCII session ID before the camera ACK. This
+binds the connection to the selected session, without authenticating the viewer.
+Anyone on the local Wi-Fi can view and use available remote controls while that
+open stream is active. The Settings caption states this behavior.
+
+An advertised open mode cannot downgrade a protected listener: it rejects the
+distinct open handshake. Updated viewers still support older protected cameras;
+older viewers do not discover open v3 cameras. Media and remote-photo message
+formats remain unchanged.
 
 Trust boundaries: nearby discovery metadata and network messages are hostile;
 only authenticated vault UI may start/configure a camera stream. Assets are the

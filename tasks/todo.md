@@ -5,6 +5,14 @@ implementation; R1 capability and live UI streaming checks passed on both phones
 prototype evidence. Unfinished prototype acceptance is carried into these tasks.
 
 See [plan.md](plan.md) and [spec](../SPEC-camera-stream-test.md).
+Optional streaming PIN (2026-10-03): Settings now has a persistent Require
+streaming PIN switch, on by default. Off allows direct encrypted Wi-Fi viewing
+without initial PIN setup; existing PINs are retained for re-enabling. Protected
+listeners reject the distinct open handshake. All 95 unit tests and both APK
+builds pass. PIN storage/TLS checks and the Settings switch pass on both phones;
+no-PIN live viewing passes in both directions. Lint remains at 41 errors and
+116 warnings. See camera-stream-validation.md for evidence and limitations.
+
 Remote controls, increment 1 (2026-10-03): remote photo capture is implemented.
 The viewer has an accessible shutter and pending/saved/error feedback; captures
 are saved in the camera phone's Camera album through the existing encrypted queue.

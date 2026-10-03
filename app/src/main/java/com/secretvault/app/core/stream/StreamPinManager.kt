@@ -14,6 +14,11 @@ class StreamPinManager(context: Context, private val prefs: SharedPreferences =
     private val keys = KeyStoreManager(masterKeyAlias = "sv_stream_pin_key")
     private val aad = "SV streaming PIN v2".toByteArray(Charsets.US_ASCII)
 
+    fun isPinRequired(): Boolean = prefs.getBoolean("require_pin", true)
+    fun setPinRequired(required: Boolean) {
+        check(prefs.edit().putBoolean("require_pin", required).commit()) { "Could not save streaming PIN preference" }
+    }
+
     fun isConfigured(): Boolean {
         val pin = try { readPin() } catch (_: IOException) { null } ?: return false
         pin.fill('\u0000')

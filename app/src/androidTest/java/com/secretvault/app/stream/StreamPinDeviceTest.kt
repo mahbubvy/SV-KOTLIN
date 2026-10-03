@@ -19,12 +19,19 @@ class StreamPinDeviceTest {
         val manager = StreamPinManager(context, prefs) { now }
         val pin = charArrayOf('4', '7', '2', '9')
         try {
+            assertTrue(manager.isPinRequired())
+            manager.setPinRequired(false)
+            assertFalse(StreamPinManager(context, prefs).isPinRequired())
+            assertFalse(manager.isConfigured())
             assertNull(manager.readPin())
             manager.setPin(pin)
             val first = prefs.getString("pin", null)
             manager.setPin(pin)
             assertNotEquals("PIN encryption reused an IV", first, prefs.getString("pin", null))
             assertArrayEquals(pin, StreamPinManager(context, prefs).readPin())
+            manager.setPinRequired(true)
+            assertTrue(StreamPinManager(context, prefs).isPinRequired())
+            assertArrayEquals(pin, manager.readPin())
             assertFalse(prefs.all.values.any { it == pin.concatToString() })
             repeat(5) { manager.beginPairingAttempt() }
             val restarted = StreamPinManager(context, prefs) { now }
