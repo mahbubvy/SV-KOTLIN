@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
@@ -40,9 +41,9 @@ fun MediaViewerTopBar(
     onBack: () -> Unit,
     onInfoClick: () -> Unit,
     onRotateMedia: () -> Unit,
+    modifier: Modifier = Modifier,
     onFavoriteClick: () -> Unit = {},
-    favoriteEnabled: Boolean = true,
-    modifier: Modifier = Modifier
+    favoriteEnabled: Boolean = true
 ) {
     Row(
         modifier = modifier
@@ -87,7 +88,8 @@ fun MediaViewerTopBar(
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconToggleButton(checked = item.isFavorite, enabled = favoriteEnabled, onCheckedChange = { onFavoriteClick() }) {
+            IconToggleButton(checked = item.isFavorite, enabled = favoriteEnabled, onCheckedChange = { onFavoriteClick() },
+                modifier = Modifier.background(Color.Black.copy(alpha = 0.8f), CircleShape)) {
                 Icon(if (item.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                     if (item.isFavorite) "Remove from favorites" else "Add to favorites",
                     tint = if (item.isFavorite) VaultAccent else TextPrimary)

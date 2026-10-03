@@ -9,7 +9,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -74,11 +73,11 @@ fun StreamingVideoPlayer(
     item: com.secretvault.app.core.model.MediaItem,
     cryptoEngine: VaultCryptoEngine,
     controlsVisible: Boolean,
+    modifier: Modifier = Modifier,
     isActivePage: Boolean = true,
     rotationDegrees: Int = 0,
     onToggleControls: () -> Unit,
-    onZoomChanged: (Boolean) -> Unit = {},
-    modifier: Modifier = Modifier
+    onZoomChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val zoom = rememberMediaZoomState(item.id, rotationDegrees, isActivePage, onZoomChanged)
