@@ -148,8 +148,18 @@ fun StreamViewerScreen(onBack: () -> Unit) {
             }
             Column(Modifier.fillMaxWidth().heightIn(max = (LocalConfiguration.current.screenHeightDp / 2).dp)
                 .verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(selected?.name.orEmpty(), color = TextPrimary)
-                Text(state.message, color = TextSecondary)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(selected?.name.orEmpty(), color = TextPrimary)
+                        Text(state.message, color = TextSecondary)
+                    }
+                    if (state.photoAvailable) IconButton(onClick = { session.takePhoto() },
+                        enabled = canTakePhoto,
+                        modifier = Modifier.size(64.dp).clip(CircleShape).background(if (canTakePhoto) VaultAccent else VaultSurface)) {
+                        Icon(Icons.Default.CameraAlt, contentDescription = "Take photo",
+                            tint = if (canTakePhoto) VaultDarkBg else TextMuted)
+                    }
+                }
                 state.photoMessage?.let { Text(it, color = TextPrimary,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
                 state.cameraMessage?.let { Text(it, color = TextPrimary,
@@ -175,17 +185,9 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                         }
                     }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (state.photoAvailable) IconButton(onClick = { session.takePhoto() },
-                        enabled = canTakePhoto,
-                        modifier = Modifier.size(64.dp).clip(CircleShape).background(if (canTakePhoto) VaultAccent else VaultSurface)) {
-                        Icon(Icons.Default.CameraAlt, contentDescription = "Take photo",
-                            tint = if (canTakePhoto) VaultDarkBg else TextMuted)
-                    }
-                    OutlinedButton(onClick = ::disconnect, modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) {
-                        Text(if (state.busy) "Disconnect" else "Back to cameras")
-                    }
+                OutlinedButton(onClick = ::disconnect, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) {
+                    Text(if (state.busy) "Disconnect" else "Back to cameras")
                 }
             }
         }

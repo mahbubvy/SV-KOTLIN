@@ -88,3 +88,22 @@ keyboard test are limitations; source layout/focus checks are distinguished belo
 
 This is a scoped interface gate, not a claim that repository lint passes.
 Recorded lint remains 41 errors and 116 warnings outside this UI increment.
+
+## Viewer capture placement, 2026-10-03
+
+User direction: move the photo capture button to the right above the lens selector.
+The existing dark/mint identity and ENERGY 1 / RHYTHM 1 / MOTION 1 remain.
+
+- R-03/R-05/R-35, C-4: source review places capture at the right of the status
+  row, before the full-width lens selector. Status text takes remaining width and
+  wraps; the existing capped, scrollable footer handles short windows. The capture
+  target stays 64 dp, with a 16 dp horizontal gap. Device geometry and large-font
+  visual checks for this placement have not been repeated.
+- R-04/R-23/R-26/R-27/R-32, C-1/C-2: reuse the same CameraAlt icon, Take photo
+  accessibility description, Material IconButton, capture callback, readiness guard
+  and disabled colors. No new asset, command or navigation destination.
+- R-25/R-34/R-37, C-3/C-5: existing colors and styling retained. Preview remains
+  the flexible primary area; Disconnect occupies the full width below the selector.
+  No new copy or claims. Remaining gate items above are unchanged by this relocation.
+- Validation: `:app:assembleDebug` passed; reviewed the diff and whitespace.
+  This is source/build evidence, not a fresh device test or a lint pass.
