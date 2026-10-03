@@ -44,6 +44,11 @@ import com.secretvault.app.SecretVaultApp
 import com.secretvault.app.core.camera.VideoMode
 import kotlinx.coroutines.flow.first
 import com.secretvault.app.ui.camera.components.cameraInteractionGestures
+import com.secretvault.app.ui.camera.components.FocusIndicator
+import com.secretvault.app.core.camera.streamFocusPoint
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.layout.onSizeChanged
 
 @Composable
 fun StreamViewerScreen(onBack: () -> Unit) {
@@ -74,6 +79,9 @@ fun StreamViewerScreen(onBack: () -> Unit) {
     var selected by remember { mutableStateOf<StreamEndpoint?>(null) }
     var pendingPin by remember { mutableStateOf<CharArray?>(null) }
     var surface by remember { mutableStateOf<Surface?>(null) }
+    var previewSize by remember { mutableStateOf(IntSize.Zero) }
+    var focusTarget by remember(session, state.cameraState.selectedId) { mutableStateOf<Offset?>(null) }
+    var focusPulse by remember { mutableIntStateOf(0) }
     val snackbar = remember { SnackbarHostState() }
     val confirmations = setOf("Photo saved on camera device", "Camera changed", "Recording started",
         "Video saved on camera device", "Camera setting applied")
@@ -154,10 +162,18 @@ fun StreamViewerScreen(onBack: () -> Unit) {
             Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp)
                 .clip(RoundedCornerShape(16.dp)).background(androidx.compose.ui.graphics.Color.Black)
                 .semantics { if (state.live) contentDescription = "Live camera" }
+                .onSizeChanged { previewSize = it }
                 .cameraInteractionGestures(state.interactionState,
                     state.live && !state.stopping && !state.cameraBusy && !state.photoBusy && !state.settingsBusy && !state.recordingBusy &&
                         !state.recordingState.saving && (!state.interactionBusy || state.interactionKind == 0),
-                    onZoom = { session.queueZoom(it) }, onTap = {})) {
+                    onZoom = { session.queueZoom(it) }, onTap = { tap ->
+                        val config = state.config
+                        if (config != null && state.interactionState.focusAvailable) {
+                            val point = streamFocusPoint(tap.x, tap.y, previewSize.width.toFloat(), previewSize.height.toFloat(),
+                                config.width, config.height, config.rotation, state.interactionState.previewAspect)
+                            if (point != null && session.setInteraction(1, point.first, point.second)) { focusTarget = tap; focusPulse++ }
+                        }
+                    })) {
                 AndroidView(factory = { androidContext ->
                     TextureView(androidContext).apply {
                         surfaceTextureListener = object : TextureView.SurfaceTextureListener {
@@ -175,6 +191,7 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                         }
                     }
                 }, update = { view -> fitPreview(view, state.config, false) }, modifier = Modifier.fillMaxSize())
+                key(focusPulse) { FocusIndicator(focusTarget) }
                 if (state.live) Row(Modifier.align(Alignment.TopEnd).padding(12.dp)
                     .background(VaultDarkBg.copy(alpha = 0.9f), RoundedCornerShape(8.dp)).padding(8.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -355,7 +355,15 @@ fun CameraScreen(
                             }, interactionState = remoteInteractions, applyInteraction = { request ->
                                 if (!app.sessionManager.isUnlocked.value || !foreground || !cameraIsReady || stream !== owner ||
                                     renderer == null || appliedCameraId != request.cameraId || localFlashBusy) false
-                                else request.kind == 0 && kotlinx.coroutines.withTimeoutOrNull(2500) { cameraManager.applyContinuousZoom(request.x) } == true
+                                else when (request.kind) {
+                                    0 -> kotlinx.coroutines.withTimeoutOrNull(2500) { cameraManager.applyContinuousZoom(request.x) } == true
+                                    1 -> {
+                                        val active = if (cmfView.visibility == android.view.View.VISIBLE) cmfView else pv
+                                        viewModel.setFocusPoint(Offset(request.x * active.width, request.y * active.height))
+                                        cameraManager.focusPreviewPoint(request.x, request.y, pv, cmfView)
+                                    }
+                                    else -> false
+                                }
                             })
                     } else if (gl != null) stream.refreshCameraFrame()
                 },

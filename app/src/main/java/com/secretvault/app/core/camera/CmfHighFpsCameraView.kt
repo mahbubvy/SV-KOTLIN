@@ -62,6 +62,9 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
     val currentZoom: Float get() = zoomRatio
     val maximumZoom: Float get() = (cameraManager.getCameraCharacteristics(CAMERA_ID)
         .get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f).coerceIn(1f, 100f)
+    val focusAvailable: Boolean get() = cameraManager.getCameraCharacteristics(CAMERA_ID).let {
+        (it.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) ?: 0) > 0 || (it.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0) > 0
+    }
     private var streamRenderer: com.secretvault.app.core.stream.StreamPreviewRenderer? = null
     private var renderedPreview: com.secretvault.app.core.stream.StreamPreviewRenderer.NativeInput? = null
     private var cameraGeneration = 0
@@ -94,33 +97,37 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
         } ?: onApplied(false)
     }
 
-    fun focusAt(viewX: Float, viewY: Float) {
-        val handler = backgroundHandler ?: return
+    fun focusAt(viewX: Float, viewY: Float, onApplied: (Boolean) -> Unit = {}) {
+        val handler = backgroundHandler ?: run { onApplied(false); return }
+        val generation = cameraGeneration
+        if (!sessionReady || width <= 0 || height <= 0 || !viewX.isFinite() || !viewY.isFinite()) { onApplied(false); return }
         handler.post {
             try {
-                val camera = cameraDevice ?: return@post
-                val session = captureSession ?: return@post
-                val preview = previewSurface ?: return@post
-                val recorder = recorderSurface ?: return@post
+                fun unavailable() { post { onApplied(false) } }
+                val camera = cameraDevice ?: run { unavailable(); return@post }
+                val session = captureSession ?: run { unavailable(); return@post }
+                val preview = previewSurface ?: run { unavailable(); return@post }
+                val recorder = recorderSurface ?: run { unavailable(); return@post }
                 val characteristics = cameraManager.getCameraCharacteristics(CAMERA_ID)
-                val activeArray = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return@post
+                val activeArray = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: run { unavailable(); return@post }
                 val canFocus = (characteristics.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) ?: 0) > 0
                 val canMeter = (characteristics.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0) > 0
-                if (!canFocus && !canMeter) return@post
-                val viewAspect = width.toFloat() / height.coerceAtLeast(1)
-                val bufferAspect = VIDEO_HEIGHT.toFloat() / VIDEO_WIDTH
-                val cropScaleX = if (viewAspect < bufferAspect) bufferAspect / viewAspect else 1f
-                val x = (((viewX - width / 2f) / cropScaleX) + width / 2f) / width
-                val displayX = x.coerceIn(0f, 1f)
-                val displayY = (viewY / height.coerceAtLeast(1)).coerceIn(0f, 1f)
-                val centerX = activeArray.left + (displayY * activeArray.width()).toInt()
-                val centerY = activeArray.top + ((1f - displayX) * activeArray.height()).toInt()
-                val half = (minOf(activeArray.width(), activeArray.height()) * 0.06f).toInt()
+                if (!canFocus && !canMeter || generation != cameraGeneration) { unavailable(); return@post }
+                val crop = zoomCrop(activeArray.left, activeArray.top, activeArray.right, activeArray.bottom, zoomRatio)
+                val videoAspect = VIDEO_WIDTH.toFloat() / VIDEO_HEIGHT
+                val cropWidth = minOf(crop[2] - crop[0], ((crop[3] - crop[1]) * videoAspect).toInt())
+                val cropHeight = minOf(crop[3] - crop[1], ((crop[2] - crop[0]) / videoAspect).toInt())
+                val bounds = Rect((crop[0] + crop[2] - cropWidth) / 2, (crop[1] + crop[3] - cropHeight) / 2,
+                    (crop[0] + crop[2] + cropWidth) / 2, (crop[1] + crop[3] + cropHeight) / 2)
+                val (x, y) = sensorPointInFrame(viewX / width, viewY / height, width.toFloat() / height, videoAspect, 90)
+                val centerX = bounds.left + (x * bounds.width()).toInt()
+                val centerY = bounds.top + (y * bounds.height()).toInt()
+                val half = (minOf(bounds.width(), bounds.height()) * 0.06f).toInt().coerceAtLeast(1)
                 val rect = Rect(
-                    (centerX - half).coerceIn(activeArray.left, activeArray.right - 1),
-                    (centerY - half).coerceIn(activeArray.top, activeArray.bottom - 1),
-                    (centerX + half).coerceIn(activeArray.left + 1, activeArray.right),
-                    (centerY + half).coerceIn(activeArray.top + 1, activeArray.bottom)
+                    (centerX - half).coerceIn(bounds.left, bounds.right - 1),
+                    (centerY - half).coerceIn(bounds.top, bounds.bottom - 1),
+                    (centerX + half).coerceIn(bounds.left + 1, bounds.right),
+                    (centerY + half).coerceIn(bounds.top + 1, bounds.bottom)
                 )
                 val region = MeteringRectangle(rect, MeteringRectangle.METERING_WEIGHT_MAX)
                 val builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
@@ -134,11 +141,18 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
                     }
                     if (canMeter) set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(region))
                 }
-                session.capture(builder.build(), null, handler)
+                session.capture(builder.build(), object : CameraCaptureSession.CaptureCallback() {
+                    override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: android.hardware.camera2.TotalCaptureResult) {
+                        post { onApplied(generation == cameraGeneration) }
+                    }
+                    override fun onCaptureFailed(session: CameraCaptureSession, request: CaptureRequest, failure: android.hardware.camera2.CaptureFailure) {
+                        post { onApplied(false) }
+                    }
+                }, handler)
                 focusReset?.let(handler::removeCallbacks)
                 focusReset = Runnable { if (sessionReady) applyRepeatingRequest() }.also { handler.postDelayed(it, 5_000) }
             } catch (error: Exception) {
-                reportError("Tap focus failed: ${error.message ?: error.javaClass.simpleName}")
+                post { onApplied(false) }
             }
         }
     }

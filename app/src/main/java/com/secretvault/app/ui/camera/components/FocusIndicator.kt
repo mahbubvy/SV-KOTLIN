@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
 import com.secretvault.app.ui.theme.VaultAccent
 
 @Composable
@@ -33,12 +34,13 @@ fun FocusIndicator(
 
     if (alpha.value > 0f) {
         val sizeDp = 70.dp
+        val radius = with(LocalDensity.current) { sizeDp.toPx() / 2f }
         Box(
             modifier = modifier
                 .offset {
                     IntOffset(
-                        (focusPoint.x - 35).toInt(),
-                        (focusPoint.y - 35).toInt()
+                        (focusPoint.x - radius).toInt(),
+                        (focusPoint.y - radius).toInt()
                     )
                 }
                 .size(sizeDp)

@@ -207,7 +207,7 @@ class CameraManager(
                                 cmfHighFpsActive = true
                                 cmfHighFpsView.start(audio, videoOrientation.recorderOrientationHint, onReady = {
                                     _streamRecordingState.value = _streamRecordingState.value.copy(available = true, audio = audio)
-                                    _interaction.value = StreamInteractionState(maxZoom = cmfHighFpsView.maximumZoom, zoom = cmfHighFpsView.currentZoom)
+                                    _interaction.value = StreamInteractionState(maxZoom = cmfHighFpsView.maximumZoom, zoom = cmfHighFpsView.currentZoom, focusAvailable = cmfHighFpsView.focusAvailable)
                                     cameraReady = true; setFlashMode(flashMode); onCameraReady()
                                 }, onError = onCameraError, streamRenderer = streamRenderer)
                                 return@addListener
@@ -253,7 +253,7 @@ class CameraManager(
                             includeAudio = recordAudio && !streaming,
                             orientationHint = videoOrientation.recorderOrientationHint,
                             onReady = {
-                                _interaction.value = StreamInteractionState(maxZoom = cmfHighFpsView.maximumZoom, zoom = cmfHighFpsView.currentZoom)
+                                _interaction.value = StreamInteractionState(maxZoom = cmfHighFpsView.maximumZoom, zoom = cmfHighFpsView.currentZoom, focusAvailable = cmfHighFpsView.focusAvailable)
                                 cameraReady = true
                                 onCameraReady()
                             },
@@ -290,6 +290,8 @@ class CameraManager(
                 }
                 cameraReady = true
                 val boundCamera = camera
+                boundCamera?.let { _interaction.value = _interaction.value.copy(focusAvailable = it.cameraInfo.isFocusMeteringSupported(
+                    FocusMeteringAction.Builder(SurfaceOrientedMeteringPointFactory(1f, 1f).createPoint(0.5f, 0.5f)).build())) }
                 boundCamera?.cameraInfo?.zoomState?.observe(lifecycleOwner) { zoom ->
                     if (camera === boundCamera && session == cameraSession) _interaction.value = _interaction.value.copy(
                         minZoom = zoom.minZoomRatio, maxZoom = zoom.maxZoomRatio.coerceAtMost(100f), zoom = zoom.zoomRatio)
@@ -457,19 +459,32 @@ class CameraManager(
         x: Float,
         y: Float,
         previewView: PreviewView,
-        cmfHighFpsView: CmfHighFpsCameraView
+        cmfHighFpsView: CmfHighFpsCameraView,
+        onApplied: (Boolean) -> Unit = {}
     ) {
+        val activeView = if (cmfHighFpsActive) cmfHighFpsView else previewView
+        if (!cameraReady || !x.isFinite() || !y.isFinite() || activeView.width <= 0 || activeView.height <= 0) { onApplied(false); return }
         if (cmfHighFpsActive) {
-            cmfHighFpsView.focusAt(x, y)
+            cmfHighFpsView.focusAt(x, y, onApplied)
             return
         }
-        val factory: MeteringPointFactory = SurfaceOrientedMeteringPointFactory(
-            previewView.width.toFloat(),
-            previewView.height.toFloat()
-        )
+        val bound = camera ?: run { onApplied(false); return }
+        val generation = cameraSession
+        val factory = previewView.meteringPointFactory
         val point = factory.createPoint(x, y)
         val action = FocusMeteringAction.Builder(point).build()
-        camera?.cameraControl?.startFocusAndMetering(action)
+        if (!bound.cameraInfo.isFocusMeteringSupported(action)) { onApplied(false); return }
+        val operation = bound.cameraControl.startFocusAndMetering(action)
+        operation.addListener({ onApplied(camera === bound && generation == cameraSession &&
+            runCatching { operation.get(); true }.getOrDefault(false)) }, ContextCompat.getMainExecutor(context))
+    }
+
+    suspend fun focusPreviewPoint(x: Float, y: Float, previewView: PreviewView, cmf: CmfHighFpsCameraView): Boolean {
+        if (x !in 0f..1f || y !in 0f..1f || !_interaction.value.focusAvailable) return false
+        val active = if (cmfHighFpsActive) cmf else previewView
+        val result = CompletableDeferred<Boolean>()
+        focusOnPoint(x * active.width, y * active.height, previewView, cmf) { result.complete(it) }
+        return result.await()
     }
 
     fun capturePhoto(
