@@ -30,7 +30,18 @@ android {
                 "proguard-rules.pro"
             )
         }
+        create("performance") {
+            initWith(getByName("release"))
+            isDebuggable = false
+            isMinifyEnabled = true
+            proguardFiles("performance-rules.pro")
+            testProguardFiles("performance-test-rules.pro")
+            signingConfig = signingConfigs.getByName("debug")
+            versionNameSuffix = "-performance"
+            matchingFallbacks += "release"
+        }
     }
+    testBuildType = if (providers.gradleProperty("svPerformanceTest").isPresent) "performance" else "debug"
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
