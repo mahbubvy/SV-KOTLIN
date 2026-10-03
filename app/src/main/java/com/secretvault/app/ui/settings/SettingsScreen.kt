@@ -2,6 +2,8 @@ package com.secretvault.app.ui.settings
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -51,6 +53,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import com.secretvault.app.core.security.PinManager
+import com.secretvault.app.SecretVaultApp
+import com.secretvault.app.core.stream.StreamBleDiscovery
+import com.secretvault.app.core.stream.StreamPinManager
+import com.secretvault.app.ui.stream.StreamPinDialog
 import com.secretvault.app.ui.auth.BiometricAuthHelper
 import com.secretvault.app.ui.theme.TextPrimary
 import com.secretvault.app.ui.theme.TextSecondary
@@ -63,8 +69,24 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun SettingsScreen(pinManager: PinManager, onBack: () -> Unit, onCameraStreamTest: (() -> Unit)? = null) {
+fun SettingsScreen(pinManager: PinManager, onBack: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val streamPins = remember { StreamPinManager(context.applicationContext) }
+    val streamPrefs = remember { context.getSharedPreferences("sv_stream_config", android.content.Context.MODE_PRIVATE) }
+    var showStreamPin by remember { mutableStateOf(false) }
+    var savingStreamPin by remember { mutableStateOf(false) }
+    var streamPinError by remember { mutableStateOf<String?>(null) }
+    var bluetoothEnabled by remember {
+        mutableStateOf(streamPrefs.getBoolean("bluetooth_discovery", true) && StreamBleDiscovery.allowed(context, true))
+    }
+    val app = context.applicationContext as SecretVaultApp
+    val bluetoothPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        app.sessionManager.setExternalPickerInProgress(false)
+        bluetoothEnabled = StreamBleDiscovery.allowed(context, true)
+        streamPrefs.edit().putBoolean("bluetooth_discovery", bluetoothEnabled).apply()
+        if (!bluetoothEnabled) Toast.makeText(context, "Wi-Fi discovery still works without Bluetooth permission", Toast.LENGTH_SHORT).show()
+    }
     val biometricAvailable = remember(context) { BiometricAuthHelper.isBiometricAvailable(context) }
     var fingerprintEnabled by remember { mutableStateOf(pinManager.isBiometricEnabled()) }
     var showChangePin by remember { mutableStateOf(false) }
@@ -84,19 +106,39 @@ fun SettingsScreen(pinManager: PinManager, onBack: () -> Unit, onCameraStreamTes
             Text("Settings", color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
         Column(Modifier.verticalScroll(rememberScrollState())) {
-            if (onCameraStreamTest != null) {
-                Row(
-                    Modifier.fillMaxWidth().heightIn(min = 64.dp)
-                        .clickable(role = Role.Button, onClick = onCameraStreamTest)
-                        .padding(horizontal = 24.dp, vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Camera stream test", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                        Text("Send a live view to another SV phone", color = TextSecondary, fontSize = 14.sp)
-                    }
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = TextSecondary)
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                    .clickable(role = Role.Button) { streamPinError = null; showStreamPin = true }
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Set streaming PIN", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Text("Save a four-digit PIN for camera streaming", color = TextSecondary, fontSize = 14.sp)
                 }
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = TextSecondary)
+            }
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                    .toggleable(value = bluetoothEnabled, role = Role.Switch, onValueChange = { enabled ->
+                        if (!enabled || StreamBleDiscovery.allowed(context, true)) {
+                            bluetoothEnabled = enabled
+                            streamPrefs.edit().putBoolean("bluetooth_discovery", enabled).apply()
+                        } else {
+                            app.sessionManager.setExternalPickerInProgress(true)
+                            bluetoothPermission.launch(StreamBleDiscovery.permissions(true))
+                        }
+                    }).padding(horizontal = 24.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Bluetooth discovery", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    Text("Help nearby devices find this camera. Video uses Wi-Fi.", color = TextSecondary, fontSize = 14.sp)
+                }
+                Switch(checked = bluetoothEnabled, onCheckedChange = null,
+                    colors = SwitchDefaults.colors(checkedThumbColor = VaultDarkBg, checkedTrackColor = VaultAccent,
+                        uncheckedTrackColor = VaultSurface, uncheckedBorderColor = TextSecondary))
             }
             Row(
                 Modifier.fillMaxWidth().heightIn(min = 64.dp)
@@ -148,6 +190,22 @@ fun SettingsScreen(pinManager: PinManager, onBack: () -> Unit, onCameraStreamTes
             }
         }
     }
+
+    if (showStreamPin) StreamPinDialog(setup = true, saving = savingStreamPin, error = streamPinError,
+        onDismiss = { showStreamPin = false }, onConfirm = { pin ->
+            savingStreamPin = true
+            scope.launch {
+                try {
+                    withContext(Dispatchers.IO) { try { streamPins.setPin(pin) } finally { pin.fill('\u0000') } }
+                    showStreamPin = false
+                    Toast.makeText(context, "Streaming PIN saved", Toast.LENGTH_SHORT).show()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    streamPinError = "Could not save streaming PIN. Try again."
+                } finally { pin.fill('\u0000'); savingStreamPin = false }
+            }
+        })
 
     if (showChangePin) {
         ChangePinDialog(

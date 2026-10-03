@@ -30,7 +30,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -39,7 +38,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -90,6 +88,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import java.util.concurrent.atomic.AtomicBoolean
 
 @Composable
 fun CameraScreen(
@@ -135,11 +136,9 @@ fun CameraScreen(
     val discovery = remember { StreamDiscovery(context.applicationContext) }
     val bluetooth = remember { StreamBleDiscovery(context.applicationContext) }
     val bluetoothState by bluetooth.state.collectAsState()
-    var bluetoothEnabled by remember { mutableStateOf(StreamBleDiscovery.allowed(context, true)) }
-    val bluetoothPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        app.sessionManager.setExternalPickerInProgress(false)
-        bluetoothEnabled = grants.values.all { it }
-        if (!bluetoothEnabled) Toast.makeText(context, "Wi-Fi discovery still works without Bluetooth permission", Toast.LENGTH_SHORT).show()
+    val bluetoothEnabled = remember {
+        context.getSharedPreferences("sv_stream_config", android.content.Context.MODE_PRIVATE)
+            .getBoolean("bluetooth_discovery", true) && StreamBleDiscovery.allowed(context, true)
     }
     val discoveryState by discovery.state.collectAsState()
     var stream by remember { mutableStateOf(StreamSession(context.applicationContext)) }
@@ -231,11 +230,17 @@ fun CameraScreen(
     var previewViewInstance by remember { mutableStateOf<PreviewView?>(null) }
     var cmfHighFpsViewInstance by remember { mutableStateOf<CmfHighFpsCameraView?>(null) }
     val shutterFlashAlpha = remember { Animatable(0f) }
+    fun flashShutter() {
+        scope.launch {
+            shutterFlashAlpha.snapTo(0.8f)
+            shutterFlashAlpha.animateTo(0f, tween(150))
+        }
+    }
     var cameraGeneration by remember { mutableStateOf(0) }
     var cameraIsReady by remember { mutableStateOf(false) }
     val selectedRearOption = uiState.rearLensOptions.firstOrNull { it.id == uiState.selectedRearLensId }
     val selectedPhysicalId = selectedRearOption?.physicalCameraId
-    val useCmfHighFps = uiState.cameraMode == CameraMode.VIDEO &&
+    val useCmfHighFps = renderer == null && uiState.cameraMode == CameraMode.VIDEO &&
         uiState.lensFacing == LensFacing.BACK &&
         uiState.videoMode == VideoMode.FHD_60 &&
         uiState.selectedRearLensId == null &&
@@ -267,8 +272,24 @@ fun CameraScreen(
                     if (gl != null && !streamStarted) {
                         val activePreview = if (useCmfHighFps) cmfView else pv
                         streamStarted = true
+                        val owner = stream
                         stream.sendShared(gl, if (activePreview.width < activePreview.height) 90 else 0,
-                            activePreview.width.toFloat() / activePreview.height.coerceAtLeast(1), pins)
+                            activePreview.width.toFloat() / activePreview.height.coerceAtLeast(1), pins, capturePhoto = {
+                                if (!app.sessionManager.isUnlocked.value || !foreground || !cameraIsReady || stream !== owner || renderer == null || uiState.isRecording) false
+                                else suspendCancellableCoroutine { result ->
+                                    val completed = AtomicBoolean(false)
+                                    fun finish(saved: Boolean) {
+                                        if (completed.compareAndSet(false, true) && result.isActive) result.resume(saved)
+                                    }
+                                    cameraManager.capturePhoto(autoFaceBlur = uiState.autoFaceBlur, onShutter = ::flashShutter,
+                                        onError = { finish(false) }, onSaved = {
+                                            ContextCompat.getMainExecutor(context).execute {
+                                                Toast.makeText(context, "Remote photo saved", Toast.LENGTH_SHORT).show()
+                                            }
+                                            finish(true)
+                                        })
+                                }
+                            })
                     } else if (gl != null) stream.refreshCameraFrame()
                 },
                 onCameraError = { error ->
@@ -444,33 +465,17 @@ fun CameraScreen(
                     .statusBarsPadding()
             )
 
-            Column(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 64.dp, start = 16.dp, end = 16.dp)
-                .clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.85f)).padding(horizontal = 8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { if (renderer == null) startStream() else stopStream() },
-                        enabled = !uiState.isRecording && !streamStopping && !streamState.stopping && (renderer != null || cameraIsReady)) {
-                        Text(if (renderer != null) "Stop stream" else "Stream", color = VaultAccent)
-                    }
-                    if (renderer == null) TextButton(onClick = {
-                        startAfterPin = false; streamError = null; showStreamPin = true
-                    }) { Text("Streaming PIN", color = TextPrimary) }
-                    IconButton(enabled = renderer == null && !uiState.isRecording, onClick = {
-                        if (bluetoothEnabled) bluetoothEnabled = false
-                        else if (StreamBleDiscovery.allowed(context, true)) bluetoothEnabled = true
-                        else {
-                            app.sessionManager.setExternalPickerInProgress(true)
-                            bluetoothPermission.launch(StreamBleDiscovery.permissions(true))
-                        }
-                    }) { Icon(Icons.Default.Bluetooth,
-                        contentDescription = if (bluetoothEnabled) "Disable Bluetooth discovery" else "Enable Bluetooth discovery",
-                        tint = if (bluetoothEnabled) VaultAccent else TextPrimary) }
-                }
+            if (renderer != null || streamError != null) Column(
+                Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 64.dp, start = 16.dp, end = 16.dp)
+                    .clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.85f)).padding(8.dp)
+            ) {
                 val status = when {
                     renderer != null -> if (!streamStarted) "Preparing camera…" else if (streamState.live) "Viewer connected · Stop stream to record" else streamState.message
                     streamError != null -> streamError
                     else -> null
                 }
                 status?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) }
+                streamState.photoMessage?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
                 if (renderer != null && !streamState.live && uiState.cameraMode == CameraMode.VIDEO) {
                     Text("Stop stream to record", color = TextSecondary, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                 }
@@ -491,18 +496,15 @@ fun CameraScreen(
                 cameraMode = uiState.cameraMode,
                 isRecording = uiState.isRecording,
                 isStreaming = renderer != null,
+                onStreamToggle = { if (renderer == null) startStream() else stopStream() },
+                streamEnabled = !uiState.isRecording && !streamStopping && !streamState.stopping && (renderer != null || cameraIsReady),
                 recordingDurationSeconds = uiState.recordingDurationSeconds,
                 onModeSelect = { viewModel.setCameraMode(it) },
                 onShutterClick = {
                     if (uiState.cameraMode == CameraMode.PHOTO) {
                         cameraManager.capturePhoto(
                             autoFaceBlur = uiState.autoFaceBlur,
-                            onShutter = {
-                                scope.launch {
-                                    shutterFlashAlpha.snapTo(0.8f)
-                                    shutterFlashAlpha.animateTo(0f, tween(150))
-                                }
-                            },
+                            onShutter = ::flashShutter,
                             onSaved = {
                                 ContextCompat.getMainExecutor(context).execute {
                                     Toast.makeText(context, "Encrypted photo saved", Toast.LENGTH_SHORT).show()

@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -28,8 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.Switch
@@ -46,7 +43,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -304,14 +300,13 @@ fun GalleryScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 if (uiState.activeAlbumId == null) {
-                    ExtendedFloatingActionButton(onClick = onViewStreamClick,
-                        modifier = Modifier.semantics { contentDescription = "View stream" },
-                        containerColor = VaultSurface, contentColor = VaultAccent,
-                        icon = { Icon(Icons.Default.Videocam, contentDescription = null) },
-                        text = { Text("View stream") })
+                    FloatingActionButton(onClick = onViewStreamClick,
+                        containerColor = VaultSurface, contentColor = VaultAccent) {
+                        Icon(Icons.Default.Cast, contentDescription = "View stream")
+                    }
                 }
                 // Import from Device Button
-                SmallFloatingActionButton(
+                FloatingActionButton(
                     onClick = {
                         app.sessionManager.setExternalPickerInProgress(true)
                         photoPickerLauncher.launch(

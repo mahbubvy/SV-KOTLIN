@@ -16,9 +16,14 @@ import com.secretvault.app.ui.stream.CameraStreamScreen
 import com.secretvault.app.ui.stream.StreamViewerScreen
 import com.secretvault.app.ui.camera.CameraScreen
 import com.secretvault.app.ui.camera.CameraViewModel
+import com.secretvault.app.ui.settings.SettingsScreen
 import com.secretvault.app.core.camera.CameraMode
 import com.secretvault.app.core.camera.VideoMode
 import com.secretvault.app.core.stream.StreamPinManager
+import com.secretvault.app.core.database.entity.AlbumEntity
+import com.secretvault.app.core.model.MediaType
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import com.secretvault.app.SecretVaultApp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
@@ -146,8 +151,13 @@ class StreamLiveUiDeviceTest {
     @Test fun discoversAndPairsTheNormalCameraThroughUi() {
         val role = InstrumentationRegistry.getArguments().getString("streamRole")
         val native = InstrumentationRegistry.getArguments().getString("cameraSource") == "native"
+        val remotePhoto = InstrumentationRegistry.getArguments().getString("remotePhoto") == "true"
         assumeTrue(role == "send" || role == "view")
         val context = instrumentation.targetContext
+        val app = context.applicationContext as SecretVaultApp
+        val wasUnlocked = app.sessionManager.isUnlocked.value
+        val photoTestStartedAt = System.currentTimeMillis()
+        val mediaBefore = if (remotePhoto && role == "send") runBlocking { app.mediaRepository.getTotalCount() } else 0
         assertTrue("Unlock the phone locally before the live camera check", !context.getSystemService(KeyguardManager::class.java).isDeviceLocked)
         instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
@@ -162,6 +172,7 @@ class StreamLiveUiDeviceTest {
         val invitationFile = File(context.cacheDir, "stream-test-invitation")
         val cameraModel = CameraViewModel(if (native) VideoMode.FHD_60 else VideoMode.UHD_60).apply { setCameraMode(CameraMode.VIDEO) }
         try {
+            if (remotePhoto && role == "send") app.sessionManager.unlock()
             if (role == "send") {
                 val pin = FIXTURE_PIN.toCharArray()
                 try { StreamPinManager(context).setPin(pin) } finally { pin.fill('\u0000') }
@@ -175,8 +186,18 @@ class StreamLiveUiDeviceTest {
                     invitationFile.delete(); tap("Stream"); waitFor("Waiting for a viewer", 20000)
                     invitationFile.writeText("svstream2://ready/" + java.net.URLEncoder.encode("SV ${Build.MODEL.take(48)}", "UTF-8"))
                     waitFor("Viewer connected · Stop stream to record", 60000)
+                    if (remotePhoto) {
+                        waitFor("Remote photo saved in this vault", 40000)
+                        assertTrue("Remote shutter did not save exactly one media item", runBlocking { app.mediaRepository.getTotalCount() } == mediaBefore + 1)
+                        val captured = runBlocking { app.mediaRepository.getMedia(AlbumEntity.ALBUM_CAMERA_ID).first() }
+                            .filter { it.createdAt >= photoTestStartedAt && it.mediaType == MediaType.PHOTO }
+                        assertTrue("Remote photo was not saved in Camera album", captured.size == 1)
+                        assertTrue("Saved photo or thumbnail missing", captured.all {
+                            File(it.encryptedPath).length() > 0 && File(requireNotNull(it.thumbnailPath)).length() > 0 && it.width > 0 && it.height > 0
+                        })
+                    }
                     repeat(10) { SystemClock.sleep(1000); waitFor("Viewer connected · Stop stream to record", 500) }
-                    waitFor("Viewer disconnected or connection stalled. Start a new session.", 20000)
+                    waitFor("Viewer disconnected or connection stalled. Start a new session.", if (remotePhoto) 60000 else 20000)
                     waitFor("Stream"); assertTrue("Camera mode changed", cameraModel.uiState.value.cameraMode == CameraMode.VIDEO)
                     assertTrue("Recording default changed", cameraModel.uiState.value.videoMode == if (native) VideoMode.FHD_60 else VideoMode.UHD_60)
                     tap("Stream"); waitFor("Waiting for a viewer", 20000); tap("Stop stream"); waitFor("Stream")
@@ -212,6 +233,11 @@ class StreamLiveUiDeviceTest {
                             kotlin.math.abs(matrix[android.graphics.Matrix.MSKEW_X]) > 0.01f)
                     }
                     instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: NSD discovery ${discoveryMs}ms; PIN to first-frame ${SystemClock.elapsedRealtime() - connectAt}ms") })
+                    if (remotePhoto) {
+                        tap("Take photo"); waitFor("Photo saved on camera device", 40000)
+                        waitFor("Live camera")
+                        instrumentation.sendStatus(0, Bundle().apply { putString("streamResult", "view: remote photo saved acknowledgment; live preview remained active") })
+                    }
                     repeat(15) { SystemClock.sleep(1000); waitFor("Live camera", 500) }
                     tap("Disconnect"); waitFor("Refresh")
                 }
@@ -219,6 +245,7 @@ class StreamLiveUiDeviceTest {
             }
         } finally {
             invitationFile.delete()
+            if (remotePhoto && role == "send" && !wasUnlocked) app.sessionManager.lock()
             if (role == "send") {
                 val edit = prefs.edit().clear()
                 saved.forEach { (key, value) -> when (value) {
@@ -283,7 +310,7 @@ class StreamLiveUiDeviceTest {
         }
     }
 
-    @Test fun cameraPinSetupAndBackgroundDoNotResumeBroadcasting() {
+    @Test fun settingsPinPersistsAndBackgroundDoesNotResumeBroadcasting() {
         instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply { flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS }
         val context = instrumentation.targetContext
         val prefs = context.getSharedPreferences("sv_stream_config", android.content.Context.MODE_PRIVATE)
@@ -306,20 +333,40 @@ class StreamLiveUiDeviceTest {
         }
         try {
             ActivityScenario.launch(MainActivity::class.java).use { activity ->
-                activity.onActivity { it.setContent { SecretVaultTheme {
-                    CameraScreen(context.applicationContext as SecretVaultApp, cameraModel, {}, {})
-                } } }
-                tap("Stream"); waitFor("Set streaming PIN"); fillPin(FIXTURE_PIN); tap("Save PIN")
-                waitFor("Waiting for a viewer", 20000); assertTrue(pins.isConfigured())
+                val app = context.applicationContext as SecretVaultApp
+                fun openSettings() {
+                    activity.onActivity { it.setContent { SecretVaultTheme { SettingsScreen(app.pinManager, {}) } } }
+                    waitFor("Set streaming PIN")
+                    assertTrue("Test stream still appears in Settings", find { it.text?.toString() == "Camera stream test" } == null)
+                }
+                fun openCamera() {
+                    activity.onActivity { it.setContent { SecretVaultTheme { CameraScreen(app, cameraModel, {}, {}) } } }
+                    waitFor("Stream")
+                }
+                fun saveSettingsPin(value: String) {
+                    tap("Set streaming PIN"); waitFor("Confirm PIN"); fillPin(value); tap("Save PIN")
+                    val deadline = SystemClock.elapsedRealtime() + 10000
+                    while (find { it.text?.toString() == "Confirm PIN" } != null && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(100)
+                    assertTrue("Streaming PIN dialog did not close", find { it.text?.toString() == "Confirm PIN" } == null)
+                    val stored = requireNotNull(pins.readPin())
+                    try { assertTrue("Settings did not persist streaming PIN", stored.concatToString() == value) } finally { stored.fill('\u0000') }
+                }
+                openSettings()
+                saveSettingsPin(FIXTURE_PIN)
+                openCamera()
+                val streamBounds = Rect().also { requireNotNull(find { it.contentDescription?.toString() == "Stream" }).getBoundsInScreen(it) }
+                val flashBounds = Rect().also { requireNotNull(find { it.contentDescription?.toString()?.startsWith("Flash ") == true }).getBoundsInScreen(it) }
+                assertTrue("Stream icon is not above Flash", streamBounds.bottom <= flashBounds.top && streamBounds.centerX() == flashBounds.centerX())
+                tap("Stream"); waitFor("Waiting for a viewer", 20000)
                 tap("Stop stream"); waitFor("Stream")
-                tap("Streaming PIN"); waitFor("Set streaming PIN"); fillPin("7426"); tap("Save PIN"); waitFor("Stream")
-                val changed = requireNotNull(pins.readPin())
-                try { assertTrue(changed.concatToString() == "7426") } finally { changed.fill('\u0000') }
-                assertTrue("Changing PIN broadcast automatically", find { it.text?.toString() == "Stop stream" } == null)
+                openSettings()
+                saveSettingsPin("7426")
+                openCamera()
+                assertTrue("Changing PIN broadcast automatically", find { it.contentDescription?.toString() == "Stop stream" } == null)
                 tap("Stream"); waitFor("Waiting for a viewer", 20000)
                 activity.moveToState(Lifecycle.State.CREATED); SystemClock.sleep(1000)
                 activity.moveToState(Lifecycle.State.RESUMED); waitFor("Stream", 20000)
-                assertTrue("Returning resumed broadcast automatically", find { it.text?.toString() == "Stop stream" } == null)
+                assertTrue("Returning resumed broadcast automatically", find { it.contentDescription?.toString() == "Stop stream" } == null)
                 tap("Stream"); waitFor("Waiting for a viewer", 20000); tap("Stop stream"); waitFor("Stream")
             }
         } finally {

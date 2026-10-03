@@ -12,6 +12,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -127,9 +133,19 @@ fun StreamViewerScreen(onBack: () -> Unit) {
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(selected?.name.orEmpty(), color = TextPrimary)
                 Text(state.message, color = TextSecondary)
-                Button(onClick = ::disconnect, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = VaultAccent, contentColor = VaultDarkBg)) {
-                    Text(if (state.busy) "Disconnect" else "Back to cameras")
+                state.photoMessage?.let { Text(it, color = TextPrimary,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (state.photoAvailable) IconButton(onClick = { session.takePhoto() },
+                        enabled = state.live && !state.photoBusy && !state.stopping,
+                        modifier = Modifier.size(64.dp).clip(CircleShape).background(if (state.live && !state.photoBusy) VaultAccent else VaultSurface)) {
+                        Icon(Icons.Default.CameraAlt, contentDescription = "Take photo",
+                            tint = if (state.live && !state.photoBusy) VaultDarkBg else TextMuted)
+                    }
+                    OutlinedButton(onClick = ::disconnect, modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) {
+                        Text(if (state.busy) "Disconnect" else "Back to cameras")
+                    }
                 }
             }
         }

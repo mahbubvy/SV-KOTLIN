@@ -134,10 +134,7 @@ fun VaultNavGraph(
             }
             com.secretvault.app.ui.settings.SettingsScreen(
                 pinManager = app.pinManager,
-                onBack = { navController.popBackStack() },
-                onCameraStreamTest = if (com.secretvault.app.BuildConfig.DEBUG) {
-                    { navController.navigate(Screen.CameraStream.route) }
-                } else null
+                onBack = { navController.popBackStack() }
             )
         }
 

@@ -120,7 +120,7 @@ class CameraManager(
             val physicalCameraId = selectedRearLensId
                 ?.takeIf { lensFacing == LensFacing.BACK && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P }
             val previewBuilder = Preview.Builder()
-            if (streamRenderer != null && cameraMode == CameraMode.PHOTO) {
+            if (streamRenderer != null) {
                 previewBuilder.setTargetFrameRate(Range(30, 30))
             }
             if (cameraMode == CameraMode.VIDEO) {
@@ -148,7 +148,7 @@ class CameraManager(
                     return cameraProvider?.bindToLifecycle(lifecycleOwner, selectedCameraSelector, group.build())
                 }
 
-                if (cameraMode == CameraMode.PHOTO) {
+                if (cameraMode == CameraMode.PHOTO || streaming) {
                     val imageCaptureBuilder = ImageCapture.Builder()
                         .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                         .setFlashMode(flashMode.imageCaptureMode)
@@ -361,32 +361,36 @@ class CameraManager(
     fun capturePhoto(
         autoFaceBlur: Boolean,
         onShutter: () -> Unit,
+        onError: () -> Unit = {},
         onSaved: () -> Unit
     ) {
-        if (!cameraReady) return
-        val capture = imageCapture ?: return
+        if (!cameraReady) { onError(); return }
+        val capture = imageCapture ?: run { onError(); return }
         onShutter()
 
-        capture.takePicture(
+        try { capture.takePicture(
             cameraExecutor,
             object : ImageCapture.OnImageCapturedCallback() {
                 override fun onCaptureSuccess(image: ImageProxy) {
-                    val rotationDegrees = image.imageInfo.rotationDegrees
-                    val buffer: ByteBuffer = image.planes[0].buffer
-                    val bytes = ByteArray(buffer.remaining())
-                    buffer.get(bytes)
-                    image.close()
-
-                    saveQueue.enqueuePhoto(bytes, rotationDegrees, autoFaceBlur) {
-                        onSaved()
+                    try {
+                        val rotationDegrees = image.imageInfo.rotationDegrees
+                        val buffer: ByteBuffer = image.planes[0].buffer
+                        val bytes = ByteArray(buffer.remaining())
+                        buffer.get(bytes)
+                        saveQueue.enqueuePhoto(bytes, rotationDegrees, autoFaceBlur, onError = onError) { onSaved() }
+                    } catch (_: Exception) {
+                        onError()
+                    } finally {
+                        image.close()
                     }
                 }
 
                 override fun onError(exception: ImageCaptureException) {
                     exception.printStackTrace()
+                    onError()
                 }
             }
-        )
+        ) } catch (_: Exception) { onError() }
     }
 
     @SuppressLint("MissingPermission")

@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.MicOff
 import com.secretvault.app.core.camera.FlashMode
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -71,6 +73,8 @@ fun CameraBottomBar(
     onShutterClick: () -> Unit,
     onFlipCamera: () -> Unit,
     onGalleryClick: () -> Unit,
+    onStreamToggle: () -> Unit,
+    streamEnabled: Boolean,
     isStreaming: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -136,7 +140,7 @@ fun CameraBottomBar(
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.Bottom
         ) {
             if (cameraMode == CameraMode.VIDEO) {
                 IconButton(
@@ -187,20 +191,28 @@ fun CameraBottomBar(
                 }
                 }
             }
-            IconButton(
-                onClick = onFlashToggle,
-                modifier = Modifier.size(48.dp).clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.8f))
-            ) {
-                Icon(
-                    imageVector = when (flashMode) {
-                        FlashMode.AUTO -> Icons.Default.FlashAuto
-                        FlashMode.ON -> Icons.Default.FlashOn
-                        FlashMode.OFF -> Icons.Default.FlashOff
-                    },
-                    contentDescription = "Flash ${flashMode.name.lowercase()}",
-                    tint = if (flashMode != FlashMode.OFF) VaultAccent else TextPrimary
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                IconButton(onClick = onStreamToggle, enabled = streamEnabled,
+                    modifier = Modifier.size(48.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.8f))) {
+                    Icon(if (isStreaming) Icons.Default.StopCircle else Icons.Default.Cast,
+                        contentDescription = if (isStreaming) "Stop stream" else "Stream",
+                        tint = if (!streamEnabled) TextMuted else if (isStreaming) VaultAccent else TextPrimary)
+                }
+                IconButton(
+                    onClick = onFlashToggle,
+                    modifier = Modifier.size(48.dp).clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.8f))
+                ) {
+                    Icon(
+                        imageVector = when (flashMode) {
+                            FlashMode.AUTO -> Icons.Default.FlashAuto
+                            FlashMode.ON -> Icons.Default.FlashOn
+                            FlashMode.OFF -> Icons.Default.FlashOff
+                        },
+                        contentDescription = "Flash ${flashMode.name.lowercase()}",
+                        tint = if (flashMode != FlashMode.OFF) VaultAccent else TextPrimary
+                    )
+                }
             }
         }
 

@@ -6,22 +6,27 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.SystemClock
+import android.util.Log
 import android.view.Surface
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.channels.Channel
 import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.IOException
+import java.io.EOFException
 import java.net.Inet4Address
 import java.net.Socket
 import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 data class StreamState(val message: String = "Choose Send or View", val busy: Boolean = false, val stopping: Boolean = false,
     val live: Boolean = false, val invitation: String? = null, val endpoint: StreamEndpoint? = null, val config: StreamConfig? = null,
-    val encodedFps: Int = 0, val receivedFps: Int = 0, val renderedFps: Int = 0, val startupMs: Long? = null) {
+    val encodedFps: Int = 0, val receivedFps: Int = 0, val renderedFps: Int = 0, val startupMs: Long? = null,
+    val photoAvailable: Boolean = false, val photoBusy: Boolean = false, val photoMessage: String? = null) {
     override fun toString(): String = "StreamState($message, credentials hidden)"
 }
 
@@ -34,6 +39,11 @@ class StreamSession(private val context: Context) : Closeable {
     private val rendered = AtomicLong()
     private val writeStarted = AtomicLong()
     private val frames = StreamFrameQueue()
+    private val photoResults = Channel<StreamPhotoResult>(1)
+    private val photoPending = AtomicBoolean(false)
+    private val photoIds = AtomicLong()
+    @Volatile private var photoOutput: DataOutputStream? = null
+    private var photoTimeout: Job? = null
     private val configReady = CompletableDeferred<StreamConfig>()
     private val cm = context.getSystemService(ConnectivityManager::class.java)
     private var callback: ConnectivityManager.NetworkCallback? = null
@@ -69,8 +79,9 @@ class StreamSession(private val context: Context) : Closeable {
         }
     }
 
-    fun sendShared(renderer: StreamPreviewRenderer, rotation: Int, viewAspect: Float, pinManager: StreamPinManager? = null) {
-        sendSource(pinManager) { onConfig, onFrame, onError ->
+    fun sendShared(renderer: StreamPreviewRenderer, rotation: Int, viewAspect: Float, pinManager: StreamPinManager? = null,
+                   capturePhoto: (suspend () -> Boolean)? = null) {
+        sendSource(pinManager, capturePhoto) { onConfig, onFrame, onError ->
             val video = StreamEncoder(rotation, onConfig, onFrame, onError)
             try { renderer.attachEncoder(video.inputSurface, rotation, viewAspect) }
             catch (error: Exception) { video.close(); throw error }
@@ -81,7 +92,7 @@ class StreamSession(private val context: Context) : Closeable {
 
     fun refreshCameraFrame() { requestKeyFrame?.invoke() }
 
-    private fun sendSource(pinManager: StreamPinManager? = null,
+    private fun sendSource(pinManager: StreamPinManager? = null, capturePhoto: (suspend () -> Boolean)? = null,
                            startSource: ((StreamConfig) -> Unit, (StreamFrame) -> Unit, (Throwable) -> Unit) -> Closeable) {
         mutableState.value = StreamState("Starting camera…", busy = true)
         scope.launch {
@@ -126,18 +137,52 @@ class StreamSession(private val context: Context) : Closeable {
                         if (closed.get()) { peer.close(); return@launch }
                         socket = peer
                     }
+                    if (capturePhoto != null) scope.launch {
+                        try {
+                            val input = DataInputStream(peer.inputStream)
+                            var lastRequest = 0L
+                            while (isActive && !closed.get()) {
+                                val type = try { input.readUnsignedByte() } catch (_: SocketTimeoutException) { continue }
+                                val id = StreamProtocol.readPhotoRequest(input, type)
+                                if (!state.value.live || id != lastRequest + 1 || !photoPending.compareAndSet(false, true))
+                                    throw IOException("Invalid photo request")
+                                lastRequest = id
+                                mutableState.update { if (closed.get()) it else it.copy(photoBusy = true, photoMessage = "Remote photo requested…") }
+                                scope.launch {
+                                    val saved = try { withTimeout(25_000) { withContext(Dispatchers.Main.immediate) { capturePhoto() } } }
+                                    catch (_: TimeoutCancellationException) { false }
+                                    catch (error: CancellationException) { throw error }
+                                    catch (_: Exception) { false }
+                                    if (!closed.get() && photoResults.trySend(StreamPhotoResult(id, saved)).isFailure)
+                                        end("Photo response could not be delivered. Check the camera vault.")
+                                }
+                            }
+                        } catch (_: EOFException) { if (!closed.get()) end("Viewer disconnected or connection stalled. Start a new session.") }
+                        catch (error: Exception) {
+                            if (!closed.get()) { Log.w("VaultStream", "Command channel failed: ${error.javaClass.simpleName}"); end("Camera command rejected. Start a new session.") }
+                        }
+                    }
                     scope.launch {
                         try {
                             val config = withTimeout(5000) { configReady.await() }
                             val output = DataOutputStream(peer.outputStream)
                             writeStarted.set(SystemClock.elapsedRealtime())
                             StreamProtocol.writeConfig(output, config)
+                            if (capturePhoto != null) StreamProtocol.writePhotoAvailable(output, true)
                             writeStarted.set(0)
                             frames.clear(); publishing.set(true); requestKeyFrame?.invoke()
                             var sequence = 0L
                             var waitingForKey = true
                             var lastFrame = SystemClock.elapsedRealtime()
                             while (isActive && !closed.get()) {
+                                photoResults.tryReceive().getOrNull()?.let { result ->
+                                    mutableState.update { if (closed.get()) it else it.copy(photoBusy = false,
+                                        photoMessage = if (result.saved) "Remote photo saved in this vault" else "Photo could not be confirmed. Check this vault.") }
+                                    photoPending.set(false)
+                                    writeStarted.set(SystemClock.elapsedRealtime())
+                                    StreamProtocol.writePhotoResult(output, result)
+                                    writeStarted.set(0)
+                                }
                                 val frame = frames.poll()
                                 if (frame == null) {
                                     if (SystemClock.elapsedRealtime() - lastFrame > 3000) throw IOException("Camera stopped supplying frames")
@@ -150,7 +195,9 @@ class StreamSession(private val context: Context) : Closeable {
                                 writeStarted.set(0)
                                 if (sequence == 1L) mutableState.update { if (closed.get()) it else it.copy(message = "Sending live camera", live = true) }
                             }
-                        } catch (_: Exception) { if (!closed.get()) end("Viewer disconnected or connection stalled. Start a new session.") }
+                        } catch (error: Exception) {
+                            if (!closed.get()) { Log.w("VaultStream", "Video writer failed: ${error.javaClass.simpleName}"); end("Viewer disconnected or connection stalled. Start a new session.") }
+                        }
                     }
                 }
             } catch (_: CancellationException) { }
@@ -170,6 +217,7 @@ class StreamSession(private val context: Context) : Closeable {
                            connect: (Network, (Socket) -> Unit) -> Socket) {
         mutableState.value = StreamState("Connecting…", busy = true)
         scope.launch {
+            var phase = "pairing"
             try {
                 val network = wifi()
                 val peer = connect(network) { candidate ->
@@ -179,8 +227,10 @@ class StreamSession(private val context: Context) : Closeable {
                     }
                 }
                 val pairedAt = SystemClock.elapsedRealtime()
+                phase = "configuration"
                 val input = DataInputStream(peer.inputStream)
                 val config = StreamProtocol.readConfig(input)
+                photoOutput = DataOutputStream(peer.outputStream)
                 mutableState.update { if (closed.get()) it else it.copy(config = config, message = "Waiting for first frame…") }
                 val video = StreamDecoder(config, surface, onRendered = {
                     if (!closed.get() && rendered.incrementAndGet() == 1L) mutableState.update {
@@ -192,14 +242,41 @@ class StreamSession(private val context: Context) : Closeable {
                     decoder = video
                 }
                 stats()
+                phase = "media"
                 while (isActive && !closed.get()) {
-                    val frame = StreamProtocol.readFrame(input)
-                    received.incrementAndGet(); video.offer(frame)
+                    when (val message = StreamProtocol.readMessage(input)) {
+                        is StreamFrame -> { received.incrementAndGet(); video.offer(message) }
+                        is StreamPhotoAvailable -> mutableState.update { if (closed.get()) it else it.copy(photoAvailable = message.available) }
+                        is StreamPhotoResult -> {
+                            if (message.requestId != photoIds.get() || !photoPending.compareAndSet(true, false)) throw IOException("Unexpected photo result")
+                            photoTimeout?.cancel()
+                            mutableState.update { if (closed.get()) it else it.copy(photoBusy = false,
+                                photoMessage = if (message.saved) "Photo saved on camera device" else "Photo could not be confirmed. Check the camera vault.") }
+                        }
+                    }
                 }
             } catch (_: CancellationException) { }
-            catch (_: Exception) { if (!closed.get()) end("Could not receive camera. Check Wi-Fi and the streaming PIN, then try again.") }
+            catch (error: Exception) {
+                if (!closed.get()) { Log.w("VaultStream", "Viewer $phase failed: ${error.javaClass.simpleName}"); end("Could not receive camera. Check Wi-Fi and the streaming PIN, then try again.") }
+            }
             finally { clearSecret() }
         }.invokeOnCompletion { clearSecret() }
+    }
+
+    fun takePhoto(): Boolean {
+        val output = photoOutput ?: return false
+        if (closed.get() || !state.value.live || !state.value.photoAvailable || !photoPending.compareAndSet(false, true)) return false
+        val id = photoIds.incrementAndGet()
+        mutableState.update { if (closed.get()) it else it.copy(photoBusy = true, photoMessage = "Taking photo…") }
+        photoTimeout = scope.launch {
+            delay(30_000)
+            if (photoPending.get()) end("Photo result timed out. Check the camera vault before reconnecting.")
+        }
+        scope.launch {
+            try { StreamProtocol.writePhotoRequest(output, id) }
+            catch (_: Exception) { if (!closed.get()) end("Photo request connection failed. Check the camera vault.") }
+        }
+        return true
     }
 
     private fun stats() {
@@ -222,7 +299,10 @@ class StreamSession(private val context: Context) : Closeable {
     private fun end(message: String) {
         if (!closed.compareAndSet(false, true)) return
         publishing.set(false)
-        mutableState.update { it.copy(message = "Stopping…", stopping = true, busy = true, live = false, invitation = null, endpoint = null) }
+        photoOutput = null; photoResults.cancel()
+        mutableState.update { it.copy(message = "Stopping…", stopping = true, busy = true, live = false, invitation = null, endpoint = null,
+            photoAvailable = false, photoBusy = false,
+            photoMessage = if (it.photoBusy) "Photo result unknown. Check the camera vault." else it.photoMessage) }
         scope.cancel()
         CoroutineScope(Dispatchers.IO).launch {
             synchronized(this@StreamSession) {

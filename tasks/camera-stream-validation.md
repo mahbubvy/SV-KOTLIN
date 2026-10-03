@@ -413,3 +413,35 @@ user-reported prototype failure was not reproduced under the tested conditions.
   restart/Stop. CMF → Pixel PIN-to-first-frame 846 ms; Pixel → CMF 1050 ms.
   Installed APK hashes on both phones match the final artifact. No private frames
   were inspected, no test PIN was left configured and no broadcast remains active.
+
+## Remote photo capture — 2026-10-03
+
+- Remote photo capture is the first remote-control increment. The paired viewer
+  has a shutter, pending/saved/error feedback and a single outstanding request.
+  Saved confirmation follows encrypted photo/thumbnail creation and database
+  insertion in the camera phone's Camera album. Request IDs, bounded payloads,
+  foreground/unlocked guards and timeouts protect the new command path.
+- Camera streaming binds CameraX Preview and ImageCapture in both camera modes.
+  Stopping restores the selected recording mode, including CMF 1080p60 and Pixel
+  4K60 defaults. Simultaneous video recording and remote lens selection remain
+  separate increments.
+- All 94 unit tests and debug app/instrumentation APK builds pass. Lint retains
+  the recorded 41 errors / 116 warnings and is not reported as passing.
+- The first CMF-to-Pixel attempt failed before Live, before a shutter was sent.
+  Its precise cause was not established. Safe phase/error-class diagnostics were
+  added without credentials, filenames or captured image data. Retry passed;
+  this evidence does not establish that every connection attempt succeeds.
+- CMF-to-Pixel: NSD discovery 534 ms, PIN to first frame 900 ms. Pixel-to-CMF:
+  NSD discovery 395 ms, PIN to first frame 1038 ms. Both paired UI tests pass:
+  wrong-PIN rejection, actual viewer portrait transform, remote shutter,
+  exactly one newly saved photo with stored photo/thumbnail files, viewer saved
+  confirmation, fifteen seconds of continued live view, Disconnect, retained
+  recording defaults and explicit restart/Stop. Each phone retains one test
+  photo in its Camera album; original media is preserved.
+- Logs: `scratch/remote-photo-cmf-host.log`,
+  `scratch/remote-photo-pixel-viewer.log`, `scratch/remote-photo-pixel-host.log`,
+  `scratch/remote-photo-cmf-viewer.log`.
+- Final APK: `app/build/outputs/apk/debug/SecretVault-v1.1.1-camera-stream-test-debug.apk`.
+  SHA-256: `C06ABCDD8F9B047AC86C29F95505AE2C0982CCA2D01637D56F431020F11AD701`.
+  Installed on both phones without clearing app data. Hardware save-failure and
+  the full capture-timeout paths have not been deliberately induced.

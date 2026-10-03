@@ -5,6 +5,33 @@ implementation; R1 capability and live UI streaming checks passed on both phones
 prototype evidence. Unfinished prototype acceptance is carried into these tasks.
 
 See [plan.md](plan.md) and [spec](../SPEC-camera-stream-test.md).
+Remote controls, increment 1 (2026-10-03): remote photo capture is implemented.
+The viewer has an accessible shutter and pending/saved/error feedback; captures
+are saved in the camera phone's Camera album through the existing encrypted queue.
+Commands use the authenticated stream, one pending request, sequential IDs, bounded
+payloads and timeouts. Locked/background camera screens refuse capture.
+Debug app and instrumentation APKs build; all 94 unit tests pass. Lint remains
+at 41 recorded errors and 116 warnings. Both phones received the APK update without
+clearing vault data. Paired capture/persistence and continued-preview verification
+passed in both directions: one photo in each camera phone's Camera album, saved
+confirmation on the viewer, fifteen seconds of continued preview, Disconnect and
+explicit restart/Stop, with recording defaults retained. An initial CMF-to-Pixel
+attempt failed before Live; retry passed, with no confirmed cause for that initial
+connection failure. Remote lens switching and video recording remain
+separate future increments.
+Latest APK build: Home action sizes now use the same regular FAB for Import and
+Camera, with an icon-only Cast action above Import for View stream. The accessibility
+label is retained.
+Settings now offers persistent four-digit streaming PIN setup and Bluetooth
+discovery preferences; the test-stream entry is removed. Camera streaming uses
+one accessible start/stop icon above Flash, with connection/error status shown
+only when needed. The device UI check now covers Settings PIN persistence and
+icon placement. On 2026-10-02, debug app and instrumentation APK builds passed,
+with 93 unit tests passing (zero failures/errors/skips). The app update was installed
+with `adb install -r` on `192.168.0.173:44225` (model 23073RPBFG) and opened successfully.
+CMF and Pixel connection attempts were refused; UI/device verification of the new
+controls is pending. APK: `app/build/outputs/apk/debug/SecretVault-v1.1.1-camera-stream-test-debug.apk`;
+SHA-256: `114B877729573D53F2D1E2E69AE8FA827B16DCC0642FDBCE7F74C7B81CEB7ED9`.
 All streaming roles are device-neutral. CMF and Pixel below identify test
 hardware or an existing native camera adapter, not sender/viewer restrictions.
 Verify both directions; discover actual peers rather than storing their IPs.

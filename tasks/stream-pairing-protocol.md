@@ -50,6 +50,29 @@ live camera feed and saved streaming PIN. Tampering/impersonation/replay must fa
 before media, and malformed/slow peers must consume bounded memory/time/attempts.
 No microphone, vault-file read, cloud endpoint or automatic broadcast is added.
 
+## Remote photo capture
+
+After authentication, the camera may announce photo support with message type 3
+and one byte (0 or 1). The viewer sends type 5 followed by a positive 64-bit request
+ID, starting at 1 and increasing by one. A single request may be pending. Invalid,
+repeated or overlapping commands end the session. Command payload reads have a
+three-second timeout; waiting for the next command tolerates idle read timeouts.
+
+The camera dispatches the request on its main thread while the vault is unlocked
+and the camera screen is active. CameraX ImageCapture supplies the photo to the
+existing processing/encryption queue. Type 4 returns the request ID and a 0/1
+result only after the encrypted photo, thumbnail and database record are saved,
+or capture/save cannot be confirmed. Results share the video writer so messages
+cannot interleave inside a frame. No filenames, media contents or vault paths are
+sent to the viewer. Capture confirmation is bounded to 25 seconds; the viewer
+ends the session after 30 seconds without a result and asks the user to check the
+camera vault. Commands are never automatically retried.
+
+Photo streaming uses CameraX Preview and ImageCapture, including when the camera
+screen is set to Video. Stopping the stream restores ordinary camera mode and its
+recording defaults. Both devices need the updated build to use remote capture;
+updated viewers can still receive video from older cameras without photo controls.
+
 Checkpoint evidence is recorded in camera-stream-validation.md. Matching PIN,
 wrong PIN, changed certificate/session, replay/reflection, malformed group input
 and v1 downgrade checks pass. On-phone PIN/TLS pairing took 529 ms on CMF and

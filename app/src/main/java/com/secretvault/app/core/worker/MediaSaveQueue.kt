@@ -101,6 +101,7 @@ class MediaSaveQueue(
         jpegBytes: ByteArray,
         rotationDegrees: Int = 0,
         autoFaceBlur: Boolean = true,
+        onError: () -> Unit = {},
         onComplete: ((MediaItem) -> Unit)? = null
     ) {
         scope.launch {
@@ -109,6 +110,7 @@ class MediaSaveQueue(
                 onComplete?.invoke(mediaItem)
             } catch (e: Exception) {
                 e.printStackTrace()
+                onError()
             }
         }
     }
