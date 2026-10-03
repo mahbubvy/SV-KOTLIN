@@ -14,6 +14,9 @@ class StreamEndpointTest {
             val video = camera.copy(recordingControls = true)
             assertEquals(video, StreamEndpoint.fromPublicBytes(video.publicBytes()))
             assertEquals(if (video.requiresPin) 6 else 7, video.version)
+            val settings = video.copy(settingsControls = true)
+            assertEquals(settings, StreamEndpoint.fromPublicBytes(settings.publicBytes()))
+            assertEquals(if (settings.requiresPin) 8 else 9, settings.version)
         }
         assertFalse(StreamEndpoint.fromPublicBytes(open.publicBytes()).requiresPin)
         assertTrue(StreamEndpoint.fromPublicBytes(endpoint.publicBytes()).requiresPin)

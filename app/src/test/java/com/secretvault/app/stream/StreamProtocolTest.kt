@@ -6,6 +6,28 @@ import org.junit.Test
 import java.io.*
 
 class StreamProtocolTest {
+    @Test fun qualityAndFlashMessagesAreBoundedAndPreserveFrames() {
+        val state = StreamSettingsState(listOf(3, 2, 1, 0), 3, true, 2, true)
+        val raw = ByteArrayOutputStream()
+        val output = DataOutputStream(raw)
+        StreamProtocol.writeSettingsState(output, state)
+        StreamProtocol.writeFrame(output, StreamFrame(0, 1, 1, byteArrayOf(7)))
+        StreamProtocol.writeSettingsResult(output, StreamSettingsResult(1, true))
+        val input = DataInputStream(ByteArrayInputStream(raw.toByteArray()))
+        assertEquals(state, StreamProtocol.readMessage(input))
+        assertArrayEquals(byteArrayOf(7), StreamProtocol.readFrame(input).bytes)
+        assertEquals(StreamSettingsResult(1, true), StreamProtocol.readMessage(input))
+        for ((kind, value) in listOf(0 to 3, 1 to 2)) {
+            val command = ByteArrayOutputStream().also { StreamProtocol.writeSettingsRequest(DataOutputStream(it), 1, kind, value) }
+            val request = DataInputStream(ByteArrayInputStream(command.toByteArray()))
+            assertEquals(StreamSettingsRequest(1, kind, value), StreamProtocol.readSettingsRequest(request, request.readUnsignedByte()))
+        }
+        for ((kind, value) in listOf(2 to 0, 0 to 4, 1 to 3, 1 to -1))
+            assertThrows(IOException::class.java) { StreamProtocol.writeSettingsRequest(output, 1, kind, value) }
+        for (invalid in listOf(state.copy(modes = listOf(0, 0)), state.copy(modes = listOf(4)), state.copy(mode = 4), state.copy(flashMode = 3)))
+            assertThrows(IOException::class.java) { StreamProtocol.writeSettingsState(output, invalid) }
+        assertThrows(IOException::class.java) { StreamProtocol.readMessage(DataInputStream(ByteArrayInputStream(byteArrayOf(12, 5)))) }
+    }
     @Test fun recordingCommandsPreserveFramesAndRejectInvalidStates() {
         val state = StreamRecordingState(true, true, false, false, 4)
         val bytes = ByteArrayOutputStream().also { raw ->

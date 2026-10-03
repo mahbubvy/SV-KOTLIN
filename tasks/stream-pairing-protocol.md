@@ -154,3 +154,34 @@ the camera setting and permission. Disconnect/background/navigation stop active
 recording. SOURCE_INACTIVE with recorded frames retains its valid output for
 encryption, following the Android Finalize contract:
 https://developer.android.com/reference/androidx/camera/video/VideoRecordEvent.Finalize
+
+## Remote quality and flash
+
+Settings-capable endpoints advertise protected v8 or open v9 through NSD/BLE.
+Older viewers ignore these endpoints; updated viewers retain v2–v7 support.
+Authentication, TLS pinning and encrypted media storage are unchanged.
+
+Type 12 reports at most four unique video-mode bytes, the applied mode (255 means
+not ready), strict flash-available and photo-available flags, and flash mode.
+Video values 0/1/2/3 are 1080p30/1080p60/4K30/4K60; flash values 0/1/2 are
+Auto/On/Off. Selected quality must occur in the advertised list. Bounds and flags
+are checked before use. Type 13 contains a positive sequential 64-bit request ID,
+one-byte kind (0 quality, 1 flash) and a bounded value. Type 14 acknowledges that
+ID with a strict applied flag. All commands share the existing pending slot,
+sequence and single frame writer. Host/viewer limits are 10/15 seconds; no retry.
+
+Quality is idle-only and must be advertised by the active camera. Confirmation
+follows rebind/readiness and applied zoom; fallback reports its actual mode and
+does not acknowledge the failed request as applied. Flash requires a flash unit
+and may change while recording, but not while saving or another command is
+pending. On keeps the torch on for preview/video, Auto leaves torch off and uses
+automatic still flash, and Off disables both. CameraX completion or native
+capture-result readback precedes confirmation. Camera ownership requires the
+foreground, unlocked vault. Local changes synchronize to the viewer.
+
+The transport stays 720p30 while recording uses the selected camera's available
+saved-video mode. The default ranks resolution first, FPS second. 30 FPS retains
+ImageCapture; 60 FPS uses preview/video outputs and exposes photo unavailable.
+CMF's existing native two-output 1080p60 path uses the same encrypted save queue
+and acknowledgments. Disconnect/background stop and finalize before preview
+release. Ordinary video preferences remain separate from streaming quality.

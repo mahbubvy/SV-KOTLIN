@@ -44,6 +44,10 @@ data class StreamRecordingState(val available: Boolean = false, val recording: B
     val saving: Boolean = false, val audio: Boolean = false, val seconds: Int = 0) : StreamMessage
 data class StreamRecordingRequest(val requestId: Long, val start: Boolean)
 data class StreamRecordingResult(val requestId: Long, val start: Boolean, val success: Boolean) : StreamMessage
+data class StreamSettingsState(val modes: List<Int> = emptyList(), val mode: Int? = null,
+    val flashAvailable: Boolean = false, val flashMode: Int = 0, val photoAvailable: Boolean = false) : StreamMessage
+data class StreamSettingsRequest(val requestId: Long, val kind: Int, val value: Int)
+data class StreamSettingsResult(val requestId: Long, val applied: Boolean) : StreamMessage
 
 class StreamFrameQueue {
     private val frames = ArrayDeque<StreamFrame>()
@@ -140,6 +144,16 @@ object StreamProtocol {
             val requestId = input.readLong(); check(requestId > 0)
             StreamRecordingResult(requestId, readFlag(input), readFlag(input))
         }
+        12 -> {
+            val count = input.readUnsignedByte(); check(count <= 4)
+            val mode = input.readUnsignedByte().takeUnless { it == 255 }
+            StreamSettingsState(List(count) { input.readUnsignedByte() }, mode, readFlag(input), input.readUnsignedByte(), readFlag(input))
+                .also(::validateSettingsState)
+        }
+        14 -> {
+            val id = input.readLong(); check(id > 0)
+            StreamSettingsResult(id, readFlag(input))
+        }
         else -> throw IOException("Invalid stream message")
     }
 
@@ -214,6 +228,37 @@ object StreamProtocol {
 
     private fun validateRecordingState(state: StreamRecordingState) {
         check(state.seconds >= 0 && !(state.recording && state.saving) && (!state.recording || state.available))
+    }
+
+    fun writeSettingsState(output: DataOutputStream, state: StreamSettingsState) {
+        validateSettingsState(state)
+        output.writeByte(12); output.writeByte(state.modes.size); output.writeByte(state.mode ?: 255)
+        state.modes.forEach(output::writeByte)
+        output.writeByte(if (state.flashAvailable) 1 else 0); output.writeByte(state.flashMode)
+        output.writeByte(if (state.photoAvailable) 1 else 0); output.flush()
+    }
+
+    fun writeSettingsRequest(output: DataOutputStream, id: Long, kind: Int, value: Int) {
+        check(id > 0 && validSetting(kind, value))
+        output.writeByte(13); output.writeLong(id); output.writeByte(kind); output.writeByte(value); output.flush()
+    }
+
+    fun readSettingsRequest(input: DataInputStream, type: Int): StreamSettingsRequest {
+        check(type == 13)
+        val id = input.readLong(); val kind = input.readUnsignedByte(); val value = input.readUnsignedByte()
+        check(id > 0 && validSetting(kind, value))
+        return StreamSettingsRequest(id, kind, value)
+    }
+
+    fun writeSettingsResult(output: DataOutputStream, result: StreamSettingsResult) {
+        check(result.requestId > 0)
+        output.writeByte(14); output.writeLong(result.requestId); output.writeByte(if (result.applied) 1 else 0); output.flush()
+    }
+
+    private fun validSetting(kind: Int, value: Int) = kind == 0 && value in 0..3 || kind == 1 && value in 0..2
+    private fun validateSettingsState(state: StreamSettingsState) {
+        check(state.modes.size <= 4 && state.modes.distinct().size == state.modes.size && state.modes.all { it in 0..3 } &&
+            (state.mode == null || state.mode in state.modes) && state.flashMode in 0..2)
     }
 
     private fun validateCameraState(state: StreamCameraState) {
