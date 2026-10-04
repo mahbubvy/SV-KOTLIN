@@ -79,8 +79,7 @@ private fun writeEncryptedThumbnail(cryptoEngine: VaultCryptoEngine, bitmap: Bit
         stream.toByteArray()
     }
     bitmap.recycle()
-    val encThumb = cryptoEngine.encryptBytes(thumbBytes)
-    SecureMemory.wipe(thumbBytes)
+    val encThumb = try { cryptoEngine.encryptBytes(thumbBytes) } finally { SecureMemory.wipe(thumbBytes) }
     thumbFile.parentFile?.mkdirs()
     FileOutputStream(thumbFile).use { it.write(encThumb) }
 }

@@ -173,7 +173,7 @@ class TransferReceiver(
     private suspend fun receiveItem(input: DataInputStream, output: DataOutputStream, header: TransferProtocol.ItemHeader,
                                     onCommitted: () -> Unit, onProgress: (Long) -> Unit) {
         val video = header.type == MediaType.VIDEO
-        val id = (if (video) "video_" else "photo_") + UUID.randomUUID().toString().take(8)
+        val id = (if (video) "video_" else "photo_") + UUID.randomUUID().toString()
         val encFile = File(context.filesDir, "vault_media/$id.enc").apply { parentFile?.mkdirs() }
         val thumbFile = File(context.filesDir, "vault_thumbs/$id$GALLERY_THUMBNAIL_SUFFIX")
         var inserted = false
