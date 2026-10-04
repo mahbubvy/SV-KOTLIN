@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import com.secretvault.app.core.crypto.VaultCryptoEngine
 import com.secretvault.app.core.database.entity.AlbumEntity
 import com.secretvault.app.core.image.GALLERY_THUMBNAIL_SUFFIX
+import com.secretvault.app.core.image.secureWipeFile
 import com.secretvault.app.core.image.writeEncryptedPreview
 import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.model.MediaType
@@ -56,6 +57,7 @@ class TransferReceiver(
     @Volatile private var decision: CompletableDeferred<Boolean>? = null
     @Volatile private var stopped = false
     private var job: Job? = null
+    private val scratchDir = File(context.filesDir, "vault_staging/transfer")
 
     /** Advertises on Wi-Fi and receives from the first sender that pairs. Ends after one transfer. */
     @Synchronized fun start() {
@@ -66,6 +68,8 @@ class TransferReceiver(
             var listener: StreamTls.Host? = null
             try {
                 pins.readPin()?.fill('\u0000') ?: throw IOException("Set a streaming PIN first")
+                // A killed process can leave a decrypted video from thumbnailing behind.
+                scratchDir.listFiles()?.forEach(::secureWipeFile)
                 listener = StreamTls.listen(shareWifi(context).second, pins, purpose = PairingPurpose.SHARE)
                 host = listener
                 if (stopped) return@launch
@@ -179,7 +183,7 @@ class TransferReceiver(
                 TransferProtocol.writeFlag(output, false)
                 throw IOException("A file arrived damaged. Transfer stopped.")
             }
-            val preview = writeEncryptedPreview(cryptoEngine, encFile, video, thumbFile, File(context.filesDir, "vault_staging/transfer"))
+            val preview = writeEncryptedPreview(cryptoEngine, encFile, video, thumbFile, scratchDir)
             mediaRepository.insertMedia(MediaItem(
                 id = id,
                 filename = header.name,

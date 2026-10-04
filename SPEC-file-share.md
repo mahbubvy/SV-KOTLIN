@@ -151,16 +151,16 @@ Each phase should build (`./gradlew assembleDebug`) and keep the unit tests pass
 - [x] Wrong PIN gives the readable message "Wrong PIN". The cooldown gives "Too many attempts, try again in 30 s". Reuse the messages streaming shows.
 
 ### Phase 5: UI
-- [ ] Home: **Receive files** entry next to View stream, with a new `Screen.ReceiveFiles` route in `VaultNavGraph`.
-- [ ] `ReceiveScreen`: set the PIN if missing, show the waiting state and phone name, the Accept/Decline dialog, progress, the result, and Stop.
-- [ ] Gallery multi-select: **Send to SV device** action that opens `SendScreen` with the selected IDs.
-- [ ] `SendScreen`: device list with refresh, PIN entry, progress, cancel, and the result.
-- [ ] Strings are short and plain. Buttons are at least 48 dp. Content descriptions are set.
+- [x] Home: **Receive files** entry next to View stream, with a new `Screen.ReceiveFiles` route in `VaultNavGraph`.
+- [x] `ReceiveScreen`: set the PIN if missing, show the waiting state and phone name, the Accept/Decline dialog, progress, the result, and Stop.
+- [x] Gallery multi-select: **Send to SV device** action that opens `SendScreen` with the selected IDs.
+- [x] `SendScreen`: device list with refresh, PIN entry, progress, cancel, and the result.
+- [x] Strings are short and plain. Buttons are at least 48 dp. Content descriptions are set.
 
 ### Phase 6: Lifecycle and safety
-- [ ] Backgrounding the app, locking the vault, or leaving either screen cancels the transfer and stops advertising. Copy the `ON_STOP` handling in `CameraScreen`.
-- [ ] Partial wake lock and keep-screen-on while transferring.
-- [ ] Check that no plaintext files remain in `cacheDir` or `filesDir` after a cancelled video transfer.
+- [x] Backgrounding the app, locking the vault, or leaving either screen cancels the transfer and stops advertising. This uses `StopWhenHidden` in `TransferScreens.kt`. On lock, the nav graph swaps the screen out and `onDispose` closes the engine.
+- [x] Keep-screen-on while a transfer screen is open. No partial wake lock: backgrounding cancels the transfer, so the screen is always on while a transfer runs. Add one only if transfers ever continue in the background.
+- [x] No plaintext files remain after a cancelled video transfer. The video thumbnail temp file is wiped in `finally`, and the receiver wipes `vault_staging/transfer` on every start in case the process was killed. *Still to confirm on device in Phase 7.*
 
 ### Phase 7: Device testing and docs
 - [ ] Install as the `.debug` test copy only. **Never** reinstall or uninstall `com.secretvault.app` on the user's phone, because that wipes their vault. See "Test installs" below.
@@ -202,4 +202,9 @@ Never commit `applicationIdSuffix`. Testing a transfer needs two phones with thi
   - The Offer now carries `senderName`.
   - `TransferProtocol.safeName` and `safeMime` clean sender data.
   - `shareWifi(context)` gives the Wi-Fi network and address.
-  - Next: Phase 5 UI.
+- 2026-10-04: Phases 5 and 6 done (builds; 128 unit tests, only the known `CrossCompatibilityTest` fails).
+  - The home screen has a **Receive files** button (inbox icon), below View stream.
+  - Gallery multi-select has **Send to SV**. Selected IDs pass through `savedStateHandle` (`SEND_IDS_KEY` in `VaultNavGraph`).
+  - Screens live in `ui/transfer/TransferScreens.kt`.
+  - `StreamPinDialog` gained an optional `message`.
+  - Next: Phase 7, the two-phone test.

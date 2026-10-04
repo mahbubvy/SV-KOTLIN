@@ -117,6 +117,11 @@ fun VaultNavGraph(
                 },
                 onSettingsClick = { navController.navigate(Screen.Settings.route) },
                 onViewStreamClick = { navController.navigate(Screen.ViewStream.route) },
+                onReceiveFilesClick = { navController.navigate(Screen.ReceiveFiles.route) },
+                onSendToDevice = { ids ->
+                    navController.currentBackStackEntry?.savedStateHandle?.set(SEND_IDS_KEY, ArrayList(ids))
+                    navController.navigate(Screen.SendFiles.route)
+                },
                 onLockClick = {
                     app.ephemeralShareManager.purgeAllSharedFiles(force = true)
                     app.sessionManager.lock()
@@ -144,6 +149,23 @@ fun VaultNavGraph(
                 return@composable
             }
             com.secretvault.app.ui.stream.StreamViewerScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Screen.ReceiveFiles.route) {
+            if (!isUnlocked) {
+                Box(modifier = Modifier.fillMaxSize().background(VaultDarkBg))
+                return@composable
+            }
+            com.secretvault.app.ui.transfer.ReceiveFilesScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Screen.SendFiles.route) {
+            if (!isUnlocked) {
+                Box(modifier = Modifier.fillMaxSize().background(VaultDarkBg))
+                return@composable
+            }
+            val ids = remember { navController.previousBackStackEntry?.savedStateHandle?.get<ArrayList<String>>(SEND_IDS_KEY).orEmpty() }
+            com.secretvault.app.ui.transfer.SendFilesScreen(mediaIds = ids, onBack = { navController.popBackStack() })
         }
 
         composable(Screen.CameraStream.route) {
@@ -254,3 +276,6 @@ fun VaultNavGraph(
         }
     }
 }
+
+/** Gallery selection handed to the Send to SV screen. */
+private const val SEND_IDS_KEY = "send_media_ids"

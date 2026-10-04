@@ -14,7 +14,7 @@ import com.secretvault.app.ui.theme.*
 import com.secretvault.app.core.stream.StreamPinManager.Companion.PIN_DIGITS
 
 @Composable
-fun StreamPinDialog(setup: Boolean, saving: Boolean = false, error: String? = null,
+fun StreamPinDialog(setup: Boolean, saving: Boolean = false, error: String? = null, message: String? = null,
                     onConfirm: (CharArray) -> Unit, onDismiss: () -> Unit) {
     var pin by remember { mutableStateOf("") }
     var confirmation by remember { mutableStateOf("") }
@@ -23,7 +23,7 @@ fun StreamPinDialog(setup: Boolean, saving: Boolean = false, error: String? = nu
         title = { Text(if (setup) "Set streaming PIN" else "Enter streaming PIN") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if (setup) "Use a separate four-digit PIN. This camera device remembers it." else "Enter the four-digit PIN set on the camera device.")
+                Text(message ?: if (setup) "Use a separate four-digit PIN. This camera device remembers it." else "Enter the four-digit PIN set on the camera device.")
                 val colors = OutlinedTextFieldDefaults.colors(focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
                     focusedLabelColor = VaultAccent, unfocusedLabelColor = TextSecondary,
                     focusedBorderColor = VaultAccent, unfocusedBorderColor = TextSecondary, cursorColor = VaultAccent)
