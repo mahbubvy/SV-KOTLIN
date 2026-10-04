@@ -184,8 +184,9 @@ class StreamSession(private val context: Context) : Closeable {
                                     selection != null && cameraState?.value?.options?.none { it.id == selection.targetId } != false ||
                                     setting?.kind == 0 && settingsState?.value?.modes?.contains(setting.value) != true ||
                                     setting?.kind == 1 && settingsState?.value?.flashAvailable != true ||
+                                    setting?.kind == 2 && recordingState?.value?.recording != true ||
                                     interaction != null && !interactionAllowed(interaction, interactionState?.value, cameraState?.value?.selectedId, recordingState?.value) ||
-                                    recording == null && recordingState?.value?.let { it.saving || it.recording && setting?.kind != 1 && interaction?.kind !in listOf(0, 1) } == true ||
+                                    recording == null && recordingState?.value?.let { it.saving || it.recording && setting?.kind !in listOf(1, 2) && interaction?.kind !in listOf(0, 1) } == true ||
                                     !commandPending.compareAndSet(false, true)) throw IOException("Invalid camera command")
                                 lastRequest = id
                                 mutableState.update { if (closed.get()) it else if (interaction != null)
@@ -519,7 +520,8 @@ class StreamSession(private val context: Context) : Closeable {
         val current = state.value
         if (closed.get() || !current.live || current.cameraState.selectedId == null || current.recordingState.saving ||
             (kind == 0 && (current.recordingState.recording || value !in current.settingsState.modes || current.settingsState.mode == value)) ||
-            (kind == 1 && (!current.settingsState.flashAvailable || value !in 0..2)) || kind !in 0..1 ||
+            (kind == 1 && (!current.settingsState.flashAvailable || value !in 0..2)) ||
+            (kind == 2 && (!current.recordingState.recording || current.recordingState.paused == (value == 1))) || kind !in 0..2 ||
             !commandPending.compareAndSet(false, true)) return false
         val id = requestIds.incrementAndGet()
         mutableState.update { if (closed.get()) it else it.copy(settingsBusy = true, settingsMessage = "Applying camera setting…") }

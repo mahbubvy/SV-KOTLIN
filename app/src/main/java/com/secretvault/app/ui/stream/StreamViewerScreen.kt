@@ -15,6 +15,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.foundation.BorderStroke
@@ -224,7 +226,7 @@ fun StreamViewerScreen(onBack: () -> Unit) {
                 SnackbarHost(snackbar, modifier = Modifier.align(Alignment.TopCenter).padding(top = 56.dp, start = 8.dp, end = 8.dp))
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().verticalScroll(rememberScrollState()).padding(12.dp),
                     horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (state.recordingState.recording) Text("Recording %02d:%02d".format(state.recordingState.seconds / 60, state.recordingState.seconds % 60),
+                    if (state.recordingState.recording) Text("${if (state.recordingState.paused) "Paused" else "Recording"} %02d:%02d".format(state.recordingState.seconds / 60, state.recordingState.seconds % 60),
                         color = TextPrimary, modifier = Modifier.background(VaultDarkBg, RoundedCornerShape(8.dp)).padding(8.dp))
                     if (state.photoAvailable) IconButton(onClick = { session.takePhoto() }, enabled = canTakePhoto,
                         modifier = Modifier.size(64.dp).clip(CircleShape).background(if (canTakePhoto) VaultAccent else VaultSurface)) {
@@ -237,9 +239,17 @@ fun StreamViewerScreen(onBack: () -> Unit) {
             }
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val recording = state.recordingState
+                val canControlRecording = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !state.settingsBusy && !state.interactionBusy && !recording.saving &&
+                    !state.stopping && state.cameraState.selectedId != null
+                if (recording.available && recording.recording) OutlinedButton(onClick = { session.setSetting(2, if (recording.paused) 0 else 1) },
+                    enabled = canControlRecording, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), border = BorderStroke(1.dp, TextMuted),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) {
+                    Icon(if (recording.paused) Icons.Default.PlayArrow else Icons.Default.Pause, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (recording.paused) "Resume recording" else "Pause recording", fontSize = 16.sp)
+                }
                 if (recording.available) Button(onClick = { session.setRecording(!recording.recording) },
-                    enabled = state.live && !state.photoBusy && !state.cameraBusy && !state.recordingBusy && !state.settingsBusy && !state.interactionBusy && !recording.saving &&
-                        !state.stopping && state.cameraState.selectedId != null,
+                    enabled = canControlRecording,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = if (recording.recording) VaultError else VaultAccent, contentColor = VaultDarkBg,
                         disabledContainerColor = VaultSurfaceVariant, disabledContentColor = TextMuted)) {

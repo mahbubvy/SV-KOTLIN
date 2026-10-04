@@ -3,6 +3,11 @@ package com.secretvault.app.ui.camera.components
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,6 +32,8 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import com.secretvault.app.core.camera.FlashMode
 import androidx.compose.material.icons.filled.Cameraswitch
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.StopCircle
@@ -34,9 +41,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -65,6 +74,8 @@ fun CameraBottomBar(
     onFlashToggle: () -> Unit,
     onAudioToggle: () -> Unit,
     recordingDurationSeconds: Int,
+    isRecordingPaused: Boolean = false,
+    onPauseToggle: () -> Unit = {},
     latestMediaItem: MediaItem? = null,
     rearLensOptions: List<CameraLensOption>,
     selectedRearLensId: String?,
@@ -98,6 +109,10 @@ fun CameraBottomBar(
             val minutes = recordingDurationSeconds / 60
             val seconds = recordingDurationSeconds % 60
             val formattedTime = String.format("%02d:%02d", minutes, seconds)
+            val blink by rememberInfiniteTransition(label = "pausedBlink").animateFloat(
+                initialValue = 1f, targetValue = 0f,
+                animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse), label = "pausedDot"
+            )
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -110,11 +125,12 @@ fun CameraBottomBar(
                 Box(
                     modifier = Modifier
                         .size(8.dp)
+                        .alpha(if (isRecordingPaused) blink else 1f)
                         .clip(CircleShape)
                         .background(Color.White)
                 )
                 Text(
-                    text = formattedTime,
+                    text = if (isRecordingPaused) "Paused $formattedTime" else formattedTime,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
@@ -269,8 +285,20 @@ fun CameraBottomBar(
                 onClick = onShutterClick
             )
 
-            // Flip Camera Button
-            IconButton(
+            // Pause/Resume takes the flip slot while recording, when flipping is disabled anyway
+            if (isRecording && cameraMode == CameraMode.VIDEO) IconButton(
+                onClick = onPauseToggle,
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.4f))
+            ) {
+                Icon(
+                    imageVector = if (isRecordingPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                    contentDescription = if (isRecordingPaused) "Resume recording" else "Pause recording",
+                    tint = TextPrimary
+                )
+            } else IconButton(
                 onClick = onFlipCamera,
                 enabled = !isRecording && cameraControlsEnabled,
                 modifier = Modifier

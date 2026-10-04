@@ -41,7 +41,7 @@ data class StreamCameraState(val options: List<StreamCameraOption> = emptyList()
 data class StreamCameraRequest(val requestId: Long, val targetId: String)
 data class StreamCameraResult(val requestId: Long, val applied: Boolean) : StreamMessage
 data class StreamRecordingState(val available: Boolean = false, val recording: Boolean = false,
-    val saving: Boolean = false, val audio: Boolean = false, val seconds: Int = 0) : StreamMessage
+    val saving: Boolean = false, val audio: Boolean = false, val seconds: Int = 0, val paused: Boolean = false) : StreamMessage
 data class StreamRecordingRequest(val requestId: Long, val start: Boolean)
 data class StreamRecordingResult(val requestId: Long, val start: Boolean, val success: Boolean) : StreamMessage
 data class StreamSettingsState(val modes: List<Int> = emptyList(), val mode: Int? = null,
@@ -144,7 +144,7 @@ object StreamProtocol {
             val requestId = input.readLong(); check(requestId > 0)
             StreamCameraResult(requestId, readFlag(input))
         }
-        9 -> StreamRecordingState(readFlag(input), readFlag(input), readFlag(input), readFlag(input), input.readInt())
+        9 -> StreamRecordingState(readFlag(input), readFlag(input), readFlag(input), readFlag(input), input.readInt(), readFlag(input))
             .also(::validateRecordingState)
         11 -> {
             val requestId = input.readLong(); check(requestId > 0)
@@ -217,7 +217,7 @@ object StreamProtocol {
         validateRecordingState(state)
         output.writeByte(9)
         listOf(state.available, state.recording, state.saving, state.audio).forEach { output.writeByte(if (it) 1 else 0) }
-        output.writeInt(state.seconds); output.flush()
+        output.writeInt(state.seconds); output.writeByte(if (state.paused) 1 else 0); output.flush()
     }
 
     fun writeRecordingRequest(output: DataOutputStream, id: Long, start: Boolean) {
@@ -238,7 +238,7 @@ object StreamProtocol {
     }
 
     private fun validateRecordingState(state: StreamRecordingState) {
-        check(state.seconds >= 0 && !(state.recording && state.saving) && (!state.recording || state.available))
+        check(state.seconds >= 0 && !(state.recording && state.saving) && (!state.recording || state.available) && (!state.paused || state.recording))
     }
 
     fun writeSettingsState(output: DataOutputStream, state: StreamSettingsState) {
@@ -266,7 +266,8 @@ object StreamProtocol {
         output.writeByte(14); output.writeLong(result.requestId); output.writeByte(if (result.applied) 1 else 0); output.flush()
     }
 
-    private fun validSetting(kind: Int, value: Int) = kind == 0 && value in 0..3 || kind == 1 && value in 0..2
+    // Kind 2 pauses (1) or resumes (0) an active recording.
+    private fun validSetting(kind: Int, value: Int) = kind == 0 && value in 0..3 || kind == 1 && value in 0..2 || kind == 2 && value in 0..1
     fun writeInteractionState(output: DataOutputStream, state: StreamInteractionState) {
         validateInteractionState(state)
         output.writeByte(15); writeText(output, state.cameraId.orEmpty())
