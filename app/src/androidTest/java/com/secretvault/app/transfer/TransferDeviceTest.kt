@@ -44,7 +44,11 @@ class TransferDeviceTest {
         while (!predicate()) delay(20)
     }
 
-    private fun scenario(): ActivityScenario<MainActivity> {
+    private fun scenario(): ActivityScenario<MainActivity>? {
+        if (InstrumentationRegistry.getArguments().getString("transferBackendOnly") == "true") {
+            app.sessionManager.unlock()
+            return null
+        }
         assertFalse("Unlock the phone before testing", app.getSystemService(KeyguardManager::class.java).isDeviceLocked)
         return ActivityScenario.launch(MainActivity::class.java).also { scenario ->
             scenario.onActivity { activity ->
@@ -184,7 +188,7 @@ class TransferDeviceTest {
                         receiver.start()
                         waitFor { receiver.state.value is TransferState.Waiting }
                         instrumentation.sendStatus(0, Bundle().apply { putString("transfer", "receiver-ready") })
-                        waitFor { receiver.state.value is TransferState.AwaitingAccept }
+                        withTimeout(120_000) { receiver.state.first { it is TransferState.AwaitingAccept } }
                         if (testCase == "decline") receiver.decline() else receiver.accept()
                         if (testCase == "receiver-cancel") {
                             withTimeout(45_000) { receiver.state.first { it is TransferState.Transferring && it.index == 21 } }
@@ -217,9 +221,16 @@ class TransferDeviceTest {
                 } else {
                     TransferSender(app, app.cryptoEngine).use { sender ->
                         val media = fixtures(root, true)
+                        instrumentation.sendStatus(0, Bundle().apply {
+                            putString("transfer", "fixtures-ready elapsedMs=${android.os.SystemClock.elapsedRealtime() - start}")
+                        })
                         sender.discovery.search()
-                        val endpoint = withTimeout(25_000) {
-                            sender.discovery.state.first { it.cameras.any { camera -> camera.name == peer } }.cameras.first { it.name == peer }
+                        val endpoint = try {
+                            withTimeout(25_000) {
+                                sender.discovery.state.first { it.cameras.any { camera -> camera.name == peer } }.cameras.first { it.name == peer }
+                            }
+                        } catch (failure: kotlinx.coroutines.TimeoutCancellationException) {
+                            throw AssertionError("Receiver not discovered: ${sender.discovery.state.value.message}; names=${sender.discovery.state.value.cameras.map { it.name }}", failure)
                         }
                         assertEquals(protected, endpoint.requiresPin)
                         sender.send(endpoint, if (protected) pin else null, media)

@@ -191,6 +191,7 @@ both phones, including the new pause/resume protocol from PR #2.
 
 ## Progress log
 
+- 2026-10-04: Reviewed with PR #2 and updated both compatible vault installations without uninstalling. Combined unit suite: 128 passing tests. Two-phone generated-media engine checks pass CMF to Pixel (PIN off), Pixel to CMF (PIN on), decline and cancellation from each side. Missing-PIN fail-closed and cancellation-during-preview regressions pass. Preview generation now uses encrypted random access without plaintext staging. Remaining Phase 7 cases and normal UI limits are in `tasks/pr2-pr3-validation.md`.
 - 2026-10-04: Phase 0 done. Spec written; branch `file-share` created from `main`.
 - 2026-10-04: Phase 1 done. `StreamDiscovery(context, share = true)` uses `_svshare._tcp.` and `v=s1`. `PairingPurpose.SHARE` is passed via `StreamTls.listen(..., purpose)` and `StreamTls.connect(endpoint, pin, ..., purpose = ...)`, and SHARE hosts always require the PIN. `StreamPairingTest.purposeMustMatchOnBothSides` covers it.
 - 2026-10-04: Phase 2 done. `core/transfer/TransferProtocol.kt` (messages, validation and the `exactly(input, size)` reader) with 6 tests in `TransferProtocolTest`.
