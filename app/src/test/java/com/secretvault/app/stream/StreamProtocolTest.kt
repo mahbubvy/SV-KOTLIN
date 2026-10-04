@@ -17,19 +17,19 @@ class StreamProtocolTest {
         assertEquals(state, StreamProtocol.readMessage(input))
         assertArrayEquals(byteArrayOf(7), StreamProtocol.readFrame(input).bytes)
         assertEquals(StreamSettingsResult(1, true), StreamProtocol.readMessage(input))
-        for ((kind, value) in listOf(0 to 3, 1 to 2)) {
+        for ((kind, value) in listOf(0 to 3, 1 to 2, 2 to 0, 2 to 1)) {
             val command = ByteArrayOutputStream().also { StreamProtocol.writeSettingsRequest(DataOutputStream(it), 1, kind, value) }
             val request = DataInputStream(ByteArrayInputStream(command.toByteArray()))
             assertEquals(StreamSettingsRequest(1, kind, value), StreamProtocol.readSettingsRequest(request, request.readUnsignedByte()))
         }
-        for ((kind, value) in listOf(2 to 0, 0 to 4, 1 to 3, 1 to -1))
+        for ((kind, value) in listOf(3 to 0, 2 to 2, 0 to 4, 1 to 3, 1 to -1))
             assertThrows(IOException::class.java) { StreamProtocol.writeSettingsRequest(output, 1, kind, value) }
         for (invalid in listOf(state.copy(modes = listOf(0, 0)), state.copy(modes = listOf(4)), state.copy(mode = 4), state.copy(flashMode = 3)))
             assertThrows(IOException::class.java) { StreamProtocol.writeSettingsState(output, invalid) }
         assertThrows(IOException::class.java) { StreamProtocol.readMessage(DataInputStream(ByteArrayInputStream(byteArrayOf(12, 5)))) }
     }
     @Test fun recordingCommandsPreserveFramesAndRejectInvalidStates() {
-        val state = StreamRecordingState(true, true, false, false, 4)
+        val state = StreamRecordingState(true, true, false, false, 4, paused = true)
         val bytes = ByteArrayOutputStream().also { raw ->
             val output = DataOutputStream(raw)
             StreamProtocol.writeRecordingState(output, state)
@@ -48,7 +48,7 @@ class StreamProtocolTest {
             val malformed = DataInputStream(ByteArrayInputStream(request))
             assertThrows(IOException::class.java) { StreamProtocol.readRecordingRequest(malformed, malformed.readUnsignedByte()) }
         }
-        for (invalid in listOf(state.copy(seconds = -1), state.copy(saving = true), state.copy(available = false))) {
+        for (invalid in listOf(state.copy(seconds = -1), state.copy(saving = true), state.copy(available = false), state.copy(recording = false))) {
             assertThrows(IOException::class.java) { StreamProtocol.writeRecordingState(DataOutputStream(ByteArrayOutputStream()), invalid) }
         }
         assertThrows(IOException::class.java) { StreamProtocol.writeRecordingRequest(DataOutputStream(ByteArrayOutputStream()), 0, true) }

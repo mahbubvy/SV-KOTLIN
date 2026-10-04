@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -152,6 +153,7 @@ fun CameraScreen(
     var stream by remember { mutableStateOf(StreamSession(context.applicationContext)) }
     val streamState by stream.state.collectAsState()
     val streamRecording by cameraManager.streamRecordingState.collectAsState()
+    val recordingPaused by cameraManager.isRecordingPaused.collectAsState()
     val streamSettings by cameraManager.streamSettings.collectAsState()
     val interaction by cameraManager.interaction.collectAsState()
     var streamVideoMode by remember { mutableStateOf<VideoMode?>(null) }
@@ -343,7 +345,11 @@ fun CameraScreen(
                             }, settingsState = cameraManager.streamSettings, setSetting = { kind, value ->
                                 if (!app.sessionManager.isUnlocked.value || !foreground || !cameraIsReady || stream !== owner ||
                                     renderer == null || appliedCameraId == null || localFlashBusy) false
-                                else if (kind == 1) {
+                                else if (kind == 2) {
+                                    val paused = value == 1
+                                    cameraManager.setRecordingPaused(paused) &&
+                                        kotlinx.coroutines.withTimeoutOrNull(3000) { cameraManager.isRecordingPaused.first { it == paused } } != null
+                                } else if (kind == 1) {
                                     val mode = FlashMode.entries[value]
                                     cameraManager.setStreamFlash(mode).also { if (it) viewModel.setFlashMode(mode) }
                                 } else if (cameraManager.streamRecordingState.value.recording || cameraManager.streamRecordingState.value.saving) false
@@ -551,7 +557,7 @@ fun CameraScreen(
                 enabled = cameraIsReady && appliedCameraId != null && !streamStopping && !localFlashBusy && !streamState.cameraBusy && !streamState.photoBusy &&
                     !streamState.settingsBusy && !streamState.recordingBusy && !streamState.interactionBusy && !streamRecording.saving,
                 onZoom = { localZoomTargets.trySend(cameraGeneration to it) },
-                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp))
+                modifier = Modifier.align(Alignment.CenterEnd).offset(y = (-80).dp).padding(end = 16.dp))
 
             // Top Bar
             CameraTopBar(
@@ -585,7 +591,7 @@ fun CameraScreen(
                 streamState.recordingMessage?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
                 streamState.settingsMessage?.let { Text(it, color = TextPrimary, fontSize = 14.sp, modifier = Modifier.padding(8.dp)) }
                 if (renderer != null) {
-                    Text(if (streamRecording.recording) "Recording %02d:%02d".format(streamRecording.seconds / 60, streamRecording.seconds % 60)
+                    Text(if (streamRecording.recording) "${if (streamRecording.paused) "Paused" else "Recording"} %02d:%02d".format(streamRecording.seconds / 60, streamRecording.seconds % 60)
                         else if (streamRecording.saving) "Saving encrypted video…"
                         else if (streamRecording.available) "Remote video: ${streamSettings.mode?.let { VideoMode.entries[it].label }} · Microphone ${if (streamRecording.audio) "on" else "off"}"
                         else "Remote video unavailable for this camera",
@@ -627,6 +633,8 @@ fun CameraScreen(
                 onStreamToggle = { if (renderer == null) startStream() else stopStream() },
                 streamEnabled = !uiState.isRecording && !streamStopping && !streamState.stopping && (renderer != null || cameraIsReady),
                 recordingDurationSeconds = uiState.recordingDurationSeconds,
+                isRecordingPaused = recordingPaused,
+                onPauseToggle = { cameraManager.setRecordingPaused(!recordingPaused) },
                 onModeSelect = { viewModel.setCameraMode(it) },
                 onShutterClick = {
                     if (uiState.cameraMode == CameraMode.PHOTO) {

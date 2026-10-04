@@ -9,7 +9,6 @@ import android.media.MediaCodec
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import android.util.Log
 import android.util.Range
 import androidx.camera.camera2.interop.Camera2Interop
@@ -71,12 +70,11 @@ class CameraManager(
     private var streaming = false
     private var cmfCameraView: CmfHighFpsCameraView? = null
     private var cmfHighFpsActive = false
-    private var cmfRecordingStartTime = 0L
     private val durationHandler = Handler(Looper.getMainLooper())
     private val durationTick = object : Runnable {
         override fun run() {
             if (!cmfHighFpsActive || !_isRecording.value) return
-            _recordingDurationSeconds.value = ((SystemClock.elapsedRealtime() - cmfRecordingStartTime) / 1000L).toInt()
+            _recordingDurationSeconds.value = ((cmfCameraView?.recordedMs ?: 0L) / 1000L).toInt()
             if (streaming) _streamRecordingState.value = _streamRecordingState.value.copy(seconds = _recordingDurationSeconds.value)
             durationHandler.postDelayed(this, 250L)
         }
@@ -86,6 +84,8 @@ class CameraManager(
 
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
+    private val _isRecordingPaused = MutableStateFlow(false)
+    val isRecordingPaused: StateFlow<Boolean> = _isRecordingPaused.asStateFlow()
 
     private val _recordingDurationSeconds = MutableStateFlow(0)
     val recordingDurationSeconds: StateFlow<Int> = _recordingDurationSeconds.asStateFlow()
@@ -541,7 +541,6 @@ class CameraManager(
             }
             val started = cmfCameraView?.startRecording() ?: false
             if (started) {
-                cmfRecordingStartTime = SystemClock.elapsedRealtime()
                 _recordingDurationSeconds.value = 0
                 _isRecording.value = true
                 if (streaming) _streamRecordingState.value = _streamRecordingState.value.copy(recording = true, seconds = 0)
@@ -583,12 +582,15 @@ class CameraManager(
                         if (streamVideo) _streamRecordingState.value = _streamRecordingState.value.copy(recording = true, seconds = 0)
                         onRecordingStarted()
                     }
+                    is VideoRecordEvent.Pause -> markPaused(true)
+                    is VideoRecordEvent.Resume -> markPaused(false)
                     is VideoRecordEvent.Status -> {
                         val durationMs = event.recordingStats.recordedDurationNanos / 1_000_000L
                         _recordingDurationSeconds.value = (durationMs / 1000L).toInt()
                         if (streamVideo) _streamRecordingState.value = _streamRecordingState.value.copy(seconds = _recordingDurationSeconds.value)
                     }
                     is VideoRecordEvent.Finalize -> {
+                        markPaused(false)
                         activeRecording = null
                         _isRecording.value = false
                         _recordingDurationSeconds.value = 0
@@ -648,6 +650,7 @@ class CameraManager(
             val finalized = streamVideoFinalized
             cmfCameraView?.stopRecording { file, durationMs ->
                 nativeStopping = false
+                markPaused(false)
                 _isRecording.value = false
                 _recordingDurationSeconds.value = 0
                 if (streamVideo) _streamRecordingState.value = _streamRecordingState.value.copy(recording = false, saving = file != null)
@@ -667,6 +670,26 @@ class CameraManager(
             return
         }
         activeRecording?.stop()
+    }
+
+    /** Pauses or resumes the active recording; the saved video leaves out the paused time. */
+    fun setRecordingPaused(paused: Boolean): Boolean {
+        if (!_isRecording.value || nativeStopping || _isRecordingPaused.value == paused) return false
+        if (cmfHighFpsActive) {
+            val view = cmfCameraView ?: return false
+            if (!(if (paused) view.pauseRecording() else view.resumeRecording())) return false
+            markPaused(paused)
+            return true
+        }
+        val recording = activeRecording ?: return false
+        if (paused) recording.pause() else recording.resume() // state follows the Pause/Resume events
+        return true
+    }
+
+    private fun markPaused(paused: Boolean) {
+        _isRecordingPaused.value = paused
+        if (streaming && _streamRecordingState.value.paused != paused)
+            _streamRecordingState.value = _streamRecordingState.value.copy(paused = paused)
     }
 
     fun pausePreview() {
@@ -689,6 +712,7 @@ class CameraManager(
             stopVideoRecording()
             streamVideoFinalized?.invokeOnCompletion { cmfCameraView?.release() }
         } else cmfCameraView?.release()
+        _isRecordingPaused.value = false
         _isRecording.value = false
         _recordingDurationSeconds.value = 0
         activeRecording?.stop()

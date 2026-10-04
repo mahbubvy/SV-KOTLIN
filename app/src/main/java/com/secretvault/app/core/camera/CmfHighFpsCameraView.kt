@@ -52,6 +52,8 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
     private var recording = false
     @Volatile private var stoppingRecording = false
     private var recordingStartedAt = 0L
+    private var pausedAt = 0L
+    private var pausedTotal = 0L
     private var includeAudio = false
     private var orientationHint = 90
     private var onReady: (() -> Unit)? = null
@@ -163,6 +165,8 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
             mediaRecorder?.start() ?: return false
             recording = true
             recordingStartedAt = android.os.SystemClock.elapsedRealtime()
+            pausedAt = 0L
+            pausedTotal = 0L
             true
         } catch (error: Exception) {
             reportError("CMF 60 FPS recording could not start: ${error.message ?: error.javaClass.simpleName}")
@@ -170,12 +174,35 @@ class CmfHighFpsCameraView(context: Context) : TextureView(context), TextureView
         }
     }
 
+    /** Recorded time so far, excluding pauses. */
+    val recordedMs: Long get() = if (!recording) 0L else
+        (if (pausedAt != 0L) pausedAt else android.os.SystemClock.elapsedRealtime()) - recordingStartedAt - pausedTotal
+
+    fun pauseRecording(): Boolean {
+        if (!recording || stoppingRecording || pausedAt != 0L) return false
+        return try {
+            mediaRecorder?.pause() ?: return false
+            pausedAt = android.os.SystemClock.elapsedRealtime()
+            true
+        } catch (_: Exception) { false }
+    }
+
+    fun resumeRecording(): Boolean {
+        if (!recording || stoppingRecording || pausedAt == 0L) return false
+        return try {
+            mediaRecorder?.resume() ?: return false
+            pausedTotal += android.os.SystemClock.elapsedRealtime() - pausedAt
+            pausedAt = 0L
+            true
+        } catch (_: Exception) { false }
+    }
+
     fun stopRecording(onFinished: (File?, Long) -> Unit) {
         val handler = backgroundHandler ?: return
         if (!recording) return
+        val duration = recordedMs
         recording = false
         stoppingRecording = true
-        val duration = android.os.SystemClock.elapsedRealtime() - recordingStartedAt
         handler.post {
             val candidate = outputFile
             val file = try {
