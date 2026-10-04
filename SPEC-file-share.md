@@ -79,7 +79,7 @@ R → S  byte   decision     1 = accept, 0 = decline (user said no, timeout, or 
 repeat itemCount times:
 S → R  ItemHeader
         byte   type        0 = photo, 1 = video
-        UTF    mimeType    allow-list: image/jpeg, image/png, image/webp, image/heic, video/mp4, video/quicktime, video/3gpp
+        UTF    mimeType    lowercase `image/...` or `video/...` (max 54 chars), matching the type byte. Imported items can be any image or video type, so there is no fixed list.
         UTF    name        1..128 chars, no '/', '\\', control chars or leading '.'
         long   size        1..(16 GiB) plaintext bytes
         long   createdAt   epoch ms, ≥ 0
@@ -128,9 +128,9 @@ Each phase should build (`./gradlew assembleDebug`) and keep the unit tests pass
 - [x] Unit tests: pairing succeeds with matching purpose and fails with mismatched purpose. The existing stream pairing tests still pass.
 
 ### Phase 2: Transfer protocol
-- [ ] `core/transfer/TransferProtocol.kt`: data classes `Offer` and `ItemHeader`, plus read and write functions for each message in the wire protocol.
-- [ ] Validation exactly as specified: limits, mime allow-list, name rules.
-- [ ] Unit tests (`app/src/test/java/com/secretvault/app/transfer/TransferProtocolTest.kt`): round trip of every message; every out-of-range field rejected; truncated input throws; a name with `/` or control characters is rejected.
+- [x] `core/transfer/TransferProtocol.kt`: data classes `Offer` and `ItemHeader`, plus read and write functions for each message in the wire protocol.
+- [x] Validation exactly as specified: limits, mime pattern, name rules.
+- [x] Unit tests (`app/src/test/java/com/secretvault/app/transfer/TransferProtocolTest.kt`): round trip of every message; every out-of-range field rejected; truncated input throws; a name with `/` or control characters is rejected.
 
 ### Phase 3: Receiver engine
 - [ ] Extract the thumbnail and metadata code from `BackupImportManager` stage 2 into a shared helper, for example `core/image/EncryptedMediaFinalizer.kt`. The backup import must behave the same after the change.
@@ -193,3 +193,4 @@ Never commit `applicationIdSuffix`. Testing a transfer needs two phones with thi
 
 - 2026-10-04: Phase 0 done. Spec written; branch `file-share` created from `main`.
 - 2026-10-04: Phase 1 done. `StreamDiscovery(context, share = true)` uses `_svshare._tcp.` and `v=s1`. `PairingPurpose.SHARE` is passed via `StreamTls.listen(..., purpose)` and `StreamTls.connect(endpoint, pin, ..., purpose = ...)`, and SHARE hosts always require the PIN. `StreamPairingTest.purposeMustMatchOnBothSides` covers it.
+- 2026-10-04: Phase 2 done. `core/transfer/TransferProtocol.kt` (messages, validation and the `exactly(input, size)` reader) with 6 tests in `TransferProtocolTest`.
