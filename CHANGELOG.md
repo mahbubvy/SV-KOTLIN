@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.1.1-optimized-20261004 - 2026-10-04
+
+### Added
+- Discover and view a live camera from another SV device over the same Wi-Fi, with optional Bluetooth discovery assistance.
+- Four-digit streaming PIN settings, including an option to disable the streaming PIN.
+- Remote photo capture, video recording, camera/lens selection, supported video quality, flash, microphone selection, pinch zoom and tap-to-focus.
+- Gallery zoom for photos and videos, plus a Favorites collection.
+- Right-side zoom sliders on the camera and stream viewer.
+
+### Fixed
+- Preserve gallery previews during thumbnail upgrades and distinguish loading from an empty folder.
+- Generate sharper, correctly proportioned previews for photos and videos.
+- Move Home settings to the previous lock-icon position.
+
+### Build and validation
+- APK: `SecretVault-v1.1.1-Optimized-2026-10-04.apk`, the exact installed Pixel build, renamed for distribution.
+- Internal Android version: `1.1.1-performance`, version code 3. Non-debuggable with R8 enabled, signed with the existing personal-use debug certificate; Android 8.0 or newer.
+- 120 debug unit tests passed. Earlier generated-media gallery checks and two-phone streaming/remote-control checks are documented under `tasks/`.
+- Owner reports smoother Pixel gallery scrolling. Optimized frame timings and a complete R8 device regression suite remain unverified; testing stopped at the owner's request. Existing lint findings remain.
+- SHA-256: `E0789722C31E634A65C69C00D4C33F6F7B2C24C95A6AB2C7FD83D71B23BF12E7`.
+
 ## 1.1.1 - 2026-10-01
 
 ### Added
