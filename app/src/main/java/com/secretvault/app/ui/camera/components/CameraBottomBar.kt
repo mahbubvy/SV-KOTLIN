@@ -138,51 +138,12 @@ fun CameraBottomBar(
             }
         }
 
-        // Mode Switcher (Photo / Video)
-        if (!isRecording && !isStreaming) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(24.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ModePill(
-                    title = "PHOTO",
-                    isSelected = cameraMode == CameraMode.PHOTO,
-                    onClick = { onModeSelect(CameraMode.PHOTO) }
-                )
-                ModePill(
-                    title = "VIDEO",
-                    isSelected = cameraMode == CameraMode.VIDEO,
-                    onClick = { onModeSelect(CameraMode.VIDEO) }
-                )
-            }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Bottom
-        ) {
-            if (cameraMode == CameraMode.VIDEO || isStreaming) {
-                IconButton(
-                    onClick = onAudioToggle,
-                    enabled = !isRecording && audioEnabled,
-                    modifier = Modifier.size(48.dp).clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.8f))
-                ) {
-                    Icon(
-                        imageVector = if (recordAudio) Icons.Default.Mic else Icons.Default.MicOff,
-                        contentDescription = if (recordAudio) "Microphone on" else "Microphone off",
-                        tint = if (recordAudio) VaultAccent else TextPrimary
-                    )
-                }
-            } else {
-                Spacer(Modifier.size(48.dp))
-            }
+        // Rear lens choices sit above the controls row
+        if (!isRecording && rearLensOptions.size > 1) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (!isRecording && rearLensOptions.size > 1) {
                 rearLensOptions.forEach { lens ->
                     val isSelected = lens.id == selectedRearLensId
                     Box(
@@ -210,6 +171,48 @@ fun CameraBottomBar(
                         )
                     }
                 }
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Bottom
+        ) {
+            if (cameraMode == CameraMode.VIDEO || isStreaming) {
+                IconButton(
+                    onClick = onAudioToggle,
+                    enabled = !isRecording && audioEnabled,
+                    modifier = Modifier.size(48.dp).clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.8f))
+                ) {
+                    Icon(
+                        imageVector = if (recordAudio) Icons.Default.Mic else Icons.Default.MicOff,
+                        contentDescription = if (recordAudio) "Microphone on" else "Microphone off",
+                        tint = if (recordAudio) VaultAccent else TextPrimary
+                    )
+                }
+            } else {
+                Spacer(Modifier.size(48.dp))
+            }
+            // Mode Switcher (Photo / Video), level with the microphone and flash buttons
+            Box(modifier = Modifier.height(48.dp), contentAlignment = Alignment.Center) {
+                if (!isRecording && !isStreaming) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(24.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ModePill(
+                            title = "PHOTO",
+                            isSelected = cameraMode == CameraMode.PHOTO,
+                            onClick = { onModeSelect(CameraMode.PHOTO) }
+                        )
+                        ModePill(
+                            title = "VIDEO",
+                            isSelected = cameraMode == CameraMode.VIDEO,
+                            onClick = { onModeSelect(CameraMode.VIDEO) }
+                        )
+                    }
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

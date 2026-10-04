@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -556,7 +557,7 @@ fun CameraScreen(
                 enabled = cameraIsReady && appliedCameraId != null && !streamStopping && !localFlashBusy && !streamState.cameraBusy && !streamState.photoBusy &&
                     !streamState.settingsBusy && !streamState.recordingBusy && !streamState.interactionBusy && !streamRecording.saving,
                 onZoom = { localZoomTargets.trySend(cameraGeneration to it) },
-                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp))
+                modifier = Modifier.align(Alignment.CenterEnd).offset(y = (-80).dp).padding(end = 16.dp))
 
             // Top Bar
             CameraTopBar(
