@@ -93,4 +93,30 @@ class StreamPairingTest {
         assertFalse("Wrong PIN was accepted", exchange(true, false))
         assertFalse("Different TLS certificate was accepted", exchange(false, true))
     }
+
+    @Test fun purposeMustMatchOnBothSides() {
+        fun exchange(host: PairingPurpose, peer: PairingPurpose): Boolean {
+            val executor = Executors.newSingleThreadExecutor()
+            ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress()).use { listener ->
+                val hosted = executor.submit<Boolean> {
+                    listener.accept().use { socket ->
+                        socket.soTimeout = 5000
+                        try { StreamPairing.authenticate(DataInputStream(socket.getInputStream()), DataOutputStream(socket.getOutputStream()),
+                            charArrayOf('4', '7', '2', '9'), ByteArray(32) { 1 }, "0".repeat(32), true, host); true } catch (_: IOException) { false }
+                    }
+                }
+                try {
+                    val joined = Socket(java.net.InetAddress.getLoopbackAddress(), listener.localPort).use { socket ->
+                        socket.soTimeout = 5000
+                        try { StreamPairing.authenticate(DataInputStream(socket.getInputStream()), DataOutputStream(socket.getOutputStream()),
+                            charArrayOf('4', '7', '2', '9'), ByteArray(32) { 1 }, "0".repeat(32), false, peer); true } catch (_: IOException) { false }
+                    }
+                    return hosted.get(6, TimeUnit.SECONDS) && joined
+                } finally { executor.shutdownNow() }
+            }
+        }
+        assertTrue("Share pairing failed", exchange(PairingPurpose.SHARE, PairingPurpose.SHARE))
+        assertFalse("Camera viewer paired with a file receiver", exchange(PairingPurpose.SHARE, PairingPurpose.STREAM))
+        assertFalse("File sender paired with a camera", exchange(PairingPurpose.STREAM, PairingPurpose.SHARE))
+    }
 }

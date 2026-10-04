@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
@@ -20,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import com.secretvault.app.core.transfer.TransferProtocol
 import androidx.compose.ui.unit.sp
 import com.secretvault.app.ui.theme.TextPrimary
 import com.secretvault.app.ui.theme.VaultError
@@ -31,6 +33,7 @@ fun SelectionBottomBar(
     onMoveClick: () -> Unit,
     onDeleteClick: () -> Unit,
     onShareClick: () -> Unit,
+    onSendClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val enabled = selectedCount > 0
@@ -62,6 +65,12 @@ fun SelectionBottomBar(
             label = "Share",
             enabled = enabled,
             onClick = onShareClick
+        )
+        ActionButton(
+            icon = Icons.Default.Devices,
+            label = "Send to SV",
+            enabled = enabled && selectedCount <= TransferProtocol.MAX_ITEMS,
+            onClick = onSendClick
         )
     }
 }

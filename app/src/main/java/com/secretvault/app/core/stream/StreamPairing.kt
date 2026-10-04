@@ -8,19 +8,25 @@ import java.math.BigInteger
 import java.security.MessageDigest
 import java.security.SecureRandom
 
+/** Keeps camera streaming and file sharing pairings apart; STREAM matches the original v2 bytes exactly. */
+enum class PairingPurpose(val binding: String, val idPrefix: String, val hostRole: String, val peerRole: String) {
+    STREAM("SV-stream-v2", "sv2", "camera", "viewer"),
+    SHARE("SV-share-v1", "svf1", "receiver", "sender")
+}
+
 object StreamPairing {
     private const val MAGIC = 0x53565032
     private val group = JPAKEPrimeOrderGroups.NIST_3072
 
     fun authenticate(input: DataInputStream, output: DataOutputStream, pin: CharArray,
-                     certificateHash: ByteArray, sessionId: String, sender: Boolean) {
+                     certificateHash: ByteArray, sessionId: String, sender: Boolean, purpose: PairingPurpose = PairingPurpose.STREAM) {
         require(pin.size == StreamPinManager.PIN_DIGITS && pin.all { it in '0'..'9' })
         require(certificateHash.size == 32 && sessionId.matches(Regex("[0-9a-f]{32}")))
-        val binding = MessageDigest.getInstance("SHA-256").digest("SV-stream-v2:$sessionId:".toByteArray() + certificateHash)
+        val binding = MessageDigest.getInstance("SHA-256").digest("${purpose.binding}:$sessionId:".toByteArray() + certificateHash)
             .joinToString("") { "%02x".format(it.toInt() and 255) }
-        val role = if (sender) "camera" else "viewer"
+        val role = if (sender) purpose.hostRole else purpose.peerRole
         val nonce = ByteArray(16).also(SecureRandom()::nextBytes).joinToString("") { "%02x".format(it.toInt() and 255) }
-        val participant = JPAKEParticipant("sv2:$role:$binding:$nonce", pin)
+        val participant = JPAKEParticipant("${purpose.idPrefix}:$role:$binding:$nonce", pin)
         pin.fill('\u0000')
         try {
             fun header(round: Int, id: String) {
@@ -31,8 +37,8 @@ object StreamPairing {
                 checkMessage(input.readInt() == MAGIC && input.readUnsignedByte() == round)
                 val length = input.readUnsignedShort(); checkMessage(length in 1..144)
                 val id = ByteArray(length).also(input::readFully).toString(Charsets.US_ASCII)
-                val other = if (sender) "viewer" else "camera"
-                checkMessage(id.matches(Regex("sv2:$other:$binding:[0-9a-f]{32}")))
+                val other = if (sender) purpose.peerRole else purpose.hostRole
+                checkMessage(id.matches(Regex("${purpose.idPrefix}:$other:$binding:[0-9a-f]{32}")))
                 return id
             }
             fun writeInteger(value: BigInteger) {

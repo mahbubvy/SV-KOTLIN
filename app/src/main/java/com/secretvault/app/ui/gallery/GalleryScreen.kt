@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material.icons.filled.Cast
+import androidx.compose.material.icons.filled.MoveToInbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.CircularProgressIndicator
@@ -82,6 +83,8 @@ fun GalleryScreen(
     onLockClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onViewStreamClick: () -> Unit,
+    onReceiveFilesClick: () -> Unit = {},
+    onSendToDevice: (List<String>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val uiState by galleryViewModel.uiState.collectAsState()
@@ -321,6 +324,10 @@ fun GalleryScreen(
                         containerColor = VaultSurface, contentColor = VaultAccent) {
                         Icon(Icons.Default.Cast, contentDescription = "View stream")
                     }
+                    FloatingActionButton(onClick = onReceiveFilesClick,
+                        containerColor = VaultSurface, contentColor = VaultAccent) {
+                        Icon(Icons.Default.MoveToInbox, contentDescription = "Receive files from another SV phone")
+                    }
                 }
                 // Import from Device Button
                 FloatingActionButton(
@@ -369,6 +376,10 @@ fun GalleryScreen(
                     activity?.let { act ->
                         app.ephemeralShareManager.shareMultiple(act, selectedItems)
                     }
+                    galleryViewModel.clearSelection()
+                },
+                onSendClick = {
+                    onSendToDevice(uiState.mediaList.filter { uiState.selectedIds.contains(it.id) }.map { it.id })
                     galleryViewModel.clearSelection()
                 }
             )

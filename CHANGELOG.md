@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Pause and resume local or remotely controlled video recordings, excluding paused time from the saved recording duration.
+- Direct photo/video sharing between SV devices on the same Wi-Fi, with per-transfer Accept/Decline, optional streaming-PIN pairing and delivery to Imports.
+
+### Fixed
+- Preserve required file-sharing PIN mode when its saved PIN is unavailable.
+- Cancel connection and preview work safely while preserving already completed transfers.
+- Read incoming/backup preview media through bounded encrypted buffers, avoiding full plaintext video staging and whole-photo memory copies.
+
+### Validation
+- Combined unit suite passes 128 tests. Generated-file transfers pass CMF to Pixel without PIN and Pixel to CMF with PIN; decline and cancellation from either side pass.
+- Recording pause/resume was confirmed by the owner. File-sharing engine checks, corrections and remaining manual/device limits are recorded in `tasks/pr2-pr3-validation.md`.
+
 ## 1.1.1-optimized-20261004 - 2026-10-04
 
 ### Added
