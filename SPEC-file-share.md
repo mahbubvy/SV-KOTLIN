@@ -164,7 +164,7 @@ Each phase should build (`./gradlew assembleDebug`) and keep the unit tests pass
 - [x] No plaintext files remain after a cancelled video transfer. The video thumbnail temp file is wiped in `finally`, and the receiver wipes `vault_staging/transfer` on every start in case the process was killed. *Still to confirm on device in Phase 7.*
 
 ### Phase 7: Device testing and docs
-- [ ] Install as the `.debug` test copy only. **Never** reinstall or uninstall `com.secretvault.app` on the user's phone, because that wipes their vault. See "Test installs" below.
+- [x] In this workspace, update the existing compatible installation with `adb install -r`, preserving its vault. Do not uninstall or clear app data. See "Test installs" below.
 - [ ] Test on two phones, in both directions:
   - 1 photo
   - 20 photos
@@ -178,18 +178,16 @@ Each phase should build (`./gradlew assembleDebug`) and keep the unit tests pass
 - [ ] Measure and record the transfer speed in MB/s.
 - [ ] Update `SecretVault-Features.md` and `CHANGELOG.md`.
 
-## Test installs (important)
+## Test installs
 
-The user's phone runs the real vault `com.secretvault.app`, signed with a key from another machine. To install a test build alongside it:
-
-```bash
-sed -i 's/^\(\s*\)versionNameSuffix = "-camera-stream-test"/&\n\1applicationIdSuffix = ".debug"/' app/build.gradle.kts
-./gradlew -q assembleDebug
-git checkout -- app/build.gradle.kts
-adb install -r app/build/outputs/apk/debug/SecretVault-v1.1.1-camera-stream-test-debug.apk
-```
-
-Never commit `applicationIdSuffix`. Testing a transfer needs two phones with this build installed.
+The Pixel and CMF installations in this workspace accept the existing signing
+certificate. `adb install -r` updates their `com.secretvault.app` installation
+without removing vault data; both updates succeeded on 2026-10-04. Use
+`assemblePerformance` to retain the optimized configuration. If another phone
+reports a signature mismatch, leave its installation/data intact and build a
+separate test application ID instead. Never uninstall or clear the user's vault
+to work around a signature mismatch. Two-phone tests need the updated build on
+both phones, including the new pause/resume protocol from PR #2.
 
 ## Progress log
 
