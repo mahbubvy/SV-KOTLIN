@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import com.secretvault.app.core.crypto.VaultCryptoEngine
 import com.secretvault.app.core.database.entity.AlbumEntity
 import com.secretvault.app.core.image.GALLERY_THUMBNAIL_SUFFIX
+import com.secretvault.app.core.image.MediaPreview
 import com.secretvault.app.core.image.secureWipeFile
 import com.secretvault.app.core.image.writeEncryptedPreview
 import com.secretvault.app.core.model.MediaItem
@@ -21,12 +22,16 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.Closeable
@@ -47,7 +52,8 @@ class TransferReceiver(
     private val context: Context,
     private val cryptoEngine: VaultCryptoEngine,
     private val mediaRepository: MediaRepository,
-    private val pins: StreamPinManager
+    private val pins: StreamPinManager,
+    private val previewWriter: (VaultCryptoEngine, File, Boolean, File, File) -> MediaPreview = ::writeEncryptedPreview
 ) : Closeable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableState = MutableStateFlow<TransferState>(TransferState.Idle)
@@ -61,7 +67,7 @@ class TransferReceiver(
 
     /** Advertises on Wi-Fi and receives from the first sender that pairs. Ends after one transfer. */
     @Synchronized fun start() {
-        if (job?.isActive == true) return
+        if (job?.isCompleted == false) return
         stopped = false
         job = scope.launch {
             var saved = 0
@@ -80,6 +86,7 @@ class TransferReceiver(
                 discovery.stopAdvertising()
                 socket.use { saved = receive(it) { count -> saved = count } }
             } catch (error: CancellationException) {
+                mutableState.value = TransferState.Failed("Cancelled", saved)
                 throw error
             } catch (error: Exception) {
                 mutableState.value = TransferState.Failed(if (stopped) "Cancelled" else error.message ?: "Transfer failed", saved)
@@ -99,6 +106,7 @@ class TransferReceiver(
         stopped = true
         decision?.complete(false)
         host?.close()
+        job?.cancel()
     }
 
     /** Advertises again with the current PIN setting. */
@@ -141,13 +149,12 @@ class TransferReceiver(
             if (header.size > offer.totalBytes - received) throw IOException("Invalid transfer message")
             mutableState.value = TransferState.Transferring(index + 1, offer.itemCount, received, offer.totalBytes)
             val start = received
-            receiveItem(input, output, header) { bytes ->
+            receiveItem(input, output, header, onCommitted = { saved++; onSaved(saved) }) { bytes ->
                 mutableState.value = TransferState.Transferring(index + 1, offer.itemCount, start + bytes, offer.totalBytes)
             }
             received += header.size
-            saved++
-            onSaved(saved)
         }
+        if (received != offer.totalBytes) throw IOException("Invalid transfer message")
         TransferProtocol.readEnd(input)
         TransferProtocol.writeFlag(output, true)
         mutableState.value = TransferState.Done(saved)
@@ -163,7 +170,8 @@ class TransferReceiver(
     }
 
     /** Streams one item straight into a new encrypted vault file; on any failure its files are removed. */
-    private suspend fun receiveItem(input: DataInputStream, output: DataOutputStream, header: TransferProtocol.ItemHeader, onProgress: (Long) -> Unit) {
+    private suspend fun receiveItem(input: DataInputStream, output: DataOutputStream, header: TransferProtocol.ItemHeader,
+                                    onCommitted: () -> Unit, onProgress: (Long) -> Unit) {
         val video = header.type == MediaType.VIDEO
         val id = (if (video) "video_" else "photo_") + UUID.randomUUID().toString().take(8)
         val encFile = File(context.filesDir, "vault_media/$id.enc").apply { parentFile?.mkdirs() }
@@ -176,37 +184,44 @@ class TransferReceiver(
                 val buffer = ByteArray(64 * 1024)
                 var done = 0L
                 var reported = 0L
-                while (true) {
-                    val count = source.read(buffer)
-                    if (count < 0) break
-                    vault.write(buffer, 0, count)
-                    done += count
-                    if (done - reported >= 512 * 1024) { onProgress(done); reported = done }
-                }
-                buffer.fill(0)
+                try {
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        val count = source.read(buffer)
+                        if (count < 0) break
+                        vault.write(buffer, 0, count)
+                        done += count
+                        if (done - reported >= 512 * 1024) { onProgress(done); reported = done }
+                    }
+                } finally { buffer.fill(0) }
                 onProgress(done)
             }
             if (!MessageDigest.isEqual(TransferProtocol.readHash(input), digest.digest())) {
                 TransferProtocol.writeFlag(output, false)
                 throw IOException("A file arrived damaged. Transfer stopped.")
             }
-            val preview = writeEncryptedPreview(cryptoEngine, encFile, video, thumbFile, scratchDir)
-            mediaRepository.insertMedia(MediaItem(
-                id = id,
-                filename = header.name,
-                originalName = header.name,
-                mediaType = header.type,
-                mimeType = header.mimeType,
-                encryptedPath = encFile.absolutePath,
-                thumbnailPath = if (thumbFile.exists()) thumbFile.absolutePath else null,
-                sizeBytes = encFile.length(),
-                durationMs = if (video) preview.durationMs.takeIf { it > 0 } ?: header.durationMs else 0L,
-                width = preview.width,
-                height = preview.height,
-                createdAt = header.createdAt,
-                albumId = AlbumEntity.ALBUM_IMPORTS_ID
-            ))
-            inserted = true
+            val preview = previewWriter(cryptoEngine, encFile, video, thumbFile, scratchDir)
+            currentCoroutineContext().ensureActive()
+            if (stopped) throw CancellationException("Cancelled")
+            withContext(NonCancellable) {
+                mediaRepository.insertMedia(MediaItem(
+                    id = id,
+                    filename = header.name,
+                    originalName = header.name,
+                    mediaType = header.type,
+                    mimeType = header.mimeType,
+                    encryptedPath = encFile.absolutePath,
+                    thumbnailPath = if (thumbFile.exists()) thumbFile.absolutePath else null,
+                    sizeBytes = encFile.length(),
+                    durationMs = if (video) preview.durationMs.takeIf { it > 0 } ?: header.durationMs else 0L,
+                    width = preview.width,
+                    height = preview.height,
+                    createdAt = header.createdAt,
+                    albumId = AlbumEntity.ALBUM_IMPORTS_ID
+                ))
+                inserted = true
+                onCommitted()
+            }
             TransferProtocol.writeFlag(output, true)
         } catch (error: Exception) {
             if (!inserted) { encFile.delete(); thumbFile.delete() }

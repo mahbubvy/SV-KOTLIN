@@ -4,33 +4,27 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import androidx.exifinterface.media.ExifInterface
-import com.secretvault.app.core.crypto.SecureMemory
 import com.secretvault.app.core.crypto.VaultCryptoEngine
-import java.io.BufferedInputStream
-import java.io.ByteArrayInputStream
+import com.secretvault.app.core.crypto.SecureMemory
+import com.secretvault.app.core.player.DecryptingMediaDataSource
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.io.RandomAccessFile
 
 data class MediaPreview(val width: Int, val height: Int, val durationMs: Long)
 
 /**
  * Writes the encrypted gallery thumbnail for an already encrypted vault file and returns its upright size and duration.
- * Videos are briefly decrypted into [scratchDir] for MediaMetadataRetriever and wiped straight after.
+ * Reads encrypted originals through bounded random-access buffers.
  */
 fun writeEncryptedPreview(cryptoEngine: VaultCryptoEngine, encFile: File, isVideo: Boolean, thumbFile: File, scratchDir: File): MediaPreview {
     if (isVideo) {
-        scratchDir.mkdirs()
-        val tmpVideo = File.createTempFile("tmp_", ".raw", scratchDir)
-        try {
-            FileOutputStream(tmpVideo).use { out ->
-                BufferedInputStream(FileInputStream(encFile)).use { encIn -> cryptoEngine.decryptStream(encIn, out) }
-            }
+        DecryptingMediaDataSource(cryptoEngine, encFile).use { source ->
             val retriever = MediaMetadataRetriever()
             try {
-                retriever.setDataSource(tmpVideo.absolutePath)
+                retriever.setDataSource(source)
                 val frame = retriever.galleryFrame()
                 val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
                 val rot = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
@@ -44,33 +38,38 @@ fun writeEncryptedPreview(cryptoEngine: VaultCryptoEngine, encFile: File, isVide
             } finally {
                 retriever.release()
             }
-        } finally {
-            secureWipeFile(tmpVideo)
         }
     }
 
-    // Photo: decrypt directly in memory
-    val photoBytes = BufferedInputStream(FileInputStream(encFile)).use { encIn ->
-        ByteArrayOutputStream().also { cryptoEngine.decryptStream(encIn, it) }.toByteArray()
-    }
-    try {
+    DecryptingMediaDataSource(cryptoEngine, encFile).use { source ->
+        fun stream() = object : InputStream() {
+            private var position = 0L
+            override fun read(): Int {
+                val one = ByteArray(1)
+                return if (read(one, 0, 1) < 0) -1 else one[0].toInt() and 255
+            }
+            override fun read(bytes: ByteArray, offset: Int, count: Int): Int {
+                if (count == 0) return 0
+                val read = source.readAt(position, bytes, offset, count)
+                if (read > 0) position += read
+                return read
+            }
+        }
         val orientation = runCatching {
-            ExifInterface(ByteArrayInputStream(photoBytes)).let { it.rotationDegrees to it.isFlipped }
+            stream().use { ExifInterface(it).let { exif -> exif.rotationDegrees to exif.isFlipped } }
         }.getOrNull()
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size, bounds)
+        stream().use { BitmapFactory.decodeStream(it, null, bounds) }
         val rawWidth = bounds.outWidth.coerceAtLeast(1)
         val rawHeight = bounds.outHeight.coerceAtLeast(1)
         val rotation = orientation?.first ?: 0
         val thumbOpts = BitmapFactory.Options().apply { inSampleSize = galleryThumbnailSampleSize(rawWidth, rawHeight) }
-        val rawThumb = BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size, thumbOpts)?.let { applyExifOrientation(it, orientation) }
+        val rawThumb = stream().use { BitmapFactory.decodeStream(it, null, thumbOpts) }?.let { applyExifOrientation(it, orientation) }
         val thumbBitmap = if (rawThumb != null) {
             createGalleryThumbnail(rawThumb).also { if (it != rawThumb) rawThumb.recycle() }
         } else Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
         writeEncryptedThumbnail(cryptoEngine, thumbBitmap, thumbFile)
         return if (rotation == 90 || rotation == 270) MediaPreview(rawHeight, rawWidth, 0L) else MediaPreview(rawWidth, rawHeight, 0L)
-    } finally {
-        SecureMemory.wipe(photoBytes)
     }
 }
 

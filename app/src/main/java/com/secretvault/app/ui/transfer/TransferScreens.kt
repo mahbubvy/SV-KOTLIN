@@ -51,8 +51,6 @@ fun ReceiveFilesScreen(onBack: () -> Unit) {
     StopWhenHidden { receiver.stop() }
     DisposableEffect(Unit) { onDispose { receiver.close() } }
     LaunchedEffect(Unit) {
-        // Require PIN was on but the PIN is gone: fall back to open receiving rather than failing.
-        if (requirePin && !pins.isConfigured()) { pins.setSharePinRequired(false); requirePin = false }
         receiver.start()
     }
     BackHandler { receiver.stop(); onBack() }
@@ -85,7 +83,8 @@ fun ReceiveFilesScreen(onBack: () -> Unit) {
             is TransferState.Failed -> {
                 Body(current.message)
                 if (current.completed > 0) Body("${items(current.completed)} received before that were saved to Imports.")
-                PrimaryButton("Receive again") { receiver.start() }
+                if (requirePin && !pins.isConfigured()) PrimaryButton("Set PIN") { settingPin = true }
+                else PrimaryButton("Receive again") { receiver.start() }
             }
         }
         val idle = state !is TransferState.Transferring && state !is TransferState.AwaitingAccept

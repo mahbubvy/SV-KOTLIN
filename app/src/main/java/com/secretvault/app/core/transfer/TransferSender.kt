@@ -27,6 +27,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
 import java.io.OutputStream
+import java.net.Socket
 import java.security.MessageDigest
 import javax.net.ssl.SSLSocket
 
@@ -38,7 +39,7 @@ class TransferSender(private val context: Context, private val cryptoEngine: Vau
     /** Receivers on this Wi-Fi; call [StreamDiscovery.search] to refresh. */
     val discovery = StreamDiscovery(context, share = true)
     private val recents = context.getSharedPreferences("sv_share_recent", Context.MODE_PRIVATE)
-    @Volatile private var socket: SSLSocket? = null
+    @Volatile private var socket: Socket? = null
     @Volatile private var cancelled = false
     private var job: Job? = null
 
@@ -63,7 +64,7 @@ class TransferSender(private val context: Context, private val cryptoEngine: Vau
                 mutableState.value = TransferState.Waiting(receiver.name)
                 val connected = try {
                     val factory = shareWifi(context).first.socketFactory
-                    val onSocket: (java.net.Socket) -> Unit = { if (cancelled) it.close() }
+                    val onSocket: (Socket) -> Unit = { socket = it; if (cancelled) it.close() }
                     if (receiver.requiresPin) StreamTls.connect(receiver, requireNotNull(pin) { "Enter the PIN" }, factory, onSocket, PairingPurpose.SHARE)
                     else StreamTls.connect(receiver, factory, onSocket)
                 } catch (error: IOException) {
@@ -93,11 +94,12 @@ class TransferSender(private val context: Context, private val cryptoEngine: Vau
                         sent++
                     }
                     TransferProtocol.writeEnd(output)
-                    TransferProtocol.readFlag(input)
+                    if (!TransferProtocol.readFlag(input)) throw IOException("The other phone did not confirm the transfer")
                 }
                 remember(receiver.name)
                 mutableState.value = TransferState.Done(sent)
             } catch (error: CancellationException) {
+                mutableState.value = TransferState.Failed("Cancelled", sent)
                 throw error
             } catch (error: Exception) {
                 mutableState.value = TransferState.Failed(if (cancelled) "Cancelled" else error.message ?: "Transfer failed", sent)
@@ -108,7 +110,7 @@ class TransferSender(private val context: Context, private val cryptoEngine: Vau
         }
     }
 
-    fun cancel() { cancelled = true; socket?.close() }
+    fun cancel() { cancelled = true; socket?.close(); job?.cancel() }
 
     /** Names of phones this vault has sent to, most recent first. */
     fun recentReceivers(): List<String> = recents.getString(RECENT_KEY, null)?.split('\n')?.filter { it.isNotEmpty() }.orEmpty()
