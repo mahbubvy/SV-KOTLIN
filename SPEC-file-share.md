@@ -120,12 +120,12 @@ Each phase should build (`./gradlew assembleDebug`) and keep the unit tests pass
 - [x] Write this spec and agree the version 1 decisions with the user.
 
 ### Phase 1: Shared plumbing
-- [ ] Give `StreamDiscovery` a service-type parameter. The default stays `_svcamera._tcp.`. Use `_svshare._tcp.` for receivers and advertise `v = "s1"`. Camera discovery must behave exactly as before.
-- [ ] Give `StreamPairing.authenticate` a `purpose` parameter.
+- [x] Give `StreamDiscovery` a service-type parameter. The default stays `_svcamera._tcp.`. Use `_svshare._tcp.` for receivers and advertise `v = "s1"`. Camera discovery must behave exactly as before.
+- [x] Give `StreamPairing.authenticate` a `purpose` parameter.
   - The default is the current `"SV-stream-v2"` binding, so camera streaming stays byte-for-byte compatible with older builds.
   - Use `"SV-share-v1"` for sharing, and roles `"receiver"` / `"sender"` instead of `"camera"` / `"viewer"`.
   - Pass `purpose` through `StreamTls.listen` / `connect`.
-- [ ] Unit tests: pairing succeeds with matching purpose and fails with mismatched purpose. The existing stream pairing tests still pass.
+- [x] Unit tests: pairing succeeds with matching purpose and fails with mismatched purpose. The existing stream pairing tests still pass.
 
 ### Phase 2: Transfer protocol
 - [ ] `core/transfer/TransferProtocol.kt`: data classes `Offer` and `ItemHeader`, plus read and write functions for each message in the wire protocol.
@@ -192,3 +192,4 @@ Never commit `applicationIdSuffix`. Testing a transfer needs two phones with thi
 ## Progress log
 
 - 2026-10-04: Phase 0 done. Spec written; branch `file-share` created from `main`.
+- 2026-10-04: Phase 1 done. `StreamDiscovery(context, share = true)` uses `_svshare._tcp.` and `v=s1`. `PairingPurpose.SHARE` is passed via `StreamTls.listen(..., purpose)` and `StreamTls.connect(endpoint, pin, ..., purpose = ...)`, and SHARE hosts always require the PIN. `StreamPairingTest.purposeMustMatchOnBothSides` covers it.

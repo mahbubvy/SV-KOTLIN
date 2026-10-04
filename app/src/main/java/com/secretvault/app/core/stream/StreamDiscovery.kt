@@ -10,9 +10,12 @@ import java.net.Inet4Address
 
 data class StreamDiscoveryState(val cameras: List<StreamEndpoint> = emptyList(), val message: String = "Searching for cameras…")
 
-class StreamDiscovery(context: Context) : Closeable {
+/** Wi-Fi discovery for camera streams, or for file-share receivers when [share] is true. */
+class StreamDiscovery(context: Context, private val share: Boolean = false) : Closeable {
+    private val type = if (share) SHARE_TYPE else TYPE
+    private val noun = if (share) "receivers" else "cameras"
     private val nsd = context.getSystemService(NsdManager::class.java)
-    private val mutableState = MutableStateFlow(StreamDiscoveryState())
+    private val mutableState = MutableStateFlow(StreamDiscoveryState(message = "Searching for $noun…"))
     val state = mutableState.asStateFlow()
     private var registration: NsdManager.RegistrationListener? = null
     private var discovery: NsdManager.DiscoveryListener? = null
@@ -24,14 +27,14 @@ class StreamDiscovery(context: Context) : Closeable {
     @Synchronized fun advertise(endpoint: StreamEndpoint) {
         stopAdvertising()
         val info = NsdServiceInfo().apply {
-            serviceName = endpoint.name; serviceType = TYPE; port = endpoint.port
-            setAttribute("v", endpoint.version.toString()); setAttribute("s", endpoint.sessionId); setAttribute("f", endpoint.fingerprint)
+            serviceName = endpoint.name; serviceType = type; port = endpoint.port
+            setAttribute("v", if (share) SHARE_VERSION else endpoint.version.toString()); setAttribute("s", endpoint.sessionId); setAttribute("f", endpoint.fingerprint)
             setAttribute("n", endpoint.name); setAttribute("a", if (endpoint.requiresPin) "1" else "0")
         }
         val listener = object : NsdManager.RegistrationListener {
             override fun onRegistrationFailed(info: NsdServiceInfo, code: Int) {
                 synchronized(this@StreamDiscovery) {
-                    if (registration === this) mutableState.value = StreamDiscoveryState(message = "Could not advertise camera on Wi-Fi. Stop and try again.")
+                    if (registration === this) mutableState.value = StreamDiscoveryState(message = if (share) "Could not advertise on Wi-Fi. Stop and try again." else "Could not advertise camera on Wi-Fi. Stop and try again.")
                 }
             }
             override fun onServiceRegistered(info: NsdServiceInfo) {
@@ -42,7 +45,7 @@ class StreamDiscovery(context: Context) : Closeable {
         }
         registration = listener
         try { nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, listener) }
-        catch (_: Exception) { registration = null; mutableState.value = StreamDiscoveryState(message = "Wi-Fi camera discovery is unavailable") }
+        catch (_: Exception) { registration = null; mutableState.value = StreamDiscoveryState(message = if (share) "Wi-Fi discovery is unavailable" else "Wi-Fi camera discovery is unavailable") }
     }
 
     @Synchronized fun stopAdvertising() {
@@ -51,7 +54,7 @@ class StreamDiscovery(context: Context) : Closeable {
     }
 
     @Synchronized fun search() {
-        stopSearching(); mutableState.value = StreamDiscoveryState()
+        stopSearching(); mutableState.value = StreamDiscoveryState(message = "Searching for $noun…")
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(type: String) = Unit
             override fun onDiscoveryStopped(type: String) = Unit
@@ -63,7 +66,7 @@ class StreamDiscovery(context: Context) : Closeable {
             override fun onStopDiscoveryFailed(type: String, code: Int) = Unit
             override fun onServiceFound(info: NsdServiceInfo) {
                 synchronized(this@StreamDiscovery) {
-                    if (discovery !== this || info.serviceType != TYPE || info.serviceName.length !in 1..64 || names.size >= 16) return
+                    if (discovery !== this || info.serviceType != type || info.serviceName.length !in 1..64 || names.size >= 16) return
                     if (names.add(info.serviceName)) { pending.addLast(info); resolveNext(this) }
                 }
             }
@@ -76,8 +79,8 @@ class StreamDiscovery(context: Context) : Closeable {
             }
         }
         discovery = listener
-        try { nsd.discoverServices(TYPE, NsdManager.PROTOCOL_DNS_SD, listener) }
-        catch (_: Exception) { discovery = null; mutableState.value = StreamDiscoveryState(message = "Wi-Fi camera discovery is unavailable") }
+        try { nsd.discoverServices(type, NsdManager.PROTOCOL_DNS_SD, listener) }
+        catch (_: Exception) { discovery = null; mutableState.value = StreamDiscoveryState(message = if (share) "Wi-Fi discovery is unavailable" else "Wi-Fi camera discovery is unavailable") }
     }
 
     private fun resolveNext(owner: NsdManager.DiscoveryListener) {
@@ -92,10 +95,14 @@ class StreamDiscovery(context: Context) : Closeable {
                         val bytes = requireNotNull(info.attributes[name]); require(bytes.size <= 128)
                         return bytes.toString(Charsets.UTF_8)
                     }
+                    require(info.host is Inet4Address)
+                    if (share) {
+                        require(attr("v") == SHARE_VERSION && attr("a") == "1")
+                        return@runCatching StreamEndpoint(requireNotNull(info.host.hostAddress), info.port, attr("f"), attr("s"), info.serviceName)
+                    }
                     val version = attr("v").toInt()
                     val requiresPin = version % 2 == 0
                     require(version in 2..11 && attr("a") == if (requiresPin) "1" else "0")
-                    require(info.host is Inet4Address)
                     StreamEndpoint(requireNotNull(info.host.hostAddress), info.port, attr("f"), attr("s"), info.serviceName, requiresPin, version >= 4, version >= 6, version >= 8, version >= 10)
                 }.getOrNull()
                 finish(endpoint)
@@ -115,14 +122,19 @@ class StreamDiscovery(context: Context) : Closeable {
 
     private fun publish() {
         val cameras = found.values.distinctBy { it.sessionId }.take(16)
-        mutableState.value = StreamDiscoveryState(cameras, if (cameras.isEmpty()) "No cameras found. Start Stream on the other device and use the same Wi-Fi." else "Choose a camera")
+        mutableState.value = StreamDiscoveryState(cameras, if (cameras.isEmpty()) if (share) "No receivers found. Open Receive files on the other device and use the same Wi-Fi." else "No cameras found. Start Stream on the other device and use the same Wi-Fi."
+            else if (share) "Choose a receiver" else "Choose a camera")
     }
     @Synchronized fun stopSearching() {
         val listener = discovery; discovery = null
         listener?.let { runCatching { nsd.stopServiceDiscovery(it) } }
         names.clear(); found.clear(); pending.clear()
-        mutableState.value = StreamDiscoveryState(message = "Refresh to search for cameras on Wi-Fi")
+        mutableState.value = StreamDiscoveryState(message = "Refresh to search for $noun on Wi-Fi")
     }
     override fun close() { stopAdvertising(); stopSearching() }
-    companion object { private const val TYPE = "_svcamera._tcp." }
+    companion object {
+        private const val TYPE = "_svcamera._tcp."
+        private const val SHARE_TYPE = "_svshare._tcp."
+        private const val SHARE_VERSION = "s1"
+    }
 }
