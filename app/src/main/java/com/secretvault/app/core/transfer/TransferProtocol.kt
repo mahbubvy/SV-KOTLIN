@@ -20,8 +20,8 @@ object TransferProtocol {
     private const val MAX_DIMENSION = 20_000
     private val MIME = Regex("(image|video)/[a-z0-9][a-z0-9.+-]{0,47}")
 
-    data class Offer(val itemCount: Int, val totalBytes: Long) {
-        init { require(itemCount in 1..MAX_ITEMS && totalBytes in 0..MAX_TOTAL_BYTES) }
+    data class Offer(val itemCount: Int, val totalBytes: Long, val senderName: String) {
+        init { require(itemCount in 1..MAX_ITEMS && totalBytes in 0..MAX_TOTAL_BYTES && senderName.length in 1..64 && senderName.none { it.isISOControl() }) }
     }
 
     data class ItemHeader(val type: MediaType, val mimeType: String, val name: String, val size: Long,
@@ -37,14 +37,24 @@ object TransferProtocol {
     fun validName(name: String) = name.length in 1..128 && !name.startsWith('.') &&
         name.none { it == '/' || it == '\\' || it.isISOControl() }
 
+    /** Makes a vault file name sendable: no path or control characters, no leading dot, at most 128 chars. */
+    fun safeName(name: String): String = name.map { if (it == '/' || it == '\\' || it.isISOControl()) '_' else it }
+        .joinToString("").trimStart('.').take(128).ifEmpty { "item" }
+
+    /** The item's own type when well formed, otherwise a generic one for its kind. */
+    fun safeMime(type: MediaType, mime: String): String = mime.lowercase().takeIf {
+        MIME.matches(it) && it.startsWith(if (type == MediaType.PHOTO) "image/" else "video/")
+    } ?: if (type == MediaType.PHOTO) "image/jpeg" else "video/mp4"
+
     fun writeOffer(output: DataOutputStream, offer: Offer) {
         output.writeInt(OFFER_MAGIC); output.writeByte(VERSION); output.writeInt(offer.itemCount); output.writeLong(offer.totalBytes)
+        output.writeUTF(offer.senderName)
         output.flush()
     }
 
     fun readOffer(input: DataInputStream): Offer = parse {
         check(input.readInt() == OFFER_MAGIC && input.readUnsignedByte() == VERSION)
-        Offer(input.readInt(), input.readLong())
+        Offer(input.readInt(), input.readLong(), input.readUTF())
     }
 
     fun writeItemHeader(output: DataOutputStream, item: ItemHeader) {

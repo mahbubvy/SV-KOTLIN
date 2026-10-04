@@ -74,6 +74,7 @@ S → R  Offer
         byte   version     = 1
         int    itemCount   1..500
         long   totalBytes  sum of item sizes, 0..(1 TiB)
+        UTF    senderName  1..64 chars, no control chars (shown in the receiver's accept dialog)
 R → S  byte   decision     1 = accept, 0 = decline (user said no, timeout, or not enough free space)
 
 repeat itemCount times:
@@ -133,21 +134,21 @@ Each phase should build (`./gradlew assembleDebug`) and keep the unit tests pass
 - [x] Unit tests (`app/src/test/java/com/secretvault/app/transfer/TransferProtocolTest.kt`): round trip of every message; every out-of-range field rejected; truncated input throws; a name with `/` or control characters is rejected.
 
 ### Phase 3: Receiver engine
-- [ ] Extract the thumbnail and metadata code from `BackupImportManager` stage 2 into a shared helper, for example `core/image/EncryptedMediaFinalizer.kt`. The backup import must behave the same after the change.
-- [ ] `TransferReceiver`:
+- [x] Extract the thumbnail and metadata code from `BackupImportManager` stage 2 into a shared helper. Done as `writeEncryptedPreview()` and `secureWipeFile()` in `core/image/EncryptedMediaPreview.kt`. The backup import must behave the same after the change.
+- [x] `TransferReceiver`:
   - `start()`: pick the Wi-Fi address like `StreamSession` does, call `StreamTls.listen(addr, pinManager, purpose = share)`, then advertise `_svshare._tcp.`.
   - Accept loop: take one sender, read the Offer, then expose `AwaitingAccept` and wait for the UI's `accept()` or `decline()`, or 60 s.
   - Per item: wrap the socket input so it reads exactly `size` bytes, then feed it through a SHA-256 digest into `cryptoEngine.createEncryptingOutputStream` writing `vault_media/<newId>.enc`. Verify the hash, run the finalizer to make the thumbnail and dimensions, then `insertMedia` into `ALBUM_IMPORTS_ID`.
   - Failure or cancel: delete the current item's `.enc` and thumbnail files, close everything, and stop advertising.
-- [ ] Instrumentation or unit test with a local socket pair, if practical: 2 items in, 2 rows out, and a bad hash leaves no files behind.
+- [ ] *(Deferred to Phase 7.)* Instrumentation or unit test with a local socket pair, if practical: 2 items in, 2 rows out, and a bad hash leaves no files behind. The receiver needs a real Keystore and Wi-Fi, so this is covered by the two-phone test.
 
 ### Phase 4: Sender engine
-- [ ] `TransferSender`:
+- [x] `TransferSender`:
   - `search()` uses `StreamDiscovery` with the share type.
   - `send(endpoint, pin, items)` calls `StreamTls.connect(endpoint, pin, purpose = share)`, then sends the Offer and waits for the decision.
   - Per item: get the size from `getPlaintextSize`, then run `decryptStream` into a non-closing wrapper around the socket output that also updates the SHA-256 digest. Send the hash and read the result.
-- [ ] Progress is reported in bytes. `cancel()` closes the socket.
-- [ ] Wrong PIN gives the readable message "Wrong PIN". The cooldown gives "Too many attempts, try again in 30 s". Reuse the messages streaming shows.
+- [x] Progress is reported in bytes. `cancel()` closes the socket.
+- [x] Wrong PIN gives the readable message "Wrong PIN". The cooldown gives "Too many attempts, try again in 30 s". Reuse the messages streaming shows.
 
 ### Phase 5: UI
 - [ ] Home: **Receive files** entry next to View stream, with a new `Screen.ReceiveFiles` route in `VaultNavGraph`.
@@ -194,3 +195,11 @@ Never commit `applicationIdSuffix`. Testing a transfer needs two phones with thi
 - 2026-10-04: Phase 0 done. Spec written; branch `file-share` created from `main`.
 - 2026-10-04: Phase 1 done. `StreamDiscovery(context, share = true)` uses `_svshare._tcp.` and `v=s1`. `PairingPurpose.SHARE` is passed via `StreamTls.listen(..., purpose)` and `StreamTls.connect(endpoint, pin, ..., purpose = ...)`, and SHARE hosts always require the PIN. `StreamPairingTest.purposeMustMatchOnBothSides` covers it.
 - 2026-10-04: Phase 2 done. `core/transfer/TransferProtocol.kt` (messages, validation and the `exactly(input, size)` reader) with 6 tests in `TransferProtocolTest`.
+- 2026-10-04: Phases 3 and 4 done (builds; not yet run on devices).
+  - `TransferReceiver(context, cryptoEngine, mediaRepository, StreamPinManager)` exposes `start()`, `accept()`, `decline()`, `stop()` and `state`. It receives one sender per `start()`.
+  - `TransferSender(context, cryptoEngine)` exposes `discovery`, `send(endpoint, pin, items)`, `cancel()`, `reset()` and `state`.
+  - Both report `TransferState`.
+  - The Offer now carries `senderName`.
+  - `TransferProtocol.safeName` and `safeMime` clean sender data.
+  - `shareWifi(context)` gives the Wi-Fi network and address.
+  - Next: Phase 5 UI.

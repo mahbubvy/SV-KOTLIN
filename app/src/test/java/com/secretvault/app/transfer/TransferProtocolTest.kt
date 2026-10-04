@@ -15,7 +15,7 @@ class TransferProtocolTest {
     private fun input(bytes: ByteArray) = DataInputStream(ByteArrayInputStream(bytes))
 
     @Test fun roundTripsEveryMessage() {
-        val offer = Offer(3, 99_000)
+        val offer = Offer(3, 99_000, "SV Pixel 5")
         val video = ItemHeader(MediaType.VIDEO, "video/x-matroska", "clip one.mkv", 5L shl 30, 0, 61_000, 1920, 1080)
         val hash = ByteArray(32) { it.toByte() }
         val stream = input(bytes {
@@ -34,13 +34,14 @@ class TransferProtocolTest {
     }
 
     @Test fun rejectsOutOfRangeOffers() {
-        fun offer(magic: Int, version: Int, count: Int, total: Long) = bytes {
-            it.writeInt(magic); it.writeByte(version); it.writeInt(count); it.writeLong(total)
+        fun offer(magic: Int, version: Int, count: Int, total: Long, name: String = "SV A015") = bytes {
+            it.writeInt(magic); it.writeByte(version); it.writeInt(count); it.writeLong(total); it.writeUTF(name)
         }
         val good = offer(0x53564631, 1, 1, 0)
         TransferProtocol.readOffer(input(good))
         listOf(offer(0x53564632, 1, 1, 0), offer(0x53564631, 2, 1, 0), offer(0x53564631, 1, 0, 0),
-            offer(0x53564631, 1, 501, 0), offer(0x53564631, 1, 1, -1), offer(0x53564631, 1, 1, (1L shl 40) + 1)
+            offer(0x53564631, 1, 501, 0), offer(0x53564631, 1, 1, -1), offer(0x53564631, 1, 1, (1L shl 40) + 1),
+            offer(0x53564631, 1, 1, 0, ""), offer(0x53564631, 1, 1, 0, "x".repeat(65)), offer(0x53564631, 1, 1, 0, "SV\nA015")
         ).forEach { assertThrows(IOException::class.java) { TransferProtocol.readOffer(input(it)) } }
     }
 
@@ -70,6 +71,18 @@ class TransferProtocolTest {
             assertThrows(IOException::class.java) { TransferProtocol.readItemHeader(input(full.copyOf(length))) }
         }
         assertThrows(EOFException::class.java) { TransferProtocol.readHash(input(ByteArray(31))) }
+    }
+
+    @Test fun senderCleansNamesAndTypes() {
+        assertEquals("a_b_c.jpg", TransferProtocol.safeName("a/b\\c.jpg"))
+        assertEquals("hidden", TransferProtocol.safeName("..hidden"))
+        assertEquals("item", TransferProtocol.safeName("..."))
+        assertEquals(128, TransferProtocol.safeName("x".repeat(300)).length)
+        listOf("a/b.jpg", "..x", "\u0000", "x".repeat(300)).forEach { assertTrue(TransferProtocol.validName(TransferProtocol.safeName(it))) }
+        assertEquals("image/png", TransferProtocol.safeMime(MediaType.PHOTO, "IMAGE/PNG"))
+        assertEquals("image/jpeg", TransferProtocol.safeMime(MediaType.PHOTO, "video/mp4"))
+        assertEquals("video/mp4", TransferProtocol.safeMime(MediaType.VIDEO, ""))
+        assertEquals("video/webm", TransferProtocol.safeMime(MediaType.VIDEO, "video/webm"))
     }
 
     @Test fun exactlyReadsOnlyTheItemAndDetectsShortStreams() {

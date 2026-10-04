@@ -1,36 +1,24 @@
 package com.secretvault.app.core.backup
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.media.MediaMetadataRetriever
 import android.net.Uri
-import androidx.exifinterface.media.ExifInterface
 import androidx.room.withTransaction
-import com.secretvault.app.core.crypto.SecureMemory
 import com.secretvault.app.core.crypto.VaultCryptoEngine
 import com.secretvault.app.core.database.VaultDatabase
 import com.secretvault.app.core.database.entity.AlbumEntity
 import com.secretvault.app.core.database.entity.MediaEntity
-import com.secretvault.app.core.image.applyExifOrientation
 import com.secretvault.app.core.image.GALLERY_THUMBNAIL_SUFFIX
-import com.secretvault.app.core.image.createGalleryThumbnail
-import com.secretvault.app.core.image.galleryThumbnailSampleSize
-import com.secretvault.app.core.image.galleryFrame
+import com.secretvault.app.core.image.secureWipeFile
+import com.secretvault.app.core.image.writeEncryptedPreview
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import java.io.BufferedInputStream
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
-import java.io.RandomAccessFile
 import java.time.Instant
 import java.util.UUID
 
@@ -202,90 +190,11 @@ class BackupImportManager(
                 )
 
                 if (entry.encFile.exists() && entry.encFile.length() > 0) {
-                    if (entry.item.mediaType.equals("video", ignoreCase = true)) {
-                        val tmpVideo = File(stagingDir, "tmp_${entry.localId}.raw")
-                        try {
-                            FileOutputStream(tmpVideo).use { out ->
-                                BufferedInputStream(FileInputStream(entry.encFile)).use { encIn ->
-                                    cryptoEngine.decryptStream(encIn, out)
-                                }
-                            }
-                            val retriever = MediaMetadataRetriever()
-                            try {
-                                retriever.setDataSource(tmpVideo.absolutePath)
-                                val frame = retriever.galleryFrame()
-                                val dur = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                                entry.durationMs = dur?.toLongOrNull() ?: 0L
-                                val rot = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
-                                val rawW = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 1080
-                                val rawH = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 1920
-                                if (rot == 90 || rot == 270) {
-                                    entry.width = rawH; entry.height = rawW
-                                } else {
-                                    entry.width = rawW; entry.height = rawH
-                                }
-
-                                val thumbBitmap = if (frame != null) {
-                                    createGalleryThumbnail(frame).also {
-                                        if (it != frame) frame.recycle()
-                                    }
-                                } else {
-                                    Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
-                                }
-
-                                val thumbBytes = compressBitmapToJpeg(thumbBitmap)
-                                val encThumb = cryptoEngine.encryptBytes(thumbBytes)
-                                SecureMemory.wipe(thumbBytes)
-                                FileOutputStream(entry.thumbFile).use { it.write(encThumb) }
-                            } finally {
-                                retriever.release()
-                            }
-                        } finally {
-                            secureWipeFile(tmpVideo)
-                        }
-                    } else {
-                        // Photo: decrypt directly in memory
-                        BufferedInputStream(FileInputStream(entry.encFile)).use { encIn ->
-                            val memStream = ByteArrayOutputStream()
-                            cryptoEngine.decryptStream(encIn, memStream)
-                            val photoBytes = memStream.toByteArray()
-                            try {
-                                val orientation = runCatching {
-                                    ExifInterface(ByteArrayInputStream(photoBytes)).let {
-                                        it.rotationDegrees to it.isFlipped
-                                    }
-                                }.getOrNull()
-                                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                                BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size, bounds)
-                                val rawWidth = bounds.outWidth.coerceAtLeast(1)
-                                val rawHeight = bounds.outHeight.coerceAtLeast(1)
-                                val rotation = orientation?.first ?: 0
-                                val w = if (rotation == 90 || rotation == 270) rawHeight else rawWidth
-                                val h = if (rotation == 90 || rotation == 270) rawWidth else rawHeight
-                                entry.width = w
-                                entry.height = h
-
-                                val sampleSize = galleryThumbnailSampleSize(rawWidth, rawHeight)
-                                val thumbOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-                                val decodedThumb = BitmapFactory.decodeByteArray(photoBytes, 0, photoBytes.size, thumbOpts)
-                                val rawThumb = decodedThumb?.let { applyExifOrientation(it, orientation) }
-                                val thumbBitmap = if (rawThumb != null) {
-                                    createGalleryThumbnail(rawThumb).also {
-                                        if (it != rawThumb) rawThumb.recycle()
-                                    }
-                                } else {
-                                    Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
-                                }
-
-                                val thumbBytes = compressBitmapToJpeg(thumbBitmap)
-                                val encThumb = cryptoEngine.encryptBytes(thumbBytes)
-                                SecureMemory.wipe(thumbBytes)
-                                FileOutputStream(entry.thumbFile).use { it.write(encThumb) }
-                            } finally {
-                                SecureMemory.wipe(photoBytes)
-                            }
-                        }
-                    }
+                    val preview = writeEncryptedPreview(cryptoEngine, entry.encFile,
+                        entry.item.mediaType.equals("video", ignoreCase = true), entry.thumbFile, stagingDir)
+                    entry.width = preview.width
+                    entry.height = preview.height
+                    entry.durationMs = preview.durationMs
                 }
             }
 
@@ -520,15 +429,6 @@ class BackupImportManager(
         }
     }
 
-    private fun compressBitmapToJpeg(bitmap: Bitmap): ByteArray {
-        val stream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, stream)
-        val bytes = stream.toByteArray()
-        bitmap.recycle()
-        stream.close()
-        return bytes
-    }
-
     private fun parseDateToMillis(dateStr: String): Long {
         return try {
             Instant.parse(dateStr).toEpochMilli()
@@ -550,28 +450,6 @@ class BackupImportManager(
             dir.delete()
         } catch (e: Exception) {
             e.printStackTrace()
-        }
-    }
-
-    private fun secureWipeFile(file: File) {
-        try {
-            if (file.exists() && file.isFile) {
-                val length = file.length()
-                if (length > 0) {
-                    RandomAccessFile(file, "rws").use { raf ->
-                        val zeros = ByteArray(4096)
-                        var written = 0L
-                        while (written < length) {
-                            val toWrite = minOf(zeros.size.toLong(), length - written).toInt()
-                            raf.write(zeros, 0, toWrite)
-                            written += toWrite
-                        }
-                    }
-                }
-                file.delete()
-            }
-        } catch (e: Exception) {
-            file.delete()
         }
     }
 
