@@ -19,6 +19,12 @@ class StreamPinManager(context: Context, private val prefs: SharedPreferences =
         check(prefs.edit().putBoolean("require_pin", required).commit()) { "Could not save streaming PIN preference" }
     }
 
+    /** File sharing has its own switch and is open by default; the receiver still accepts every transfer. */
+    fun isSharePinRequired(): Boolean = prefs.getBoolean("share_require_pin", false)
+    fun setSharePinRequired(required: Boolean) {
+        check(prefs.edit().putBoolean("share_require_pin", required).commit()) { "Could not save file sharing PIN preference" }
+    }
+
     fun isConfigured(): Boolean {
         val pin = try { readPin() } catch (_: IOException) { null } ?: return false
         pin.fill('\u0000')

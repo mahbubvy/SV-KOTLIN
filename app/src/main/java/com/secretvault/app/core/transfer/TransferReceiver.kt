@@ -67,7 +67,7 @@ class TransferReceiver(
             var saved = 0
             var listener: StreamTls.Host? = null
             try {
-                pins.readPin()?.fill('\u0000') ?: throw IOException("Set a streaming PIN first")
+                if (pins.isSharePinRequired()) pins.readPin()?.fill('\u0000') ?: throw IOException("Set a PIN first, or turn off Require PIN")
                 // A killed process can leave a decrypted video from thumbnailing behind.
                 scratchDir.listFiles()?.forEach(::secureWipeFile)
                 listener = StreamTls.listen(shareWifi(context).second, pins, purpose = PairingPurpose.SHARE)
@@ -99,6 +99,13 @@ class TransferReceiver(
         stopped = true
         decision?.complete(false)
         host?.close()
+    }
+
+    /** Advertises again with the current PIN setting. */
+    fun restart() {
+        val previous = job
+        stop()
+        scope.launch { previous?.join(); start() }
     }
 
     override fun close() { stop(); discovery.close(); scope.cancel() }

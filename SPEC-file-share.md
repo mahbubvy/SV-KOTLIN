@@ -16,7 +16,8 @@ unencrypted on disk on either phone. Each vault keeps its own encryption key.
 |---|---|
 | Connection | Both phones on the **same Wi-Fi** network. A phone hotspot with the other phone joined counts as the same network. No Wi-Fi Direct, no Bluetooth data transfer. |
 | What can be sent | **Photos and videos only** (`MediaType.PHOTO`, `MediaType.VIDEO`). |
-| Pairing | **PIN every time.** The receiver's existing streaming PIN (`StreamPinManager`) is reused. There's no "trusted devices" list. |
+| Pairing | **PIN off by default** (user decision, 2026-10-04). The receiver turns on **Require PIN** on the Receive screen (`StreamPinManager.isSharePinRequired()`, separate from the camera streaming setting). When on, it reuses the streaming PIN. The receiver always taps Accept for every transfer. |
+| Previous devices | The Send screen lists phones this vault has sent to before first, marked "Shared before". They are remembered by advertised name, with up to 10 kept in private prefs `sv_share_recent` (`TransferSender.recentReceivers()`). No PIN or key is stored. |
 | Direction | **One direction per session.** One phone receives and the other sends. To send back, swap roles. |
 | Interrupted transfer | **Starts over.** Items fully received before the drop are kept. The partly received item is deleted. No resume. |
 | Compatibility | Both phones must run a build containing this feature. There's no protocol negotiation beyond a version byte. |
@@ -25,8 +26,8 @@ Anything outside this table is **out of scope** for version 1. Don't add it with
 
 ## User flow
 
-1. **Receiver:** Home → **Receive files**. If no streaming PIN is set, the receiver is asked to set one, using the same dialog streaming uses. The screen shows "Waiting for a sender… Name: SV <model>" and a Stop button. The phone advertises itself on Wi-Fi.
-2. **Sender:** Gallery → select items → **Send to SV device**. A single-item **Send to SV device** in the media viewer is optional. A list of receiving phones appears. Pick one, then enter the receiver's PIN.
+1. **Receiver:** Home → **Receive files**. It starts open (no PIN). The **Require PIN** switch on that screen turns PIN pairing on and asks for a PIN first if none is set. The screen shows "Waiting for a sender… Name: SV <model>" and a Stop button. The phone advertises itself on Wi-Fi.
+2. **Sender:** Gallery → select items → **Send to SV device**. A single-item **Send to SV device** in the media viewer is optional. A list of receiving phones appears, with phones sent to before listed first. Pick one; enter its PIN only if it shows "PIN needed".
 3. **Receiver:** a dialog appears: "Accept 5 items (1.2 GB) from SV <model>?" with Accept and Decline. With no answer in 60 s, the transfer is declined.
 4. **Both** phones show progress: "Item 2 of 5 · 340 MB of 1.2 GB" and Cancel.
 5. **Done:** the receiver shows "5 items saved to Imports". The sender shows "Sent 5 items". Received items appear in the **Imports** album (`AlbumEntity.ALBUM_IMPORTS_ID`).
@@ -109,7 +110,7 @@ Rules:
 - **Plaintext in memory only:** it may exist only in memory buffers and inside the TLS socket. The one exception is the temporary video file the import code already uses for `MediaMetadataRetriever`. Wipe it right after, the way `BackupImportManager` does.
 - **No secrets in discovery:** the NSD advertisement carries only what streaming already carries (version, session ID, TLS fingerprint, name, "PIN required" flag). Never the PIN or vault data.
 - **Unlocked vault on both sides:** both phones must be unlocked (`sessionManager.isUnlocked`). Locking cancels the transfer.
-- **PIN required:** the receiver always requires a PIN. If `StreamPinManager.isPinRequired()` is off, still require it for receiving, because open receiving isn't allowed.
+- **Accept gate:** with PIN off, anyone on the same Wi-Fi can *offer* files, but nothing is written until the receiver taps Accept, and the connection is still TLS-encrypted. With **Require PIN** on, pairing uses J-PAKE with `PairingPurpose.SHARE`, the same as streaming.
 - **One sender at a time:** a second sender trying to connect is rejected. `StreamTls.Host` already enforces one peer.
 - **No sensitive logs:** don't log file names, sizes per item, hashes or the PIN.
 
@@ -208,3 +209,4 @@ Never commit `applicationIdSuffix`. Testing a transfer needs two phones with thi
   - Screens live in `ui/transfer/TransferScreens.kt`.
   - `StreamPinDialog` gained an optional `message`.
   - Next: Phase 7, the two-phone test.
+- 2026-10-04: The user changed the PIN decision. Sharing is open by default, with a **Require PIN** switch on the Receive screen, and the Send screen remembers previous receivers. The PIN dialog has file-sharing wording (`StreamPinDialog(fileSharing = true)`).

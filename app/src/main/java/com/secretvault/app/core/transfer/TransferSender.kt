@@ -37,12 +37,14 @@ class TransferSender(private val context: Context, private val cryptoEngine: Vau
     val state = mutableState.asStateFlow()
     /** Receivers on this Wi-Fi; call [StreamDiscovery.search] to refresh. */
     val discovery = StreamDiscovery(context, share = true)
+    private val recents = context.getSharedPreferences("sv_share_recent", Context.MODE_PRIVATE)
     @Volatile private var socket: SSLSocket? = null
     @Volatile private var cancelled = false
     private var job: Job? = null
 
-    @Synchronized fun send(receiver: StreamEndpoint, pin: CharArray, items: List<MediaItem>) {
-        if (job?.isActive == true) { pin.fill('\u0000'); return }
+    /** [pin] is needed only when [receiver] requires one. */
+    @Synchronized fun send(receiver: StreamEndpoint, pin: CharArray?, items: List<MediaItem>) {
+        if (job?.isActive == true) { pin?.fill('\u0000'); return }
         cancelled = false
         job = scope.launch {
             var sent = 0
@@ -60,9 +62,13 @@ class TransferSender(private val context: Context, private val cryptoEngine: Vau
                 val total = headers.sumOf { it.size }
                 mutableState.value = TransferState.Waiting(receiver.name)
                 val connected = try {
-                    StreamTls.connect(receiver, pin, shareWifi(context).first.socketFactory, { if (cancelled) it.close() }, PairingPurpose.SHARE)
+                    val factory = shareWifi(context).first.socketFactory
+                    val onSocket: (java.net.Socket) -> Unit = { if (cancelled) it.close() }
+                    if (receiver.requiresPin) StreamTls.connect(receiver, requireNotNull(pin) { "Enter the PIN" }, factory, onSocket, PairingPurpose.SHARE)
+                    else StreamTls.connect(receiver, factory, onSocket)
                 } catch (error: IOException) {
-                    throw IOException("Could not pair. Check the PIN and that the other phone is still on Receive files.", error)
+                    throw IOException(if (receiver.requiresPin) "Could not connect. Check the PIN and that the other phone is still on Receive files."
+                        else "Could not connect. Check that the other phone is still on Receive files.", error)
                 }
                 socket = connected
                 if (cancelled) connected.close()
@@ -89,19 +95,29 @@ class TransferSender(private val context: Context, private val cryptoEngine: Vau
                     TransferProtocol.writeEnd(output)
                     TransferProtocol.readFlag(input)
                 }
+                remember(receiver.name)
                 mutableState.value = TransferState.Done(sent)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 mutableState.value = TransferState.Failed(if (cancelled) "Cancelled" else error.message ?: "Transfer failed", sent)
             } finally {
-                pin.fill('\u0000')
+                pin?.fill('\u0000')
                 socket = null
             }
         }
     }
 
     fun cancel() { cancelled = true; socket?.close() }
+
+    /** Names of phones this vault has sent to, most recent first. */
+    fun recentReceivers(): List<String> = recents.getString(RECENT_KEY, null)?.split('\n')?.filter { it.isNotEmpty() }.orEmpty()
+
+    // ponytail: phones are remembered by advertised name ("SV <model>"), so two phones of the same model look alike.
+    private fun remember(name: String) {
+        val names = (listOf(name) + recentReceivers().filter { it != name }).take(10)
+        recents.edit().putString(RECENT_KEY, names.joinToString("\n")).apply()
+    }
 
     /** Back to [TransferState.Idle] after a finished or failed send. */
     fun reset() { if (job?.isActive != true) mutableState.value = TransferState.Idle }
@@ -129,4 +145,6 @@ class TransferSender(private val context: Context, private val cryptoEngine: Vau
         onProgress(written)
         return digest.digest()
     }
+
+    private companion object { const val RECENT_KEY = "names" }
 }

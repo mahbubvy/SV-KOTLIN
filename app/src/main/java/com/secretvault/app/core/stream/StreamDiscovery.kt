@@ -97,8 +97,8 @@ class StreamDiscovery(context: Context, private val share: Boolean = false) : Cl
                     }
                     require(info.host is Inet4Address)
                     if (share) {
-                        require(attr("v") == SHARE_VERSION && attr("a") == "1")
-                        return@runCatching StreamEndpoint(requireNotNull(info.host.hostAddress), info.port, attr("f"), attr("s"), info.serviceName)
+                        require(attr("v") == SHARE_VERSION && attr("a") in setOf("0", "1"))
+                        return@runCatching StreamEndpoint(requireNotNull(info.host.hostAddress), info.port, attr("f"), attr("s"), info.serviceName, attr("a") == "1")
                     }
                     val version = attr("v").toInt()
                     val requiresPin = version % 2 == 0

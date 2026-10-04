@@ -14,13 +14,13 @@ import com.secretvault.app.ui.theme.*
 import com.secretvault.app.core.stream.StreamPinManager.Companion.PIN_DIGITS
 
 @Composable
-fun StreamPinDialog(setup: Boolean, saving: Boolean = false, error: String? = null, message: String? = null,
+fun StreamPinDialog(setup: Boolean, saving: Boolean = false, error: String? = null, message: String? = null, fileSharing: Boolean = false,
                     onConfirm: (CharArray) -> Unit, onDismiss: () -> Unit) {
     var pin by remember { mutableStateOf("") }
     var confirmation by remember { mutableStateOf("") }
     AlertDialog(onDismissRequest = { if (!saving) onDismiss() }, containerColor = VaultSurface,
         titleContentColor = TextPrimary, textContentColor = TextSecondary,
-        title = { Text(if (setup) "Set streaming PIN" else "Enter streaming PIN") },
+        title = { Text(if (fileSharing) { if (setup) "Set file sharing PIN" else "Enter PIN" } else if (setup) "Set streaming PIN" else "Enter streaming PIN") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(message ?: if (setup) "Use a separate four-digit PIN. This camera device remembers it." else "Enter the four-digit PIN set on the camera device.")
@@ -28,7 +28,7 @@ fun StreamPinDialog(setup: Boolean, saving: Boolean = false, error: String? = nu
                     focusedLabelColor = VaultAccent, unfocusedLabelColor = TextSecondary,
                     focusedBorderColor = VaultAccent, unfocusedBorderColor = TextSecondary, cursorColor = VaultAccent)
                 OutlinedTextField(value = pin, onValueChange = { if (it.length <= PIN_DIGITS && it.all { char -> char in '0'..'9' }) pin = it },
-                    enabled = !saving, label = { Text("Streaming PIN") }, singleLine = true,
+                    enabled = !saving, label = { Text(if (fileSharing) "PIN" else "Streaming PIN") }, singleLine = true,
                     visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     colors = colors, modifier = Modifier.fillMaxWidth())
                 if (setup) OutlinedTextField(value = confirmation,
@@ -42,6 +42,6 @@ fun StreamPinDialog(setup: Boolean, saving: Boolean = false, error: String? = nu
         confirmButton = {
             TextButton(enabled = !saving && pin.length == PIN_DIGITS && (!setup || pin == confirmation), onClick = {
                 val value = pin.toCharArray(); pin = ""; confirmation = ""; onConfirm(value)
-            }) { Text(if (saving) "Saving…" else if (setup) "Save PIN" else "Connect", color = VaultAccent) }
+            }) { Text(if (saving) "Saving…" else if (setup) "Save PIN" else if (fileSharing) "Send" else "Connect", color = VaultAccent) }
         }, dismissButton = { TextButton(enabled = !saving, onClick = onDismiss) { Text("Cancel", color = TextSecondary) } })
 }

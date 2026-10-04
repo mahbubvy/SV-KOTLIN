@@ -39,8 +39,7 @@ object StreamTls {
         private val pending = AtomicReference<SSLSocket?>()
         private val peer = AtomicReference<SSLSocket?>()
         private val deadlines = Executors.newSingleThreadScheduledExecutor()
-        // Receiving files always needs the PIN, even when open camera streaming is allowed.
-        private val requiresPin = purpose == PairingPurpose.SHARE || pinManager?.isPinRequired() != false
+        private val requiresPin = if (purpose == PairingPurpose.SHARE) pinManager?.isSharePinRequired() == true else pinManager?.isPinRequired() != false
         val endpoint = if (pinManager != null) StreamEndpoint(invitation.host, invitation.port,
             invitation.fingerprint.joinToString("") { "%02x".format(it.toInt() and 255) },
             UUID.randomUUID().toString().replace("-", ""), "SV ${android.os.Build.MODEL.take(48)}", requiresPin, cameraControls, recordingControls, settingsControls, interactionControls) else null

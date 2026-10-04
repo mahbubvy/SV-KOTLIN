@@ -43,21 +43,30 @@ fun ReceiveFilesScreen(onBack: () -> Unit) {
     val receiver = remember { TransferReceiver(context.applicationContext, app.cryptoEngine, app.mediaRepository, pins) }
     val state by receiver.state.collectAsState()
     val scope = rememberCoroutineScope()
-    var pinReady by remember { mutableStateOf(pins.isConfigured()) }
+    var requirePin by remember { mutableStateOf(pins.isSharePinRequired()) }
+    var settingPin by remember { mutableStateOf(false) }
     var savingPin by remember { mutableStateOf(false) }
     var pinError by remember { mutableStateOf<String?>(null) }
     KeepScreenOn()
     StopWhenHidden { receiver.stop() }
     DisposableEffect(Unit) { onDispose { receiver.close() } }
-    LaunchedEffect(pinReady) { if (pinReady) receiver.start() }
+    LaunchedEffect(Unit) {
+        // Require PIN was on but the PIN is gone: fall back to open receiving rather than failing.
+        if (requirePin && !pins.isConfigured()) { pins.setSharePinRequired(false); requirePin = false }
+        receiver.start()
+    }
     BackHandler { receiver.stop(); onBack() }
+    fun applyRequirePin(required: Boolean) {
+        pins.setSharePinRequired(required); requirePin = required; receiver.restart()
+    }
 
     TransferPage("Receive files", onBack = { receiver.stop(); onBack() }) {
         when (val current = state) {
-            TransferState.Idle -> Body(if (pinReady) "Starting…" else "Set a streaming PIN so only people you tell can send to this phone.")
+            TransferState.Idle -> Body("Starting…")
             is TransferState.Waiting -> {
                 Body("Waiting for a sender…")
-                Body("On the other phone, select photos or videos, tap Send to SV, then choose \"${current.name}\" and enter this phone's streaming PIN.")
+                Body("On the other phone, select photos or videos, tap Send to SV, then choose \"${current.name}\"" +
+                    if (requirePin) " and enter this phone's PIN." else ".")
                 Body("Both phones must be on the same Wi-Fi. A phone hotspot works too.")
             }
             is TransferState.AwaitingAccept -> {
@@ -79,16 +88,29 @@ fun ReceiveFilesScreen(onBack: () -> Unit) {
                 PrimaryButton("Receive again") { receiver.start() }
             }
         }
+        val idle = state !is TransferState.Transferring && state !is TransferState.AwaitingAccept
+        HorizontalDivider(color = VaultSurface)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text("Require PIN", color = TextPrimary, fontSize = 16.sp)
+                Text(if (requirePin) "Senders must enter this phone's PIN. It's the same PIN as camera streaming."
+                    else "Anyone on this Wi-Fi can ask to send. You still accept every transfer.", color = TextSecondary, fontSize = 14.sp)
+            }
+            Switch(checked = requirePin, enabled = idle, onCheckedChange = { on ->
+                if (on && !pins.isConfigured()) settingPin = true else applyRequirePin(on)
+            }, colors = SwitchDefaults.colors(checkedTrackColor = VaultAccent))
+        }
     }
 
-    if (!pinReady) StreamPinDialog(setup = true, saving = savingPin, error = pinError,
-        message = "Set a four-digit streaming PIN. People sending files to this phone will need it.",
-        onDismiss = onBack, onConfirm = { pin ->
+    if (settingPin) StreamPinDialog(setup = true, saving = savingPin, error = pinError, fileSharing = true,
+        message = "Senders will need to enter this four-digit PIN. It's also used for camera streaming.",
+        onDismiss = { settingPin = false; pinError = null }, onConfirm = { pin ->
             savingPin = true
             scope.launch {
                 try {
                     withContext(Dispatchers.IO) { pins.setPin(pin) }
-                    pinReady = true
+                    settingPin = false; pinError = null
+                    applyRequirePin(true)
                 } catch (_: Exception) { pinError = "Could not save the PIN. Try again." }
                 finally { pin.fill('\u0000'); savingPin = false }
             }
@@ -107,6 +129,7 @@ fun SendFilesScreen(mediaIds: List<String>, onBack: () -> Unit) {
         value = withContext(Dispatchers.IO) { mediaIds.mapNotNull { app.mediaRepository.getMediaById(it) } }
     }
     var prompt by remember { mutableStateOf<StreamEndpoint?>(null) }
+    val recents = remember(state) { sender.recentReceivers() }
     KeepScreenOn()
     StopWhenHidden { sender.cancel() }
     DisposableEffect(Unit) { onDispose { sender.close() } }
@@ -122,9 +145,19 @@ fun SendFilesScreen(mediaIds: List<String>, onBack: () -> Unit) {
                 else -> {
                     Body("Send ${items(selected.size)} to:")
                     Body(receivers.message)
-                    receivers.cameras.forEach { receiver ->
-                        OutlinedButton(onClick = { prompt = receiver }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) { Text(receiver.name) }
+                    // Phones sent to before come first.
+                    receivers.cameras.sortedBy { recents.indexOf(it.name).let { index -> if (index < 0) Int.MAX_VALUE else index } }.forEach { receiver ->
+                        OutlinedButton(onClick = {
+                            if (receiver.requiresPin) prompt = receiver
+                            else { sender.discovery.stopSearching(); sender.send(receiver, null, selected) }
+                        }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(receiver.name)
+                                val notes = listOfNotNull("Shared before".takeIf { receiver.name in recents }, "PIN needed".takeIf { receiver.requiresPin })
+                                if (notes.isNotEmpty()) Text(notes.joinToString(" · "), color = TextSecondary, fontSize = 14.sp)
+                            }
+                        }
                     }
                     TextButton(onClick = { sender.discovery.search() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Refresh", color = VaultAccent) }
                 }
@@ -149,7 +182,7 @@ fun SendFilesScreen(mediaIds: List<String>, onBack: () -> Unit) {
     }
 
     prompt?.let { receiver ->
-        StreamPinDialog(setup = false, message = "Enter the streaming PIN set on ${receiver.name}.",
+        StreamPinDialog(setup = false, fileSharing = true, message = "${receiver.name} requires a PIN. Enter the four-digit PIN set on that phone.",
             onDismiss = { prompt = null }, onConfirm = { pin ->
                 prompt = null
                 val selected = items.orEmpty()
