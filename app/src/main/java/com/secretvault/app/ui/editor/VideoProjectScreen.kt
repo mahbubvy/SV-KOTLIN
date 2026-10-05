@@ -144,6 +144,9 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(EncryptedMediaDataSource.Factory(app.cryptoEngine)))
             .build()
+            // Media3 1.5.1 builds the effect pipeline only if effects are set before the video starts; later changes
+            // then reach it live. An empty list switches it on so colour adjustments can show in the preview.
+            .apply { setVideoEffects(emptyList()) }
     }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -210,13 +213,10 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
 
     // The clip on screen's colour, applied by the player itself with the same lookup table the export uses.
     val onScreenLook = project.clipAt(positionMs)?.let { (index, _) -> project.clips[index].adjustments } ?: Adjustments()
-    var lookApplied by remember { mutableStateOf(false) }
     LaunchedEffect(onScreenLook) {
-        if (onScreenLook.isNone && !lookApplied) return@LaunchedEffect // never turn the effect pipeline on for nothing
         delay(60L) // let a moving slider settle
         val lut = if (onScreenLook.isNone) null else withContext(Dispatchers.Default) { SingleColorLut.createFromCube(onScreenLook.lutCube()) }
         player.setVideoEffects(listOfNotNull(lut))
-        lookApplied = true
         // A paused player keeps showing the old frame; seeking in place redraws it with the new look.
         if (!player.isPlaying) player.seekTo(player.currentPosition)
     }
@@ -403,7 +403,7 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     onKey -> "On a key: drag or pinch to change it."
                     else -> "${sticker.keys.size} keys. Drag or pinch here to add one."
                 }, color = TextMuted, fontSize = 12.sp, maxLines = 1)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Tool(Icons.Default.EmojiEmotions, "Sticker", !saving && project.stickers.size < VideoProject.MAX_STICKERS) { showStickerPicker = true }
                     Tool(Icons.Default.Diamond, if (onKey) "Remove key" else "Add key",
                         !saving && positionMs in sticker.startMs..sticker.endMs) {
@@ -427,7 +427,7 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     "${clip.media.originalName}${if (clip.muted) " · muted" else ""}", color = TextMuted, fontSize = 12.sp, maxLines = 1)
             }
             if (sticker == null && panel == null) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 val ready = !saving
                 Tool(Icons.Default.Add, "Add", ready) { showPicker = true }
                 Tool(Icons.Default.ContentCut, "Split", ready && clip != null) {
@@ -695,9 +695,11 @@ private class TimelineState(
 private fun Tool(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
     val tint = if (enabled) TextPrimary else TextMuted
     Column(horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 2.dp, vertical = 4.dp)) {
-        Icon(icon, null, tint = tint)
-        Text(label, color = tint, fontSize = 11.sp)
+        modifier = Modifier.widthIn(min = 60.dp).clip(RoundedCornerShape(10.dp)).clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp)) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(28.dp))
+        Spacer(Modifier.height(2.dp))
+        Text(label, color = tint, fontSize = 12.sp, maxLines = 1)
     }
 }
 
