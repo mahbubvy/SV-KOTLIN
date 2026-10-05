@@ -33,7 +33,9 @@ fun VaultNavGraph(
     val isUnlocked by app.sessionManager.isUnlocked.collectAsState()
 
     LaunchedEffect(cameraEntryRequest) {
-        if (cameraEntryRequest > 0 && app.sessionManager.keepUnlocked.value && app.sessionManager.isUnlocked.value) {
+        // An edit in progress wins over the camera shortcut: stay in the editor.
+        if (cameraEntryRequest > 0 && app.sessionManager.keepUnlocked.value && app.sessionManager.isUnlocked.value &&
+            app.videoEditManager.draft == null) {
             navController.navigate(Screen.VaultHome.route) {
                 popUpTo(navController.graph.id)
                 launchSingleTop = true
