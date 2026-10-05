@@ -97,6 +97,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 private const val TIMELINE_FRAMES = 8
+private val MuteColor = Color(0xFF4F8DF7)
 
 @OptIn(UnstableApi::class)
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
@@ -122,10 +123,15 @@ fun VideoEditorScreen(
     var isPlaying by remember { mutableStateOf(false) }
     var previewError by remember(item.id) { mutableStateOf<String?>(null) }
     var mode by remember { mutableStateOf(VideoEditMode.TRIM) }
+    // Trim and Remove are alternative cuts; the last one chosen applies. Mutes stack on top of either.
+    var cutMode by remember { mutableStateOf(VideoEditMode.TRIM) }
     var trimRange by remember { mutableStateOf(VideoSegment(0L, 0L)) }
     // Remove mode: the slider edits sections[activeSection]; the others stay drawn on the strip.
     var sections by remember { mutableStateOf(emptyList<VideoSegment>()) }
     var activeSection by remember { mutableIntStateOf(0) }
+    // Mute mode works the same way on its own list, on the original timeline.
+    var mutes by remember { mutableStateOf(emptyList<VideoSegment>()) }
+    var activeMute by remember { mutableIntStateOf(0) }
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -153,12 +159,13 @@ fun VideoEditorScreen(
         }
     }
 
-    // Preview plays the result: skip removed sections, stay inside the trim.
+    // Preview plays the result: skip removed sections, stay inside the trim, go silent inside mutes.
     LaunchedEffect(player) {
         while (true) {
             positionMs = player.currentPosition
+            player.volume = if (mutes.any { positionMs in it }) 0f else 1f
             if (player.isPlaying) {
-                if (mode == VideoEditMode.TRIM) {
+                if (cutMode == VideoEditMode.TRIM) {
                     if (positionMs < trimRange.startMs) {
                         player.seekTo(trimRange.startMs)
                     } else if (positionMs >= trimRange.endMs) {
@@ -193,28 +200,33 @@ fun VideoEditorScreen(
         if (durationMs > 0) value = loadTimelineFrames(app, item, durationMs)
     }
 
-    val selected = if (mode == VideoEditMode.TRIM) trimRange else sections.getOrNull(activeSection) ?: trimRange
+    val muting = mode == VideoEditMode.MUTE
+    // The section list the Remove or Mute tab is editing.
+    val ranges = if (muting) mutes else sections
+    val activeIndex = if (muting) activeMute else activeSection
+    fun setRanges(list: List<VideoSegment>, active: Int) {
+        if (muting) { mutes = list; activeMute = active } else { sections = list; activeSection = active }
+    }
+    val selected = if (mode == VideoEditMode.TRIM) trimRange else ranges.getOrNull(activeIndex) ?: trimRange
     val segments = when {
         durationMs == 0L -> emptyList()
-        mode == VideoEditMode.TRIM -> VideoEditPlan.trimmed(durationMs, trimRange)
+        cutMode == VideoEditMode.TRIM -> VideoEditPlan.trimmed(durationMs, trimRange)
         else -> VideoEditPlan.withSectionsRemoved(durationMs, sections)
     }
     val resultMs = segments.sumOf { it.durationMs }
-    val canSave = previewError == null && segments.isNotEmpty() && resultMs < durationMs
+    val cut = resultMs < durationMs
+    val canSave = previewError == null && segments.isNotEmpty() && (cut || mutes.isNotEmpty())
 
     val onTimelineTap: (Long) -> Unit = { tapMs ->
         player.pause()
         player.seekTo(tapMs)
-        if (mode == VideoEditMode.REMOVE_SECTION) {
-            val hit = sections.indexOfFirst { tapMs in it }
+        if (mode != VideoEditMode.TRIM) {
+            val hit = ranges.indexOfFirst { tapMs in it }
             when {
-                hit >= 0 -> activeSection = hit
-                sections.size >= VideoEditPlan.MAX_SECTIONS ->
+                hit >= 0 -> setRanges(ranges, hit)
+                ranges.size >= VideoEditPlan.MAX_SECTIONS ->
                     Toast.makeText(context, "Up to ${VideoEditPlan.MAX_SECTIONS} sections", Toast.LENGTH_SHORT).show()
-                else -> VideoEditPlan.newSectionAt(tapMs, durationMs, sections)?.let {
-                    sections = sections + it
-                    activeSection = sections.lastIndex
-                }
+                else -> VideoEditPlan.newSectionAt(tapMs, durationMs, ranges)?.let { setRanges(ranges + it, ranges.size) }
             }
         }
     }
@@ -235,7 +247,7 @@ fun VideoEditorScreen(
             Text("Edit video", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
             TextButton(
-                onClick = { app.videoEditManager.start(item, segments) },
+                onClick = { app.videoEditManager.start(item, segments, mutes) },
                 enabled = canSave && editState !is VideoEditState.Running
             ) {
                 Text("Save", color = if (canSave) VaultAccent else TextMuted, fontWeight = FontWeight.SemiBold)
@@ -296,18 +308,23 @@ fun VideoEditorScreen(
 
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                listOf(VideoEditMode.TRIM to "Trim", VideoEditMode.REMOVE_SECTION to "Remove section")
-                    .forEachIndexed { index, (option, label) ->
+                val tabs = listOf(VideoEditMode.TRIM to "Trim", VideoEditMode.REMOVE_SECTION to "Remove", VideoEditMode.MUTE to "Mute")
+                tabs.forEachIndexed { index, (option, label) ->
                         SegmentedButton(
                             selected = mode == option,
                             onClick = {
                                 mode = option
+                                if (option != VideoEditMode.MUTE) cutMode = option
                                 if (option == VideoEditMode.REMOVE_SECTION && sections.isEmpty()) {
                                     sections = listOf(VideoSegment(durationMs / 3, durationMs * 2 / 3))
                                     activeSection = 0
                                 }
+                                if (option == VideoEditMode.MUTE && mutes.isEmpty()) {
+                                    mutes = listOf(VideoSegment(durationMs / 3, durationMs * 2 / 3))
+                                    activeMute = 0
+                                }
                             },
-                            shape = SegmentedButtonDefaults.itemShape(index, 2),
+                            shape = SegmentedButtonDefaults.itemShape(index, tabs.size),
                             colors = SegmentedButtonDefaults.colors(
                                 activeContainerColor = VaultAccent.copy(alpha = 0.25f),
                                 activeContentColor = TextPrimary,
@@ -320,30 +337,32 @@ fun VideoEditorScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            val removing = mode == VideoEditMode.REMOVE_SECTION
+            val editingSections = mode != VideoEditMode.TRIM
+            val sectionColor = if (muting) MuteColor else VaultError
             TimelineStrip(
                 frames = frames,
                 durationMs = durationMs,
                 positionMs = positionMs,
-                removedRanges = if (removing) {
-                    sections
+                removedRanges = if (editingSections) {
+                    ranges
                 } else {
                     listOf(VideoSegment(0L, trimRange.startMs), VideoSegment(trimRange.endMs, durationMs))
                 },
-                removedColor = if (removing) VaultError.copy(alpha = 0.45f) else Color.Black.copy(alpha = 0.7f),
-                activeRange = if (removing) sections.getOrNull(activeSection) else null,
+                removedColor = if (editingSections) sectionColor.copy(alpha = 0.45f) else Color.Black.copy(alpha = 0.7f),
+                activeRange = if (editingSections) ranges.getOrNull(activeIndex) else null,
+                activeColor = sectionColor,
                 onTap = onTimelineTap
             )
 
-            val trackColor = if (removing) VaultError else VaultAccent
+            val trackColor = if (editingSections) sectionColor else VaultAccent
             RangeSlider(
                 value = selected.startMs.toFloat()..selected.endMs.toFloat(),
                 onValueChange = { newRange ->
                     val updated = VideoSegment(newRange.start.toLong(), newRange.endInclusive.toLong())
                     // Show the frame under whichever handle is moving.
                     val moved = if (updated.startMs != selected.startMs) updated.startMs else updated.endMs
-                    if (removing) {
-                        sections = sections.toMutableList().also { it[activeSection] = updated }
+                    if (editingSections) {
+                        setRanges(ranges.toMutableList().also { it[activeIndex] = updated }, activeIndex)
                     } else {
                         trimRange = updated
                     }
@@ -351,7 +370,8 @@ fun VideoEditorScreen(
                     player.seekTo(moved)
                 },
                 valueRange = 0f..durationMs.toFloat().coerceAtLeast(1f),
-                enabled = previewError == null && durationMs > 0 && editState !is VideoEditState.Running,
+                enabled = previewError == null && durationMs > 0 && editState !is VideoEditState.Running &&
+                    (!editingSections || ranges.isNotEmpty()),
                 colors = SliderDefaults.colors(
                     thumbColor = trackColor,
                     activeTrackColor = trackColor,
@@ -365,15 +385,17 @@ fun VideoEditorScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Start ${formatTime(selected.startMs)}", color = TextSecondary, fontSize = 12.sp)
-                if (removing) {
+                if (editingSections) {
+                    // Remove keeps at least one section (it's the tab's whole point); all mutes can go.
+                    val canDelete = ranges.size > (if (muting) 0 else 1)
                     TextButton(
                         onClick = {
-                            sections = sections.filterIndexed { index, _ -> index != activeSection }
-                            activeSection = activeSection.coerceAtMost(sections.lastIndex)
+                            val rest = ranges.filterIndexed { index, _ -> index != activeIndex }
+                            setRanges(rest, activeIndex.coerceAtMost(rest.lastIndex).coerceAtLeast(0))
                         },
-                        enabled = sections.size > 1 && editState !is VideoEditState.Running
+                        enabled = canDelete && editState !is VideoEditState.Running
                     ) {
-                        val tint = if (sections.size > 1) VaultError else TextMuted
+                        val tint = if (canDelete) sectionColor else TextMuted
                         Icon(
                             painter = painterResource(R.drawable.ic_delete_section),
                             contentDescription = null,
@@ -386,23 +408,31 @@ fun VideoEditorScreen(
                 }
                 Text("End ${formatTime(selected.endMs)}", color = TextSecondary, fontSize = 12.sp)
             }
-            if (removing) {
+            if (editingSections) {
+                val colour = if (muting) "blue" else "red"
                 Text(
-                    text = "Section ${activeSection + 1} of ${sections.size}. Tap the timeline outside a red section " +
-                        "to add another, or tap a red section to edit it.",
+                    text = if (ranges.isEmpty()) "Tap the timeline to add a part to mute."
+                        else "Section ${activeIndex + 1} of ${ranges.size}. Tap the timeline outside a $colour section " +
+                            "to add another, or tap a $colour section to edit it.",
                     color = TextMuted,
                     fontSize = 12.sp
                 )
                 Spacer(Modifier.height(4.dp))
             }
             Spacer(Modifier.height(8.dp))
+            val muteNote = when (mutes.size) { 0 -> ""; 1 -> " 1 part muted."; else -> " ${mutes.size} parts muted." }
             Text(
                 text = when {
                     previewError != null -> "Retry the preview or go back to the gallery."
                     durationMs == 0L -> "Loading video…"
                     segments.isEmpty() -> "The new video must be at least 1 second long."
-                    !canSave -> if (removing) "Drag the handles to choose the part to remove." else "Drag the handles to choose the part to keep."
-                    else -> "New video: ${formatTime(resultMs)} (removes ${formatTime(durationMs - resultMs)}). The original is kept."
+                    !canSave -> when (mode) {
+                        VideoEditMode.REMOVE_SECTION -> "Drag the handles to choose the part to remove."
+                        VideoEditMode.MUTE -> "Drag the handles to choose the part to mute."
+                        else -> "Drag the handles to choose the part to keep."
+                    }
+                    !cut -> "New video: ${formatTime(resultMs)}.$muteNote The original is kept."
+                    else -> "New video: ${formatTime(resultMs)} (removes ${formatTime(durationMs - resultMs)}).$muteNote The original is kept."
                 },
                 color = if (durationMs > 0 && segments.isEmpty()) VaultError else TextMuted,
                 fontSize = 13.sp
@@ -433,6 +463,7 @@ private fun TimelineStrip(
     removedRanges: List<VideoSegment>,
     removedColor: Color,
     activeRange: VideoSegment?,
+    activeColor: Color,
     onTap: (Long) -> Unit
 ) {
     val currentOnTap by rememberUpdatedState(onTap)
@@ -474,7 +505,7 @@ private fun TimelineStrip(
             activeRange?.let { range ->
                 val stroke = 3.dp.toPx()
                 drawRect(
-                    color = VaultError,
+                    color = activeColor,
                     topLeft = Offset(range.startMs * pxPerMs + stroke / 2, stroke / 2),
                     size = Size((range.durationMs * pxPerMs - stroke).coerceAtLeast(0f), size.height - stroke),
                     style = Stroke(width = stroke)

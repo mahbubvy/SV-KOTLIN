@@ -86,11 +86,11 @@ Each phase must build (`./gradlew assembleDebug`) and keep the unit tests passin
 - [x] Write this spec and agree the decisions with the user.
 
 ### Phase 1: Mute sections
-- [ ] `VideoEditPlan.toOutput(ranges, segments)`, with unit tests (trim, remove, ranges spanning a cut, empty).
-- [ ] `MuteAudioProcessor`, with a JVM unit test: silence inside the range, untouched outside, works across buffer boundaries.
-- [ ] `VideoEditManager.start(item, segments, edits)` applies mutes as composition audio effects.
-- [ ] Editor: a **Mute** tab. Sections are added and edited like Remove section and shown in a separate colour. The preview goes silent inside them.
-- [ ] Save is allowed when only mutes or stickers changed, with no cut.
+- [x] `VideoEditPlan.toOutput(ranges, segments)`, with unit tests (trim, remove, ranges spanning a cut, empty).
+- [x] `MuteAudioProcessor`, with a JVM unit test: silence inside the range, untouched outside, works across buffer boundaries.
+- [x] `VideoEditManager.start(item, segments, edits)` applies mutes as composition audio effects.
+- [x] Editor: a **Mute** tab. Sections are added and edited like Remove section and shown in a separate colour. The preview goes silent inside them.
+- [x] Save is allowed when only mutes or stickers changed, with no cut.
 
 ### Phase 2: Stickers
 - [ ] `Sticker` model, plus emoji and vault-photo bitmap loading (in memory).
@@ -128,3 +128,4 @@ adb install -r app/build/outputs/apk/debug/SecretVault-v1.1.1-camera-stream-test
 
 ## Progress log
 - 2026-10-05: Phase 0 done. Branch `video-editor-plus` created from `main` (438fd16).
+- 2026-10-05: Phase 1 code done: `VideoEditPlan.toOutput`, `MuteAudioProcessor` (tests pass), a Mute tab with blue sections, and the preview mutes. Installed on the CMF phone; waiting for the user to try it.

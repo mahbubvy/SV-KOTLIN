@@ -5,7 +5,7 @@ data class VideoSegment(val startMs: Long, val endMs: Long) {
     operator fun contains(ms: Long): Boolean = ms in startMs..endMs
 }
 
-enum class VideoEditMode { TRIM, REMOVE_SECTION }
+enum class VideoEditMode { TRIM, REMOVE_SECTION, MUTE }
 
 object VideoEditPlan {
     const val MIN_RESULT_MS = 1_000L
@@ -52,6 +52,24 @@ object VideoEditPlan {
     }
 
     /** "SV_x.mp4" -> "SV_x_edited.mp4", then "_edited_1", "_edited_2"... for names already taken. */
+    /**
+     * Maps [ranges] picked on the original video onto the exported video made of [segments]:
+     * each kept segment contributes its overlap with a range, shifted to where that segment lands in the output.
+     */
+    fun toOutput(ranges: List<VideoSegment>, segments: List<VideoSegment>): List<VideoSegment> {
+        val mapped = mutableListOf<VideoSegment>()
+        var outputStart = 0L
+        for (segment in segments) {
+            for (range in ranges) {
+                val start = maxOf(range.startMs, segment.startMs)
+                val end = minOf(range.endMs, segment.endMs)
+                if (end > start) mapped += VideoSegment(outputStart + start - segment.startMs, outputStart + end - segment.startMs)
+            }
+            outputStart += segment.durationMs
+        }
+        return mapped.sortedBy { it.startMs }
+    }
+
     fun editedFileName(fileName: String, existingNames: Set<String>): String {
         val dot = fileName.lastIndexOf('.')
         val extension = if (dot > 0) fileName.substring(dot) else ""
