@@ -2,6 +2,7 @@ package com.secretvault.app.ui.editor
 
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import android.view.LayoutInflater
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -51,6 +52,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -78,7 +80,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.Player
-import androidx.media3.effect.SingleColorLut
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -102,7 +103,6 @@ import com.secretvault.app.core.worker.VideoEditState
 import com.secretvault.app.ui.gallery.components.StableEncryptedThumbnail
 import com.secretvault.app.ui.theme.*
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -144,9 +144,6 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(EncryptedMediaDataSource.Factory(app.cryptoEngine)))
             .build()
-            // Media3 1.5.1 builds the effect pipeline only if effects are set before the video starts; later changes
-            // then reach it live. An empty list switches it on so colour adjustments can show in the preview.
-            .apply { setVideoEffects(emptyList()) }
     }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -211,14 +208,11 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
         value = latestProject.clips.firstOrNull()?.let { withContext(Dispatchers.IO) { app.videoEditManager.uprightSize(it.media) } }
     }
 
-    // The clip on screen's colour, applied by the player itself with the same lookup table the export uses.
+    // The clip on screen's colour, drawn over the player as a shader built from the same table the export uses.
+    // Android 13+ only (RuntimeShader); older phones still get it in the saved video.
     val onScreenLook = project.clipAt(positionMs)?.let { (index, _) -> project.clips[index].adjustments } ?: Adjustments()
-    LaunchedEffect(onScreenLook) {
-        delay(60L) // let a moving slider settle
-        val lut = if (onScreenLook.isNone) null else withContext(Dispatchers.Default) { SingleColorLut.createFromCube(onScreenLook.lutCube()) }
-        player.setVideoEffects(listOfNotNull(lut))
-        // A paused player keeps showing the old frame; seeking in place redraws it with the new look.
-        if (!player.isPlaying) player.seekTo(player.currentPosition)
+    val look by produceState<android.graphics.RenderEffect?>(null, onScreenLook) {
+        value = if (onScreenLook.isNone || Build.VERSION.SDK_INT < 33) null else withContext(Dispatchers.Default) { lookEffect(onScreenLook) }
     }
 
     fun openPanel(which: Panel) {
@@ -347,6 +341,7 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     scaleY = framing.zoom
                     translationX = framing.offsetX * size.width
                     translationY = framing.offsetY * size.height
+                    renderEffect = look?.asComposeRenderEffect()
                 })
                 project.stickers.forEach { s ->
                     val img = stickerImages[s.source.key] ?: return@forEach

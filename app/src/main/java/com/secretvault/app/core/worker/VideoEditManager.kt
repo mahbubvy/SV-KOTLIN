@@ -206,9 +206,10 @@ class VideoEditManager(
                     if (clip.muted) listOf(MuteAudioProcessor(listOf(VideoSegment(0L, Long.MAX_VALUE / 2_000)))) else emptyList(),
                     frame?.let { (width, height) ->
                         listOfNotNull(
-                            // Colour first, so the black bars Presentation adds stay black.
-                            clip.adjustments.takeUnless { it.isNone }?.let { SingleColorLut.createFromCube(it.lutCube()) },
                             Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT),
+                            // Colour after fitting and before framing, like the preview: its shader covers the fitted
+                            // picture, bars included, and framing then moves the coloured result.
+                            clip.adjustments.takeUnless { it.isNone }?.let { SingleColorLut.createFromCube(it.lutCube()) },
                             clip.framing.takeIf { it != Framing() }?.let { FramingTransformation(it, width, height) })
                     }
                         ?: emptyList()
