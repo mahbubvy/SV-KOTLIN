@@ -10,7 +10,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -33,6 +36,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.media3.exoplayer.SeekParameters
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -60,10 +76,13 @@ import com.secretvault.app.core.worker.VideoEditState
 import com.secretvault.app.ui.gallery.components.StableEncryptedThumbnail
 import com.secretvault.app.ui.theme.*
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
+import kotlin.math.floor
+import kotlin.math.min
+import kotlin.math.roundToInt
 
 private val MutedColor = Color(0xFF4F8DF7)
 
@@ -81,6 +100,7 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     var isPlaying by remember { mutableStateOf(false) }
     var showPicker by remember { mutableStateOf(true) }
     var confirmDiscard by remember { mutableStateOf(false) }
+    var touching by remember { mutableStateOf(false) }
     val latestProject by rememberUpdatedState(project)
     val clip = project.clips.getOrNull(selected)
     val saving = editState is VideoEditState.Running
@@ -117,15 +137,25 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
         seekTo(keep)
         selected = selected.coerceIn(0, (project.clips.size - 1).coerceAtLeast(0))
     }
+    // Every frame, so the timeline scrolls smoothly; a finger on the timeline owns the playhead instead.
     LaunchedEffect(player) {
         while (true) {
+            withFrameNanos { }
             val current = latestProject
             val index = player.currentMediaItemIndex
             if (index in current.clips.indices) {
-                positionMs = current.outputStartOf(index) + player.currentPosition
+                if (!touching) positionMs = current.outputStartOf(index) + player.currentPosition
                 player.volume = if (current.clips[index].muted) 0f else 1f
             }
-            delay(100L)
+        }
+    }
+
+    // Frames for the timeline, once per source video.
+    val frames = remember { mutableStateMapOf<String, List<ImageBitmap>>() }
+    LaunchedEffect(project.clips.mapTo(HashSet()) { it.media.id }) {
+        latestProject.clips.distinctBy { it.media.id }.filter { it.media.id !in frames }.forEach { c ->
+            val count = (c.sourceDurationMs / 2_000).toInt().coerceIn(4, 30)
+            frames[c.media.id] = loadTimelineFrames(app, c.media, c.sourceDurationMs, count).map { it.asImageBitmap() }
         }
     }
 
@@ -184,24 +214,20 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                 }
                 Text("${formatTime(positionMs)} / ${formatTime(project.durationMs)}", color = TextSecondary, fontSize = 13.sp)
             }
-            ClipTrack(project, selected, positionMs) { index, outputMs ->
-                player.pause(); selected = index; seekTo(outputMs)
-            }
+            Timeline(project, selected, positionMs, frames, enabled = !saving,
+                onSelect = { selected = it },
+                onTouch = { down ->
+                    touching = down
+                    if (down) { player.pause(); player.setSeekParameters(SeekParameters.CLOSEST_SYNC) }
+                    else { player.setSeekParameters(SeekParameters.EXACT); seekTo(positionMs) }
+                },
+                onScrub = ::seekTo,
+                onTrim = { start, startMs, endMs ->
+                    project = project.trim(selected, startMs, endMs)
+                    // Park the dragged edge under the playhead so the preview shows the cut frame.
+                    positionMs = project.outputStartOf(selected) + if (start) 0L else project.clips[selected].durationMs - 1
+                })
             if (clip != null) {
-                RangeSlider(
-                    value = clip.startMs.toFloat()..clip.endMs.toFloat(),
-                    onValueChange = { range ->
-                        val movedStart = range.start.toLong() != clip.startMs
-                        project = project.trim(selected, range.start.toLong(), range.endInclusive.toLong())
-                        val trimmed = project.clips[selected]
-                        player.pause()
-                        positionMs = project.outputStartOf(selected) + if (movedStart) 0L else trimmed.durationMs - 1
-                    },
-                    valueRange = 0f..clip.sourceDurationMs.toFloat(),
-                    enabled = !saving,
-                    colors = SliderDefaults.colors(thumbColor = VaultAccent, activeTrackColor = VaultAccent,
-                        inactiveTrackColor = Color.White.copy(alpha = 0.3f))
-                )
                 Text("Clip ${selected + 1} of ${project.clips.size}: ${formatTime(clip.startMs)} – ${formatTime(clip.endMs)} of " +
                     "${clip.media.originalName}${if (clip.muted) " · muted" else ""}", color = TextMuted, fontSize = 12.sp, maxLines = 1)
             }
@@ -253,37 +279,125 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     }
 }
 
-/** Fit-to-width strip of clip blocks with the playhead. Phase 3 replaces it with a scrolling timeline. */
+/**
+ * Scrolling timeline with the playhead fixed in the centre: swipe to scrub, pinch to zoom, tap to select a clip,
+ * drag the selected clip's edges to trim. [onTouch] brackets every swipe, pinch or edge drag.
+ */
 @Composable
-private fun ClipTrack(project: VideoProject, selected: Int, positionMs: Long, onTap: (index: Int, outputMs: Long) -> Unit) {
-    val total = project.durationMs
-    val latestTap by rememberUpdatedState(onTap)
-    val latestProject by rememberUpdatedState(project)
-    Box(Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(8.dp)).background(VaultSurface)
-        .pointerInput(Unit) {
-            detectTapGestures { offset ->
-                val current = latestProject
-                if (current.durationMs <= 0) return@detectTapGestures
-                val ms = (offset.x / size.width * current.durationMs).toLong()
-                current.clipAt(ms)?.let { (index, _) -> latestTap(index, ms) }
+private fun Timeline(
+    project: VideoProject, selected: Int, positionMs: Long, frames: Map<String, List<ImageBitmap>>, enabled: Boolean,
+    onSelect: (Int) -> Unit, onTouch: (Boolean) -> Unit, onScrub: (Long) -> Unit,
+    onTrim: (start: Boolean, startMs: Long, endMs: Long) -> Unit
+) {
+    var dpPerSecond by remember { mutableFloatStateOf(60f) }
+    val pxPerMs = with(LocalDensity.current) { dpPerSecond.dp.toPx() } / 1000f
+    val mutePainter = rememberVectorPainter(Icons.AutoMirrored.Filled.VolumeOff)
+    val state by rememberUpdatedState(TimelineState(project, selected, positionMs, pxPerMs, onSelect, onTouch, onScrub, onTrim))
+
+    Canvas(Modifier.fillMaxWidth().height(64.dp).clipToBounds().pointerInput(enabled) {
+        if (!enabled) return@pointerInput
+        awaitEachGesture {
+            val down = awaitFirstDown()
+            val begin = state
+            if (begin.project.clips.isEmpty()) return@awaitEachGesture
+            val centre = size.width / 2f
+            fun screenX(outputMs: Long) = centre + (outputMs - begin.positionMs) * begin.pxPerMs
+            // Which edge of the selected clip is under the finger, if any: -1 start, 1 end, 0 neither.
+            val edge = begin.project.clips.getOrNull(begin.selected)?.let { c ->
+                val left = screenX(begin.project.outputStartOf(begin.selected))
+                val right = left + c.durationMs * begin.pxPerMs
+                val reach = 24.dp.toPx()
+                val toLeft = abs(down.position.x - left)
+                val toRight = abs(down.position.x - right)
+                when {
+                    toLeft <= reach && toLeft <= toRight -> -1
+                    toRight <= reach -> 1
+                    else -> 0
+                }
+            } ?: 0
+            var dragged = 0f
+            var moving = false
+            var zooming = false
+            do {
+                val event = awaitPointerEvent()
+                if (event.changes.size > 1) zooming = true
+                val pan = event.calculatePan().x
+                val zoom = event.calculateZoom()
+                if (!moving && (zooming || abs(dragged + pan) > viewConfiguration.touchSlop)) { moving = true; begin.onTouch(true) }
+                dragged += pan
+                if (moving) {
+                    event.changes.forEach { it.consume() }
+                    val now = state
+                    when {
+                        zooming -> dpPerSecond = (dpPerSecond * zoom).coerceIn(10f, 400f)
+                        edge != 0 -> {
+                            val c = begin.project.clips[begin.selected]
+                            val byMs = (dragged / begin.pxPerMs).toLong()
+                            if (edge < 0) now.onTrim(true, c.startMs + byMs, c.endMs) else now.onTrim(false, c.startMs, c.endMs + byMs)
+                        }
+                        else -> now.onScrub((begin.positionMs - (dragged / begin.pxPerMs).toLong()).coerceIn(0L, begin.project.durationMs))
+                    }
+                }
+            } while (event.changes.any { it.pressed })
+            if (moving) state.onTouch(false)
+            else begin.project.clipAt(begin.positionMs + ((down.position.x - centre) / begin.pxPerMs).toLong())
+                ?.let { (index, _) -> begin.onSelect(index) }
+        }
+    }) {
+        val centre = size.width / 2f
+        val tile = size.height
+        val gap = 1.dp.toPx()
+        var outputStart = 0L
+        project.clips.forEachIndexed { index, c ->
+            val left = centre + (outputStart - positionMs) * pxPerMs
+            val right = left + c.durationMs * pxPerMs
+            outputStart += c.durationMs
+            if (right < 0f || left > size.width) return@forEachIndexed
+            val l = left + gap
+            val r = right - gap
+            clipRect(l, 0f, r, size.height) {
+                drawRect(VaultSurface, Offset(l, 0f), Size(r - l, size.height))
+                val pics = frames[c.media.id].orEmpty()
+                // Square tiles, each showing the frame nearest the source time at its middle.
+                var x = if (left < 0f) left + floor(-left / tile) * tile else left
+                while (pics.isNotEmpty() && x < min(r, size.width)) {
+                    val sourceMs = c.startMs + ((x + tile / 2 - left) / pxPerMs).toLong()
+                    val pic = pics[(sourceMs * pics.size / c.sourceDurationMs).toInt().coerceIn(0, pics.lastIndex)]
+                    val side = min(pic.width, pic.height)
+                    drawImage(pic, IntOffset((pic.width - side) / 2, (pic.height - side) / 2), IntSize(side, side),
+                        IntOffset(x.roundToInt(), 0), IntSize(tile.roundToInt(), tile.roundToInt()))
+                    x += tile
+                }
             }
-        }) {
-        Row(Modifier.fillMaxSize()) {
-            project.clips.forEachIndexed { index, c ->
-                Box(Modifier.weight(c.durationMs.toFloat()).fillMaxHeight().padding(1.dp).clip(RoundedCornerShape(6.dp))
-                    .border(if (index == selected) 2.dp else 0.dp, if (index == selected) VaultAccent else Color.Transparent, RoundedCornerShape(6.dp))) {
-                    c.media.thumbnailPath?.let { StableEncryptedThumbnail(c.media.id, it, c.media.originalName, Modifier.fillMaxSize()) }
-                    if (c.muted) Icon(Icons.AutoMirrored.Filled.VolumeOff, "Muted", tint = Color.White,
-                        modifier = Modifier.align(Alignment.TopEnd).padding(2.dp).background(MutedColor, CircleShape).padding(2.dp).size(14.dp))
+            if (c.muted) {
+                val badge = 18.dp.toPx()
+                val bx = min(r, size.width) - badge - 4.dp.toPx()
+                if (bx > l) {
+                    drawCircle(MutedColor, badge / 2, Offset(bx + badge / 2, 4.dp.toPx() + badge / 2))
+                    translate(bx + 3.dp.toPx(), 4.dp.toPx() + 3.dp.toPx()) {
+                        with(mutePainter) { draw(Size(badge - 6.dp.toPx(), badge - 6.dp.toPx()), colorFilter = ColorFilter.tint(Color.White)) }
+                    }
+                }
+            }
+            if (index == selected) {
+                val handle = 10.dp.toPx()
+                drawRect(VaultAccent, Offset(l, gap), Size(r - l, size.height - 2 * gap), style = Stroke(2.dp.toPx()))
+                for (hx in listOf(l, r - handle)) {
+                    drawRect(VaultAccent, Offset(hx, 0f), Size(handle, size.height))
+                    drawLine(Color.White, Offset(hx + handle / 2, size.height * 0.3f), Offset(hx + handle / 2, size.height * 0.7f), 2.dp.toPx())
                 }
             }
         }
-        if (total > 0) Canvas(Modifier.fillMaxSize()) {
-            val x = positionMs.toFloat() / total * size.width
-            drawLine(Color.White, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx())
-        }
+        drawLine(Color.White, Offset(centre, 0f), Offset(centre, size.height), strokeWidth = 2.dp.toPx())
     }
 }
+
+/** Everything the timeline's gesture handler reads, captured together so one gesture sees a consistent snapshot. */
+private class TimelineState(
+    val project: VideoProject, val selected: Int, val positionMs: Long, val pxPerMs: Float,
+    val onSelect: (Int) -> Unit, val onTouch: (Boolean) -> Unit, val onScrub: (Long) -> Unit,
+    val onTrim: (Boolean, Long, Long) -> Unit
+)
 
 @Composable
 private fun Tool(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {

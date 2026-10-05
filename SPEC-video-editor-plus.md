@@ -123,7 +123,7 @@ Each phase must build (`./gradlew assembleDebug`) and keep the unit tests passin
 - [x] Screen: preview, play/pause, time, a simple fit-to-width clip track (tap to select), the vault video picker for **+ Add**, Split, Mute, Move, Delete, Save with a progress dialog, and Discard changes.
 
 ### Phase 3: Timeline
-- [ ] A scrolling timeline with a fixed centre playhead, pinch zoom, frame thumbnails per clip, and dragging the selected clip's edges to trim.
+- [x] A scrolling timeline with a fixed centre playhead, pinch zoom, frame thumbnails per clip, and dragging the selected clip's edges to trim.
 
 ### Phase 4: Stickers
 - [ ] Sticker track (bars, drag, edges), emoji grid and vault-photo picker, placing on the preview (drag and pinch), delete, export overlay.
@@ -161,3 +161,8 @@ adb install -r app/build/outputs/apk/debug/SecretVault-v1.1.1-camera-stream-test
   - `ui/editor/VideoProjectScreen.kt`: playlist preview with per-clip clipping and mute volume, fit-to-width `ClipTrack`, a RangeSlider to trim the selected clip, tools (Add, Split, Mute, Left, Right, Delete), `VaultVideoPicker`, and Discard changes.
   - Home FAB (MovieCreation icon), route `Screen.VideoProject`.
   - The old editor's `SavingDialog` and `formatTime` are now `internal` for reuse.
+- 2026-10-05: Phase 3 done; installed, waiting for the user to try it.
+  - `Timeline` in `VideoProjectScreen.kt` replaces the fit-to-width strip and the trim slider. The playhead is fixed in the centre and the timeline is drawn from `positionMs`, so playback scrolls it with no scroll state.
+  - Swipe scrubs (seeks with `CLOSEST_SYNC` while the finger is down, `EXACT` on release), pinch zooms (10–400 dp per second), tap selects, dragging the selected clip's edge trims and parks that edge under the playhead.
+  - Frames: `loadTimelineFrames` (old editor, now `internal` with a `count`) loads 4–30 frames per source video; square tiles pick the nearest one.
+  - No fling after a swipe yet.
