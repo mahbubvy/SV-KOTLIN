@@ -2,6 +2,8 @@ package com.secretvault.app.processing
 
 import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.model.MediaType
+import com.secretvault.app.core.processing.Placement
+import com.secretvault.app.core.processing.Sticker
 import com.secretvault.app.core.processing.StickerSource
 import com.secretvault.app.core.processing.VideoProject
 import org.junit.Assert.assertEquals
@@ -71,10 +73,10 @@ class VideoProjectTest {
         assertEquals(13_000L to 14_000L, s.startMs to s.endMs) // the default 3 s is cut at the end
         assertEquals(13_500L, withSticker.addSticker(smile, 99_000).stickers[1].startMs) // room for the shortest sticker
 
-        val moved = withSticker.updateSticker(s.id) { it.copy(startMs = -5, endMs = 2_000, centerX = 2f, widthFraction = 0f) }.stickers.single()
+        val moved = withSticker.updateSticker(s.id) { it.copy(startMs = -5, endMs = 2_000).placeAt(0) { p -> p.copy(centerX = 2f, widthFraction = 0f) } }.stickers.single()
         assertEquals(listOf(0L, 2_000L), listOf(moved.startMs, moved.endMs))
-        assertEquals(1f, moved.centerX)
-        assertEquals(0.05f, moved.widthFraction)
+        assertEquals(1f, moved.placement.centerX)
+        assertEquals(0.05f, moved.placement.widthFraction)
 
         // Deleting the 10 s clip leaves 4 s, so the sticker is pulled back inside it.
         val shrunk = withSticker.delete(0).stickers.single()
@@ -84,5 +86,25 @@ class VideoProjectTest {
         val full = (1..VideoProject.MAX_STICKERS).fold(project) { p, _ -> p.addSticker(smile, 0) }
         assertSame(full, full.addSticker(smile, 0))
         assertTrue(full.deleteSticker(full.stickers[0].id).stickers.size == VideoProject.MAX_STICKERS - 1)
+    }
+
+    @Test fun keyframesGlideBetweenPlacements() {
+        // Shown from 10 s to 14 s; keys at 1 s (left) and 3 s (right, twice as wide).
+        val still = Sticker(StickerSource.Emoji("x"), 10_000, 14_000, Placement(0.2f, 0.5f, 0.2f))
+        assertEquals(Placement(0.2f, 0.5f, 0.2f), still.placeAt(12_000) { it }.placementAt(13_000)) // no keys: one place
+
+        val moving = still.toggleKeyAt(11_000).placeAt(13_000) { it.copy(centerX = 0.8f, widthFraction = 0.4f) }
+        assertEquals(listOf(1_000L, 3_000L), moving.keys.map { it.atMs })
+        assertEquals(0.2f, moving.placementAt(10_000).centerX) // holds the first key before it
+        assertEquals(0.5f, moving.placementAt(12_000).centerX, 0.0001f) // halfway
+        assertEquals(0.3f, moving.placementAt(12_000).widthFraction, 0.0001f)
+        assertEquals(0.8f, moving.placementAt(14_000).centerX) // holds the last key after it
+
+        // Dragging near a key moves that key instead of adding one.
+        assertEquals(2, moving.placeAt(13_100) { it.copy(centerY = 0.1f) }.keys.size)
+        // Removing the last key leaves the sticker where that key had it.
+        val back = moving.toggleKeyAt(13_000).toggleKeyAt(11_050)
+        assertTrue(back.keys.isEmpty())
+        assertEquals(0.2f, back.placement.centerX)
     }
 }

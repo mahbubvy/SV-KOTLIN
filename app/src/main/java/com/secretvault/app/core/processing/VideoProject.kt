@@ -2,6 +2,7 @@ package com.secretvault.app.core.processing
 
 import com.secretvault.app.core.model.MediaItem
 import java.util.UUID
+import kotlin.math.abs
 
 /** One piece of a project: [media] played from [startMs] to [endMs] of its own timeline. */
 data class Clip(
@@ -91,15 +92,10 @@ data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<
         return if (next.durationMs < MIN_CLIP_MS) next.copy(stickers = emptyList()) else next.copy(stickers = stickers.map(next::fit))
     }
 
+    // Placements are kept in the frame as they're made (Sticker.placeAt), so only the times need fitting here.
     private fun fit(sticker: Sticker): Sticker {
         val start = sticker.startMs.coerceIn(0L, durationMs - MIN_CLIP_MS)
-        return sticker.copy(
-            startMs = start,
-            endMs = sticker.endMs.coerceIn(start + MIN_CLIP_MS, durationMs),
-            centerX = sticker.centerX.coerceIn(0f, 1f),
-            centerY = sticker.centerY.coerceIn(0f, 1f),
-            widthFraction = sticker.widthFraction.coerceIn(0.05f, 1f)
-        )
+        return sticker.copy(startMs = start, endMs = sticker.endMs.coerceIn(start + MIN_CLIP_MS, durationMs))
     }
 
     companion object {
@@ -115,15 +111,66 @@ sealed interface StickerSource {
 }
 
 /**
- * An image over the video from [startMs] to [endMs] of the output. Placement is in fractions of the frame:
- * [centerX]/[centerY] from the top-left, [widthFraction] of the frame's width (height follows the image's shape).
+ * Where a sticker sits, in fractions of the frame: [centerX]/[centerY] from the top-left, [widthFraction] of the
+ * frame's width (height follows the image's shape).
+ */
+data class Placement(val centerX: Float = 0.5f, val centerY: Float = 0.5f, val widthFraction: Float = 0.3f) {
+    fun fitted() = Placement(centerX.coerceIn(0f, 1f), centerY.coerceIn(0f, 1f), widthFraction.coerceIn(0.05f, 1f))
+}
+
+/** The sticker's [placement] [atMs] after the sticker appears, so keyframes move with the sticker. */
+data class Keyframe(val atMs: Long, val placement: Placement)
+
+/**
+ * An image over the video from [startMs] to [endMs] of the output. Without [keys] it stays at [placement]; with
+ * keys it glides in straight lines from one to the next, holding the first before it and the last after it.
  */
 data class Sticker(
     val source: StickerSource,
     val startMs: Long,
     val endMs: Long,
-    val centerX: Float = 0.5f,
-    val centerY: Float = 0.5f,
-    val widthFraction: Float = 0.3f,
+    val placement: Placement = Placement(),
+    val keys: List<Keyframe> = emptyList(), // sorted by atMs
     val id: String = UUID.randomUUID().toString()
-)
+) {
+    fun placementAt(outputMs: Long): Placement {
+        if (keys.isEmpty()) return placement
+        val at = outputMs - startMs
+        val next = keys.indexOfFirst { it.atMs >= at }
+        if (next == 0) return keys.first().placement
+        if (next < 0) return keys.last().placement
+        val a = keys[next - 1]
+        val b = keys[next]
+        val f = (at - a.atMs).toFloat() / (b.atMs - a.atMs)
+        fun mix(x: Float, y: Float) = x + (y - x) * f
+        return Placement(mix(a.placement.centerX, b.placement.centerX), mix(a.placement.centerY, b.placement.centerY),
+            mix(a.placement.widthFraction, b.placement.widthFraction))
+    }
+
+    /** The keyframe the playhead at [outputMs] is on, allowing for a playhead that lands a little off it. */
+    fun keyAt(outputMs: Long): Keyframe? = keys.firstOrNull { abs(it.atMs - (outputMs - startMs)) <= KEY_SNAP_MS }
+
+    /** Changes the placement shown at [outputMs]: the whole sticker without keyframes, else the keyframe there (added if new). */
+    fun placeAt(outputMs: Long, change: (Placement) -> Placement): Sticker {
+        val placed = change(placementAt(outputMs)).fitted()
+        if (keys.isEmpty()) return copy(placement = placed)
+        val existing = keyAt(outputMs)
+        val at = existing?.atMs ?: (outputMs - startMs).coerceIn(0L, endMs - startMs)
+        return copy(keys = (keys.filter { it !== existing } + Keyframe(at, placed)).sortedBy { it.atMs })
+    }
+
+    /** Adds a keyframe at [outputMs] holding what's shown there, or removes the one already there. */
+    fun toggleKeyAt(outputMs: Long): Sticker {
+        val existing = keyAt(outputMs)
+        return when {
+            // The last one going: stay where it was rather than jump back.
+            existing != null && keys.size == 1 -> copy(keys = emptyList(), placement = existing.placement)
+            existing != null -> copy(keys = keys - existing)
+            else -> copy(keys = (keys + Keyframe((outputMs - startMs).coerceIn(0L, endMs - startMs), placementAt(outputMs))).sortedBy { it.atMs })
+        }
+    }
+
+    companion object {
+        const val KEY_SNAP_MS = 150L
+    }
+}

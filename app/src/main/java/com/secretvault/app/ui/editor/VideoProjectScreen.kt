@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Diamond
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -48,6 +49,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalDensity
@@ -250,10 +252,11 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                         if (project.clips.isEmpty()) return@detectTapGestures
                         val hit = project.stickers.lastOrNull { s ->
                             val img = stickerImages[s.source.key] ?: return@lastOrNull false
-                            val w = s.widthFraction * size.width
+                            val p = s.placementAt(positionMs)
+                            val w = p.widthFraction * size.width
                             val h = w * img.height / img.width
                             (positionMs in s.startMs until s.endMs || s.id == stickerId) &&
-                                abs(tap.x - s.centerX * size.width) <= w / 2 && abs(tap.y - s.centerY * size.height) <= h / 2
+                                abs(tap.x - p.centerX * size.width) <= w / 2 && abs(tap.y - p.centerY * size.height) <= h / 2
                         }
                         when {
                             hit != null -> stickerId = hit.id
@@ -262,13 +265,16 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                         }
                     }
                 }
-                // Drag moves the selected sticker, pinch resizes it.
+                // Drag moves the selected sticker, pinch resizes it; with keyframes, at the playhead's moment.
                 .pointerInput(Unit) {
                     detectTransformGestures { _, pan, zoom, _ ->
                         val id = stickerId ?: return@detectTransformGestures
-                        project = project.updateSticker(id) {
-                            it.copy(centerX = it.centerX + pan.x / size.width, centerY = it.centerY + pan.y / size.height,
-                                widthFraction = it.widthFraction * zoom)
+                        player.pause()
+                        project = project.updateSticker(id) { s ->
+                            s.placeAt(positionMs) {
+                                it.copy(centerX = it.centerX + pan.x / size.width, centerY = it.centerY + pan.y / size.height,
+                                    widthFraction = it.widthFraction * zoom)
+                            }
                         }
                     }
                 }) {
@@ -280,9 +286,10 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                 project.stickers.forEach { s ->
                     val img = stickerImages[s.source.key] ?: return@forEach
                     if (positionMs !in s.startMs until s.endMs && s.id != stickerId) return@forEach
-                    val w = frameW * s.widthFraction
+                    val p = s.placementAt(positionMs)
+                    val w = frameW * p.widthFraction
                     val h = w * img.height / img.width
-                    Image(img, null, Modifier.offset(frameW * s.centerX - w / 2, frameH * s.centerY - h / 2).size(w, h)
+                    Image(img, null, Modifier.offset(frameW * p.centerX - w / 2, frameH * p.centerY - h / 2).size(w, h)
                         .then(if (s.id == stickerId) Modifier.border(1.5.dp, Color.White) else Modifier))
                 }
             }
@@ -323,10 +330,18 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     positionMs = project.outputStartOf(selected) + if (start) 0L else project.clips[selected].durationMs - 1
                 })
             if (sticker != null) {
-                Text("Sticker ${formatTime(sticker.startMs)} – ${formatTime(sticker.endMs)}: drag on the video to move, pinch to resize",
-                    color = TextMuted, fontSize = 12.sp, maxLines = 1)
+                val onKey = sticker.keyAt(positionMs) != null
+                Text(when {
+                    sticker.keys.isEmpty() -> "Drag to move, pinch to resize. Add a key to make it move over time."
+                    onKey -> "On a key: drag or pinch to change it."
+                    else -> "${sticker.keys.size} keys. Drag or pinch here to add one."
+                }, color = TextMuted, fontSize = 12.sp, maxLines = 1)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                     Tool(Icons.Default.EmojiEmotions, "Sticker", !saving && project.stickers.size < VideoProject.MAX_STICKERS) { showStickerPicker = true }
+                    Tool(Icons.Default.Diamond, if (onKey) "Remove key" else "Add key",
+                        !saving && positionMs in sticker.startMs..sticker.endMs) {
+                        project = project.updateSticker(sticker.id) { it.toggleKeyAt(positionMs) }
+                    }
                     Tool(Icons.Default.Delete, "Delete", !saving) { project = project.deleteSticker(sticker.id); stickerId = null }
                     Tool(Icons.Default.Check, "Done", true) { stickerId = null }
                 }
@@ -555,6 +570,15 @@ private fun Timeline(
                     IntOffset(x.roundToInt(), (top + 2.dp.toPx()).roundToInt()), IntSize(w.roundToInt(), h.roundToInt()))
             }
             if (s.id == stickerId) handles(l, r, top, height, Color.White, StickerColor)
+            // A diamond per keyframe, on the bar's centre line.
+            val d = 8.dp.toPx()
+            s.keys.forEach { k ->
+                val kx = screenX(s.startMs + k.atMs)
+                rotate(45f, Offset(kx, top + height / 2)) {
+                    drawRect(VaultDarkBg, Offset(kx - d / 2, top + height / 2 - d / 2), Size(d, d))
+                    drawRect(Color.White, Offset(kx - d / 2, top + height / 2 - d / 2), Size(d, d), style = Stroke(1.dp.toPx()))
+                }
+            }
         }
 
         drawLine(Color.White, Offset(centre, 0f), Offset(centre, size.height), strokeWidth = 2.dp.toPx())

@@ -32,6 +32,7 @@ import com.secretvault.app.core.player.DecryptingMediaDataSource
 import com.secretvault.app.core.player.EncryptedMediaDataSource
 import com.secretvault.app.core.processing.Clip
 import com.secretvault.app.core.processing.MuteAudioProcessor
+import com.secretvault.app.core.processing.Placement
 import com.secretvault.app.core.processing.Sticker
 import com.secretvault.app.core.processing.VideoEditPlan
 import com.secretvault.app.core.processing.VideoProject
@@ -286,21 +287,26 @@ class VideoEditManager(
  * frame this overlay sees, so they're the output timeline whatever offset the frames' timestamps start at.
  */
 @OptIn(UnstableApi::class)
-private class StickerOverlay(private val bitmap: Bitmap, private val sticker: Sticker, frameWidth: Int) : BitmapOverlay() {
+private class StickerOverlay(private val bitmap: Bitmap, private val sticker: Sticker, private val frameWidth: Int) : BitmapOverlay() {
     private var firstUs = C.TIME_UNSET
     private val hidden = OverlaySettings.Builder().setAlphaScale(0f).build()
-    private val shown = OverlaySettings.Builder()
-        // The overlay starts at its own pixel size; scale it to its share of the frame's width.
-        .setScale(sticker.widthFraction * frameWidth / bitmap.width, sticker.widthFraction * frameWidth / bitmap.width)
-        // Anchors are -1..1 with y pointing up; the model's fractions run from the top-left.
-        .setBackgroundFrameAnchor(sticker.centerX * 2 - 1, 1 - sticker.centerY * 2)
-        .build()
+    private var last: Pair<Placement, OverlaySettings>? = null
 
     override fun getBitmap(presentationTimeUs: Long): Bitmap = bitmap
 
     override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
         if (firstUs == C.TIME_UNSET) firstUs = presentationTimeUs
         val ms = (presentationTimeUs - firstUs) / 1_000
-        return if (ms >= sticker.startMs && ms < sticker.endMs) shown else hidden
+        if (ms < sticker.startMs || ms >= sticker.endMs) return hidden
+        val placement = sticker.placementAt(ms)
+        last?.let { (p, settings) -> if (p == placement) return settings }
+        val scale = placement.widthFraction * frameWidth / bitmap.width
+        return OverlaySettings.Builder()
+            // The overlay starts at its own pixel size; scale it to its share of the frame's width.
+            .setScale(scale, scale)
+            // Anchors are -1..1 with y pointing up; the model's fractions run from the top-left.
+            .setBackgroundFrameAnchor(placement.centerX * 2 - 1, 1 - placement.centerY * 2)
+            .build()
+            .also { last = placement to it }
     }
 }
