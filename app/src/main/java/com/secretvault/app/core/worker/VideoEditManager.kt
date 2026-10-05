@@ -39,6 +39,7 @@ import com.secretvault.app.core.processing.Placement
 import com.secretvault.app.core.processing.Sticker
 import com.secretvault.app.core.processing.VideoEditPlan
 import com.secretvault.app.core.processing.VideoProject
+import com.secretvault.app.core.processing.VideoProjectHistory
 import com.secretvault.app.core.processing.VideoSegment
 import com.secretvault.app.data.repository.MediaRepository
 import kotlinx.coroutines.CancellationException
@@ -115,10 +116,13 @@ class VideoEditManager(
         private set
     var draftPositionMs = 0L
         private set
+    var draftHistory: VideoProjectHistory? = null
+        private set
 
-    fun keepDraft(project: VideoProject, positionMs: Long) {
-        draft = project.takeIf { it.clips.isNotEmpty() }
+    fun keepDraft(project: VideoProject, positionMs: Long, history: VideoProjectHistory? = null) {
+        draft = project.takeIf { it.clips.isNotEmpty() || history?.canUndo == true || history?.canRedo == true }
         draftPositionMs = positionMs
+        draftHistory = history?.endGesture()?.takeIf { draft != null }
     }
 
     fun clearDraft() = keepDraft(VideoProject(), 0L)

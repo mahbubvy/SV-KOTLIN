@@ -7,7 +7,6 @@ import android.view.LayoutInflater
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,9 +14,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculatePan
-import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
@@ -30,8 +28,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.filled.VolumeOff
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCut
@@ -42,6 +40,10 @@ import androidx.compose.material.icons.filled.Diamond
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -49,26 +51,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.media3.exoplayer.SeekParameters
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -98,6 +90,7 @@ import com.secretvault.app.core.processing.Framing
 import com.secretvault.app.core.processing.Sticker
 import com.secretvault.app.core.processing.StickerSource
 import com.secretvault.app.core.processing.VideoProject
+import com.secretvault.app.core.processing.VideoProjectHistory
 import com.secretvault.app.core.processing.snapAngle
 import com.secretvault.app.core.worker.VideoEditState
 import com.secretvault.app.ui.gallery.components.StableEncryptedThumbnail
@@ -107,7 +100,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.abs
-import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -122,7 +114,10 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     val editState by app.videoEditManager.state.collectAsState()
     // A draft means the vault locked mid-edit: carry on where it stopped.
     val restored = remember { app.videoEditManager.draft }
-    var project by remember { mutableStateOf(restored ?: VideoProject()) }
+    var history by remember { mutableStateOf(app.videoEditManager.draftHistory ?: VideoProjectHistory(restored ?: VideoProject())) }
+    val project = history.current
+    fun edit(next: VideoProject) { history = history.change(next) }
+    fun editGesture(active: Boolean) { history = if (active) history.beginGesture() else history.endGesture() }
     var selected by remember { mutableIntStateOf(0) }
     var positionMs by remember { mutableLongStateOf(if (restored != null) app.videoEditManager.draftPositionMs else 0L) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -151,8 +146,15 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
         onDispose { player.removeListener(listener); player.release() }
     }
     fun seekTo(outputMs: Long) {
-        latestProject.clipAt(outputMs)?.let { (index, offset) -> player.seekTo(index, offset) }
+        history.current.clipAt(outputMs)?.let { (index, offset) -> player.seekTo(index, offset) }
         positionMs = outputMs
+    }
+    fun restoreEdit(next: VideoProjectHistory) {
+        player.pause()
+        history = next
+        stickerId = null
+        selected = selected.coerceIn(0, (next.current.clips.size - 1).coerceAtLeast(0))
+        seekTo(positionMs.coerceAtMost(next.current.durationMs))
     }
 
     // The preview is a playlist of the clips; rebuild it whenever they change, keeping the playhead.
@@ -226,12 +228,13 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
         val (frameW, frameH) = frameSize ?: return
         scope.launch {
             val (clipW, clipH) = withContext(Dispatchers.IO) { app.videoEditManager.uprightSize(c.media) }
+            if (history.current.clips.getOrNull(index)?.id != c.id) return@launch
             // Fitted (zoom 1) the clip touches two sides of the frame; a quarter turn then swaps its sides.
             val fit = min(frameW.toFloat() / clipW, frameH.toFloat() / clipH)
             val turned = (c.framing.angle / 90f).roundToInt() % 2 != 0
             val w = (if (turned) clipH else clipW) * fit
             val h = (if (turned) clipW else clipH) * fit
-            project = project.frame(index) { it.copy(zoom = max(frameW / w, frameH / h), offsetX = 0f, offsetY = 0f) }
+            edit(history.current.frame(index) { it.copy(zoom = max(frameW / w, frameH / h), offsetX = 0f, offsetY = 0f) })
         }
     }
 
@@ -243,7 +246,7 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     }
 
     // Kept up to date so a lock (which drops this screen without warning) loses nothing; cleared only on purpose.
-    SideEffect { if (!leaving) app.videoEditManager.keepDraft(project, positionMs) }
+    SideEffect { if (!leaving) app.videoEditManager.keepDraft(project, positionMs, history) }
     fun close() { leaving = true; app.videoEditManager.clearDraft(); onBack() }
 
     // Hidden (screen off, home button, lock): pause rather than play on unseen.
@@ -271,27 +274,34 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     fun leave() { if (project.clips.isEmpty()) close() else confirmDiscard = true }
     BackHandler { leave() }
 
-    Column(Modifier.fillMaxSize().background(Color.Black).systemBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(VaultDarkBg).systemBarsPadding()) {
+    val compact = maxHeight < 480.dp || androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f
+    Column(Modifier.fillMaxSize().then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = ::leave) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextPrimary) }
-            Text("Video editor", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.weight(1f))
+            Text("Video editor", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             val canSave = project.clips.isNotEmpty() && !saving
-            TextButton(onClick = { player.pause(); app.videoEditManager.start(project) }, enabled = canSave) {
-                Text("Save", color = if (canSave) VaultAccent else TextMuted, fontWeight = FontWeight.SemiBold)
+            Button(onClick = { player.pause(); app.videoEditManager.start(project) }, enabled = canSave,
+                shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = VaultAccent, contentColor = VaultDarkBg)) {
+                Icon(Icons.Default.FileUpload, null, Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Export", color = VaultDarkBg, fontWeight = FontWeight.SemiBold)
             }
         }
 
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+        BoxWithConstraints((if (compact) Modifier.height(180.dp) else Modifier.weight(1f)).fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
             val ratio = frameSize?.let { (w, h) -> w.toFloat() / h }
             val frameW = if (ratio == null) maxWidth else minOf(maxWidth, maxHeight * ratio)
             val frameH = if (ratio == null) maxHeight else frameW / ratio
             Box(Modifier.size(frameW, frameH).clipToBounds()
                 // Tap: pick the sticker under the finger, or let go of the selected one, or play/pause.
-                .pointerInput(Unit) {
+                .pointerInput(saving) {
+                    if (saving) return@pointerInput
                     detectTapGestures { tap ->
-                        if (project.clips.isEmpty()) return@detectTapGestures
-                        val hit = project.stickers.lastOrNull { s ->
+                        if (history.current.clips.isEmpty()) return@detectTapGestures
+                        val hit = history.current.stickers.lastOrNull { s ->
                             val img = stickerImages[s.source.key] ?: return@lastOrNull false
                             val p = s.placementAt(positionMs)
                             val w = p.widthFraction * size.width
@@ -308,22 +318,33 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                 }
                 // Selected sticker: drag moves, pinch resizes, twist turns it (with keyframes, at the playhead's moment).
                 // Otherwise the same gestures frame the clip on screen, which becomes the selected clip.
-                .pointerInput(Unit) {
+                .pointerInput(saving) {
+                    if (saving) return@pointerInput
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        editGesture(true)
+                        try {
+                            do { val event = awaitPointerEvent(PointerEventPass.Final) } while (event.changes.any { it.pressed })
+                        } finally { editGesture(false) }
+                    }
+                }
+                .pointerInput(saving) {
+                    if (saving) return@pointerInput
                     detectTransformGestures { _, pan, zoom, rotation ->
                         val dx = pan.x / size.width
                         val dy = pan.y / size.height
                         player.pause()
                         val id = stickerId
-                        if (id != null) project = project.updateSticker(id) { s ->
+                        if (id != null) edit(history.current.updateSticker(id) { s ->
                             s.placeAt(positionMs) {
                                 it.copy(centerX = it.centerX + dx, centerY = it.centerY + dy, widthFraction = it.widthFraction * zoom,
                                     rotation = it.rotation + rotation)
                             }
-                        } else project.clipAt(positionMs)?.let { (index, _) ->
+                        }) else history.current.clipAt(positionMs)?.let { (index, _) ->
                             selected = index
-                            project = project.frame(index) {
+                            edit(history.current.frame(index) {
                                 it.copy(rotation = it.rotation + rotation, zoom = it.zoom * zoom, offsetX = it.offsetX + dx, offsetY = it.offsetY + dy)
-                            }
+                            })
                         }
                     }
                 }) {
@@ -354,41 +375,63 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
             }
             if (project.clips.isEmpty()) Button(onClick = { showPicker = true },
                 colors = ButtonDefaults.buttonColors(containerColor = VaultAccent, contentColor = VaultDarkBg)) {
-                Icon(Icons.Default.Add, null); Spacer(Modifier.width(8.dp)); Text("Add videos from vault")
+                Icon(Icons.Default.Add, null); Spacer(Modifier.width(8.dp)); Text("Add videos from vault", color = VaultDarkBg)
             } else if (!isPlaying && sticker == null) Box(Modifier.size(64.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.6f)),
                 contentAlignment = Alignment.Center) {
-                Icon(Icons.Default.PlayArrow, "Play", tint = Color.White, modifier = Modifier.size(36.dp))
+                Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(36.dp))
             }
         }
 
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = ::togglePlay, enabled = project.clips.isNotEmpty()) {
-                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play", tint = TextPrimary)
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            BoxWithConstraints(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 8.dp)) {
+                Row(Modifier.align(Alignment.CenterStart)) {
+                    IconButton(onClick = { restoreEdit(history.undo()) }, enabled = !saving && history.canUndo) {
+                        Icon(Icons.AutoMirrored.Filled.Undo, "Undo", tint = if (history.canUndo) TextPrimary else TextMuted)
+                    }
+                    IconButton(onClick = { restoreEdit(history.redo()) }, enabled = !saving && history.canRedo) {
+                        Icon(Icons.AutoMirrored.Filled.Redo, "Redo", tint = if (history.canRedo) TextPrimary else TextMuted)
+                    }
                 }
-                Text("${formatTime(positionMs)} / ${formatTime(project.durationMs)}", color = TextSecondary, fontSize = 13.sp)
+                Row(Modifier.align(if (maxWidth >= 336.dp) Alignment.Center else Alignment.CenterEnd)) {
+                    IconButton(onClick = { player.pause(); seekTo(project.outputStartOf((player.currentMediaItemIndex - 1).coerceAtLeast(0))) }, enabled = !saving && project.clips.isNotEmpty()) {
+                        Icon(Icons.Default.SkipPrevious, "Previous clip", tint = TextPrimary)
+                    }
+                    IconButton(onClick = ::togglePlay, enabled = !saving && project.clips.isNotEmpty()) {
+                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (isPlaying) "Pause" else "Play", tint = TextPrimary, modifier = Modifier.size(32.dp))
+                    }
+                    IconButton(onClick = { player.pause(); seekTo(project.outputStartOf((player.currentMediaItemIndex + 1).coerceAtMost(project.clips.lastIndex))) }, enabled = !saving && project.clips.isNotEmpty()) {
+                        Icon(Icons.Default.SkipNext, "Next clip", tint = TextPrimary)
+                    }
+                }
             }
+            Text("${formatTime(positionMs)} / ${formatTime(project.durationMs)}", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp))
+            Box(Modifier.fillMaxWidth().background(Color.Black)) {
             Timeline(project, selected, sticker?.id, positionMs, frames, stickerImages, enabled = !saving,
+                onAdd = { showPicker = true }, onMute = { index -> edit(history.current.toggleMute(index)) },
                 onSelectSticker = { stickerId = it },
                 // With a panel open, show the clip it now edits.
                 onSelect = { selected = it; stickerId = null; if (panel != null) seekTo(project.outputStartOf(it)) },
                 onStickerTime = { startMs, endMs, atEnd ->
                     val id = stickerId ?: return@Timeline
-                    project = project.updateSticker(id) { it.copy(startMs = startMs, endMs = endMs) }
+                    edit(history.current.updateSticker(id) { it.copy(startMs = startMs, endMs = endMs) })
                     // Show the frame where the sticker appears (or, dragging its end, disappears).
-                    project.stickers.firstOrNull { it.id == id }?.let { seekTo(if (atEnd) it.endMs - 1 else it.startMs) }
+                    history.current.stickers.firstOrNull { it.id == id }?.let { seekTo(if (atEnd) it.endMs - 1 else it.startMs) }
                 },
                 onTouch = { down ->
                     touching = down
+                    editGesture(down)
                     if (down) { player.pause(); player.setSeekParameters(SeekParameters.CLOSEST_SYNC) }
                     else { player.setSeekParameters(SeekParameters.EXACT); seekTo(positionMs) }
                 },
                 onScrub = ::seekTo,
                 onTrim = { start, startMs, endMs ->
-                    project = project.trim(selected, startMs, endMs)
+                    edit(history.current.trim(selected, startMs, endMs))
                     // Park the dragged edge under the playhead so the preview shows the cut frame.
-                    positionMs = project.outputStartOf(selected) + if (start) 0L else project.clips[selected].durationMs - 1
+                    history.current.clips.getOrNull(selected)?.let { c ->
+                        positionMs = history.current.outputStartOf(selected) + if (start) 0L else c.durationMs - 1
+                    }
                 })
+            }
             if (sticker != null) {
                 val onKey = sticker.keyAt(positionMs) != null
                 Text(when {
@@ -396,72 +439,71 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     onKey -> "On a key: drag or pinch to change it."
                     else -> "${sticker.keys.size} keys. Drag or pinch here to add one."
                 }, color = TextMuted, fontSize = 12.sp, maxLines = 1)
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Tool(Icons.Default.EmojiEmotions, "Sticker", !saving && project.stickers.size < VideoProject.MAX_STICKERS) { showStickerPicker = true }
                     Tool(Icons.Default.Diamond, if (onKey) "Remove key" else "Add key",
                         !saving && positionMs in sticker.startMs..sticker.endMs) {
-                        project = project.updateSticker(sticker.id) { it.toggleKeyAt(positionMs) }
+                        edit(project.updateSticker(sticker.id) { it.toggleKeyAt(positionMs) })
                     }
-                    Tool(Icons.Default.Delete, "Delete", !saving) { project = project.deleteSticker(sticker.id); stickerId = null }
+                    Tool(Icons.Default.Delete, "Delete", !saving) { edit(project.deleteSticker(sticker.id)); stickerId = null }
                     Tool(Icons.Default.Check, "Done", true) { stickerId = null }
                 }
             } else if (clip != null && panel == Panel.SIZE) {
-                SizePanel(clip.framing, enabled = !saving, onChange = { f -> project = project.frame(selected) { f } },
+                SizePanel(clip.framing, enabled = !saving, onGesture = ::editGesture, onChange = { f -> edit(history.current.frame(selected) { f }) },
                     onFill = ::fillFrame, onDone = { panel = null })
             } else if (clip != null && panel == Panel.ADJUST) {
-                AdjustPanel(clip.adjustments, enabled = !saving, onChange = { a -> project = project.adjust(selected) { a } },
+                AdjustPanel(clip.adjustments, enabled = !saving, onGesture = ::editGesture, onChange = { a -> edit(history.current.adjust(selected) { a }) },
                     onApplyToAll = {
-                        project = project.adjustAllLike(selected)
+                        edit(project.adjustAllLike(selected))
                         Toast.makeText(context, "Applied to all clips", Toast.LENGTH_SHORT).show()
                     },
                     onDone = { panel = null })
             } else if (clip != null) {
-                Text("Clip ${selected + 1} of ${project.clips.size}: ${formatTime(clip.startMs)} – ${formatTime(clip.endMs)} of " +
-                    "${clip.media.originalName}${if (clip.muted) " · muted" else ""}", color = TextMuted, fontSize = 12.sp, maxLines = 1)
+                Text("Clip ${selected + 1} / ${project.clips.size} · ${formatTime(clip.durationMs)}${if (clip.muted) " · muted" else ""}",
+                    color = TextMuted, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(horizontal = 16.dp))
             }
             if (sticker == null && panel == null) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 val ready = !saving
-                Tool(Icons.Default.Add, "Add", ready) { showPicker = true }
                 Tool(Icons.Default.ContentCut, "Split", ready && clip != null) {
                     val before = project.clips.size
-                    project = project.split(positionMs)
-                    if (project.clips.size == before) Toast.makeText(context, "Move the playhead away from the clip's edge to split", Toast.LENGTH_SHORT).show()
+                    edit(project.split(positionMs))
+                    if (history.current.clips.size == before) Toast.makeText(context, "Move the playhead away from the clip's edge to split", Toast.LENGTH_SHORT).show()
                 }
-                Tool(if (clip?.muted == true) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
-                    if (clip?.muted == true) "Unmute" else "Mute", ready && clip != null) { project = project.toggleMute(selected) }
                 Tool(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Left", ready && selected > 0) {
-                    project = project.move(selected, -1); selected--
+                    edit(project.move(selected, -1)); selected--
                 }
                 Tool(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Right", ready && selected < project.clips.lastIndex) {
-                    project = project.move(selected, 1); selected++
+                    edit(project.move(selected, 1)); selected++
                 }
-                Tool(Icons.Default.Delete, "Delete", ready && clip != null) { project = project.delete(selected) }
+                Tool(Icons.Default.Delete, "Delete", ready && clip != null) { edit(project.delete(selected)) }
                 Tool(Icons.Default.ZoomIn, "Size", ready && clip != null) { openPanel(Panel.SIZE) }
                 Tool(Icons.Default.Tune, "Adjust", ready && clip != null) { openPanel(Panel.ADJUST) }
                 Tool(Icons.Default.EmojiEmotions, "Sticker", ready && clip != null && project.stickers.size < VideoProject.MAX_STICKERS) {
                     showStickerPicker = true
                 }
             }
+            Spacer(Modifier.height(8.dp))
         }
+    }
     }
 
     if (showPicker) VaultVideoPicker(app, onDismiss = { showPicker = false }) { picked ->
         showPicker = false
         scope.launch {
             val durations = withContext(Dispatchers.IO) { picked.map { it to sourceDuration(app, it) } }
-            val before = project.clips.size
-            project = durations.fold(project) { acc, (media, duration) -> acc.add(media, duration) }
-            if (project.clips.size > before) selected = before
-            if (project.clips.size - before < picked.size) Toast.makeText(context, "Videos shorter than half a second were skipped", Toast.LENGTH_SHORT).show()
+            val before = history.current.clips.size
+            edit(durations.fold(history.current) { acc, (media, duration) -> acc.add(media, duration) })
+            if (history.current.clips.size > before) selected = before
+            if (history.current.clips.size - before < picked.size) Toast.makeText(context, "Videos shorter than half a second were skipped", Toast.LENGTH_SHORT).show()
         }
     }
 
     if (showStickerPicker) StickerPicker(app, onDismiss = { showStickerPicker = false }) { source ->
         showStickerPicker = false
         val before = project.stickers.size
-        project = project.addSticker(source, positionMs)
-        if (project.stickers.size > before) { player.pause(); stickerId = project.stickers.last().id }
+        edit(project.addSticker(source, positionMs))
+        if (history.current.stickers.size > before) { player.pause(); stickerId = history.current.stickers.last().id }
     }
 
     if (confirmDiscard) AlertDialog(onDismissRequest = { confirmDiscard = false }, containerColor = VaultSurface,
@@ -485,10 +527,11 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
 private fun Tool(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
     val tint = if (enabled) TextPrimary else TextMuted
     Column(horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.widthIn(min = 60.dp).clip(RoundedCornerShape(10.dp)).clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp)) {
+        modifier = Modifier.widthIn(min = 64.dp).heightIn(min = 64.dp).clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
+            .padding(8.dp)) {
         Icon(icon, null, tint = tint, modifier = Modifier.size(28.dp))
-        Spacer(Modifier.height(2.dp))
+        Spacer(Modifier.height(4.dp))
         Text(label, color = tint, fontSize = 12.sp, maxLines = 1)
     }
 }
@@ -497,12 +540,12 @@ private enum class Panel { SIZE, ADJUST }
 
 /** The selected clip's zoom and turn as controls: the same thing two fingers do on the video. */
 @Composable
-private fun SizePanel(framing: Framing, enabled: Boolean, onChange: (Framing) -> Unit, onFill: () -> Unit, onDone: () -> Unit) {
+private fun SizePanel(framing: Framing, enabled: Boolean, onGesture: (Boolean) -> Unit, onChange: (Framing) -> Unit, onFill: () -> Unit, onDone: () -> Unit) {
     Column {
-        LabeledSlider("Zoom", "${(framing.zoom * 100).roundToInt()}%", framing.zoom, 0.25f..5f, enabled) { onChange(framing.copy(zoom = it)) }
+        LabeledSlider("Zoom", "${(framing.zoom * 100).roundToInt()}%", framing.zoom, 0.25f..5f, enabled, onGesture) { onChange(framing.copy(zoom = it)) }
         // A twist can wind the stored angle past a full turn; the slider shows it within one.
         val turn = ((framing.rotation + 180f) % 360f + 360f) % 360f - 180f
-        LabeledSlider("Rotate", "${framing.angle.roundToInt()}°", turn, -180f..180f, enabled) { onChange(framing.copy(rotation = it)) }
+        LabeledSlider("Rotate", "${framing.angle.roundToInt()}°", turn, -180f..180f, enabled, onGesture) { onChange(framing.copy(rotation = it)) }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
             PanelButton("Fit", enabled) { onChange(framing.copy(zoom = 1f, offsetX = 0f, offsetY = 0f)) }
             PanelButton("Fill", enabled, onFill)
@@ -519,7 +562,7 @@ private fun SizePanel(framing: Framing, enabled: Boolean, onChange: (Framing) ->
 
 /** Colour adjustments for the selected clip: pick one with a chip, set it with the slider. A dot marks the ones in use. */
 @Composable
-private fun AdjustPanel(adjustments: Adjustments, enabled: Boolean, onChange: (Adjustments) -> Unit, onApplyToAll: () -> Unit, onDone: () -> Unit) {
+private fun AdjustPanel(adjustments: Adjustments, enabled: Boolean, onGesture: (Boolean) -> Unit, onChange: (Adjustments) -> Unit, onApplyToAll: () -> Unit, onDone: () -> Unit) {
     var current by remember { mutableStateOf(Adjustment.BRIGHTNESS) }
     Column {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -531,7 +574,7 @@ private fun AdjustPanel(adjustments: Adjustments, enabled: Boolean, onChange: (A
             }
         }
         val value = adjustments[current]
-        LabeledSlider(current.label, if (value > 0) "+$value" else "$value", value.toFloat(), -100f..100f, enabled) {
+        LabeledSlider(current.label, if (value > 0) "+$value" else "$value", value.toFloat(), -100f..100f, enabled, onGesture) {
             onChange(adjustments.with(current, it.roundToInt()))
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
@@ -545,19 +588,23 @@ private fun AdjustPanel(adjustments: Adjustments, enabled: Boolean, onChange: (A
 }
 
 @Composable
-private fun LabeledSlider(label: String, value: String, current: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean, onChange: (Float) -> Unit) {
+private fun LabeledSlider(label: String, value: String, current: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean, onGesture: (Boolean) -> Unit, onChange: (Float) -> Unit) {
+    var changing by remember { mutableStateOf(false) }
+    DisposableEffect(Unit) { onDispose { if (changing) onGesture(false) } }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = TextSecondary, fontSize = 12.sp, modifier = Modifier.width(76.dp))
-        Slider(current, onChange, Modifier.weight(1f), enabled, range,
-            colors = SliderDefaults.colors(thumbColor = VaultAccent, activeTrackColor = VaultAccent, inactiveTrackColor = Color.White.copy(alpha = 0.3f)))
+        Slider(current, { if (!changing) { changing = true; onGesture(true) }; onChange(it) },
+            Modifier.weight(1f).semantics { contentDescription = label }, enabled, range,
+            onValueChangeFinished = { changing = false; onGesture(false) },
+            colors = SliderDefaults.colors(thumbColor = VaultAccent, activeTrackColor = VaultAccent, inactiveTrackColor = Color.White.copy(alpha = 0.4f)))
         Text(value, color = TextPrimary, fontSize = 12.sp, textAlign = TextAlign.End, modifier = Modifier.width(44.dp))
     }
 }
 
 @Composable
 private fun PanelButton(label: String, enabled: Boolean, onClick: () -> Unit) {
-    TextButton(onClick = onClick, enabled = enabled, contentPadding = PaddingValues(horizontal = 10.dp)) {
-        Text(label, color = if (enabled) VaultAccent else TextMuted, fontSize = 13.sp)
+    TextButton(onClick = onClick, enabled = enabled, contentPadding = PaddingValues(horizontal = 12.dp)) {
+        Text(label, color = if (enabled) VaultAccent else TextMuted, fontSize = 14.sp)
     }
 }
 
@@ -586,6 +633,7 @@ private fun VaultVideoPicker(app: SecretVaultApp, onDismiss: () -> Unit, onAdd: 
                         val order = picked.indexOfFirst { it.id == video.id }
                         Box(Modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).background(VaultSurface)
                             .border(if (order >= 0) 2.5.dp else 0.dp, if (order >= 0) VaultAccent else Color.Transparent, RoundedCornerShape(8.dp))
+                            .semantics { contentDescription = video.originalName }
                             .clickable { picked = if (order >= 0) picked.filter { it.id != video.id } else picked + video }) {
                             video.thumbnailPath?.let { StableEncryptedThumbnail(video.id, it, video.originalName, Modifier.fillMaxSize()) }
                             Text(formatTime(video.durationMs).substringBeforeLast('.'), color = Color.White, fontSize = 11.sp,
@@ -635,6 +683,7 @@ private fun StickerPicker(app: SecretVaultApp, onDismiss: () -> Unit, onPick: (S
                     horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     items(photos, key = { it.id }) { photo ->
                         Box(Modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).background(VaultSurface)
+                            .semantics { contentDescription = photo.originalName }
                             .clickable { onPick(StickerSource.Photo(photo)) }) {
                             photo.thumbnailPath?.let { StableEncryptedThumbnail(photo.id, it, photo.originalName, Modifier.fillMaxSize()) }
                         }
