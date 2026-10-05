@@ -3,6 +3,7 @@ package com.secretvault.app.core.processing
 import com.secretvault.app.core.model.MediaItem
 import java.util.UUID
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** One piece of a project: [media] played from [startMs] to [endMs] of its own timeline. */
 data class Clip(
@@ -11,6 +12,7 @@ data class Clip(
     val startMs: Long = 0L,
     val endMs: Long = sourceDurationMs,
     val muted: Boolean = false,
+    val framing: Framing = Framing(),
     val id: String = UUID.randomUUID().toString()
 ) {
     val durationMs: Long get() = endMs - startMs
@@ -65,6 +67,11 @@ data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<
     fun delete(index: Int): VideoProject =
         if (index !in clips.indices) this else withClips(clips.filterIndexed { i, _ -> i != index })
 
+    fun frame(index: Int, change: (Framing) -> Framing): VideoProject {
+        val clip = clips.getOrNull(index) ?: return this
+        return replace(index, listOf(clip.copy(framing = change(clip.framing).fitted())))
+    }
+
     fun toggleMute(index: Int): VideoProject {
         val clip = clips.getOrNull(index) ?: return this
         return replace(index, listOf(clip.copy(muted = !clip.muted)))
@@ -105,6 +112,24 @@ data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<
     }
 }
 
+/**
+ * How a clip sits in the frame: turned [rotation] degrees clockwise (shown as [angle]), scaled by [zoom] from the
+ * fitted size, and moved by [offsetX]/[offsetY] fractions of the frame (right and down).
+ */
+data class Framing(val rotation: Float = 0f, val zoom: Float = 1f, val offsetX: Float = 0f, val offsetY: Float = 0f) {
+    val angle: Float get() = snapAngle(rotation)
+    fun fitted() = copy(zoom = zoom.coerceIn(0.25f, 5f), offsetX = offsetX.coerceIn(-1f, 1f), offsetY = offsetY.coerceIn(-1f, 1f))
+}
+
+/**
+ * [degrees] pulled to the nearest quarter turn when within 5°, so straight angles are easy to hit. Callers keep the
+ * unsnapped value, so a slow twist can still move off a quarter turn.
+ */
+fun snapAngle(degrees: Float): Float {
+    val quarter = (degrees / 90f).roundToInt() * 90f
+    return if (abs(degrees - quarter) <= 5f) quarter else degrees
+}
+
 sealed interface StickerSource {
     data class Emoji(val text: String) : StickerSource
     data class Photo(val media: MediaItem) : StickerSource
@@ -112,10 +137,16 @@ sealed interface StickerSource {
 
 /**
  * Where a sticker sits, in fractions of the frame: [centerX]/[centerY] from the top-left, [widthFraction] of the
- * frame's width (height follows the image's shape).
+ * frame's width (height follows the image's shape), turned [rotation] degrees clockwise (shown as [angle]).
  */
-data class Placement(val centerX: Float = 0.5f, val centerY: Float = 0.5f, val widthFraction: Float = 0.3f) {
-    fun fitted() = Placement(centerX.coerceIn(0f, 1f), centerY.coerceIn(0f, 1f), widthFraction.coerceIn(0.05f, 1f))
+data class Placement(
+    val centerX: Float = 0.5f,
+    val centerY: Float = 0.5f,
+    val widthFraction: Float = 0.3f,
+    val rotation: Float = 0f
+) {
+    val angle: Float get() = snapAngle(rotation)
+    fun fitted() = copy(centerX = centerX.coerceIn(0f, 1f), centerY = centerY.coerceIn(0f, 1f), widthFraction = widthFraction.coerceIn(0.05f, 1f))
 }
 
 /** The sticker's [placement] [atMs] after the sticker appears, so keyframes move with the sticker. */
@@ -146,7 +177,7 @@ data class Sticker(
         val f = (at - a.atMs).toFloat() / (b.atMs - a.atMs)
         fun mix(x: Float, y: Float) = x + (y - x) * f
         return Placement(mix(a.placement.centerX, b.placement.centerX), mix(a.placement.centerY, b.placement.centerY),
-            mix(a.placement.widthFraction, b.placement.widthFraction))
+            mix(a.placement.widthFraction, b.placement.widthFraction), mix(a.placement.rotation, b.placement.rotation))
     }
 
     /** The keyframe the playhead at [outputMs] is on, allowing for a playhead that lands a little off it. */

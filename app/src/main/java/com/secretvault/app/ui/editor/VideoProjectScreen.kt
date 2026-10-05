@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
@@ -84,6 +85,7 @@ import com.secretvault.app.core.player.DecryptingMediaDataSource
 import com.secretvault.app.core.player.EncryptedMediaDataSource
 import com.secretvault.app.core.image.key
 import com.secretvault.app.core.image.stickerBitmap
+import com.secretvault.app.core.processing.Framing
 import com.secretvault.app.core.processing.Sticker
 import com.secretvault.app.core.processing.StickerSource
 import com.secretvault.app.core.processing.VideoProject
@@ -145,7 +147,8 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     }
 
     // The preview is a playlist of the clips; rebuild it whenever they change, keeping the playhead.
-    LaunchedEffect(project.clips) {
+    // Keyed on what the player plays, so muting or framing a clip (handled on top of the player) does not reload it.
+    LaunchedEffect(project.clips.map { listOf(it.id, it.startMs, it.endMs) }) {
         val keep = positionMs.coerceAtMost(project.durationMs)
         player.setMediaItems(project.clips.map { c ->
             androidx.media3.common.MediaItem.Builder()
@@ -265,24 +268,40 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                         }
                     }
                 }
-                // Drag moves the selected sticker, pinch resizes it; with keyframes, at the playhead's moment.
+                // Selected sticker: drag moves, pinch resizes, twist turns it (with keyframes, at the playhead's moment).
+                // Otherwise the same gestures frame the clip on screen, which becomes the selected clip.
                 .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        val id = stickerId ?: return@detectTransformGestures
+                    detectTransformGestures { _, pan, zoom, rotation ->
+                        val dx = pan.x / size.width
+                        val dy = pan.y / size.height
                         player.pause()
-                        project = project.updateSticker(id) { s ->
+                        val id = stickerId
+                        if (id != null) project = project.updateSticker(id) { s ->
                             s.placeAt(positionMs) {
-                                it.copy(centerX = it.centerX + pan.x / size.width, centerY = it.centerY + pan.y / size.height,
-                                    widthFraction = it.widthFraction * zoom)
+                                it.copy(centerX = it.centerX + dx, centerY = it.centerY + dy, widthFraction = it.widthFraction * zoom,
+                                    rotation = it.rotation + rotation)
+                            }
+                        } else project.clipAt(positionMs)?.let { (index, _) ->
+                            selected = index
+                            project = project.frame(index) {
+                                it.copy(rotation = it.rotation + rotation, zoom = it.zoom * zoom, offsetX = it.offsetX + dx, offsetY = it.offsetY + dy)
                             }
                         }
                     }
                 }) {
+                val framing = project.clipAt(positionMs)?.let { (index, _) -> project.clips[index].framing } ?: Framing()
                 AndroidView(factory = { ctx ->
                     (LayoutInflater.from(ctx).inflate(R.layout.streaming_player_view, null) as PlayerView).apply {
                         this.player = player; useController = false
                     }
-                }, modifier = Modifier.fillMaxSize())
+                }, modifier = Modifier.fillMaxSize().graphicsLayer {
+                    // Same turn, zoom and move as the export's FramingTransformation.
+                    rotationZ = framing.angle
+                    scaleX = framing.zoom
+                    scaleY = framing.zoom
+                    translationX = framing.offsetX * size.width
+                    translationY = framing.offsetY * size.height
+                })
                 project.stickers.forEach { s ->
                     val img = stickerImages[s.source.key] ?: return@forEach
                     if (positionMs !in s.startMs until s.endMs && s.id != stickerId) return@forEach
@@ -290,6 +309,7 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     val w = frameW * p.widthFraction
                     val h = w * img.height / img.width
                     Image(img, null, Modifier.offset(frameW * p.centerX - w / 2, frameH * p.centerY - h / 2).size(w, h)
+                        .graphicsLayer { rotationZ = p.angle }
                         .then(if (s.id == stickerId) Modifier.border(1.5.dp, Color.White) else Modifier))
                 }
             }
@@ -346,8 +366,14 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     Tool(Icons.Default.Check, "Done", true) { stickerId = null }
                 }
             } else if (clip != null) {
-                Text("Clip ${selected + 1} of ${project.clips.size}: ${formatTime(clip.startMs)} – ${formatTime(clip.endMs)} of " +
-                    "${clip.media.originalName}${if (clip.muted) " · muted" else ""}", color = TextMuted, fontSize = 12.sp, maxLines = 1)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Clip ${selected + 1} of ${project.clips.size}: ${formatTime(clip.startMs)} – ${formatTime(clip.endMs)} of " +
+                        "${clip.media.originalName}${if (clip.muted) " · muted" else ""}", color = TextMuted, fontSize = 12.sp, maxLines = 1,
+                        modifier = Modifier.weight(1f))
+                    // Two fingers on the video turn and zoom the clip; this puts it back.
+                    if (clip.framing != Framing()) TextButton(onClick = { project = project.frame(selected) { Framing() } }, enabled = !saving,
+                        contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Reset frame", color = VaultAccent, fontSize = 12.sp) }
+                }
             }
             if (sticker == null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 val ready = !saving

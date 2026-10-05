@@ -2,10 +2,12 @@ package com.secretvault.app.processing
 
 import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.model.MediaType
+import com.secretvault.app.core.processing.Framing
 import com.secretvault.app.core.processing.Placement
 import com.secretvault.app.core.processing.Sticker
 import com.secretvault.app.core.processing.StickerSource
 import com.secretvault.app.core.processing.VideoProject
+import com.secretvault.app.core.processing.snapAngle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -110,5 +112,18 @@ class VideoProjectTest {
         val back = moving.toggleKeyAt(13_000).toggleKeyAt(11_050)
         assertTrue(back.keys.isEmpty())
         assertEquals(0.2f, back.placement.centerX)
+    }
+
+    @Test fun framingSnapsQuarterTurnsAndStaysInBounds() {
+        assertEquals(90f, snapAngle(86f))
+        assertEquals(-180f, snapAngle(-183f))
+        assertEquals(80f, snapAngle(80f))
+        val framed = project.frame(1) { Framing(rotation = 92f, zoom = 9f, offsetX = -3f) }.clips[1].framing
+        assertEquals(Framing(rotation = 92f, zoom = 5f, offsetX = -1f), framed)
+        assertEquals(90f, framed.angle)
+        assertEquals(framed, project.frame(1) { Framing(rotation = 92f, zoom = 9f, offsetX = -3f) }.split(12_000).clips[2].framing) // halves keep it
+        // Sticker keys turn too, halfway between 0° and 40° at the midpoint.
+        val s = Sticker(StickerSource.Emoji("x"), 0, 4_000).placeAt(1_000) { it.copy(rotation = 40f) }
+        assertEquals(20f, s.placementAt(500).rotation, 0.0001f)
     }
 }

@@ -17,6 +17,7 @@ import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import androidx.media3.effect.BitmapOverlay
+import androidx.media3.effect.MatrixTransformation
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.OverlaySettings
 import androidx.media3.effect.Presentation
@@ -31,6 +32,7 @@ import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.player.DecryptingMediaDataSource
 import com.secretvault.app.core.player.EncryptedMediaDataSource
 import com.secretvault.app.core.processing.Clip
+import com.secretvault.app.core.processing.Framing
 import com.secretvault.app.core.processing.MuteAudioProcessor
 import com.secretvault.app.core.processing.Placement
 import com.secretvault.app.core.processing.Sticker
@@ -201,7 +203,10 @@ class VideoEditManager(
             ).apply {
                 if (frame != null || clip.muted) setEffects(Effects(
                     if (clip.muted) listOf(MuteAudioProcessor(listOf(VideoSegment(0L, Long.MAX_VALUE / 2_000)))) else emptyList(),
-                    frame?.let { (width, height) -> listOf(Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT)) }
+                    frame?.let { (width, height) ->
+                        listOfNotNull(Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT),
+                            clip.framing.takeIf { it != Framing() }?.let { FramingTransformation(it, width, height) })
+                    }
                         ?: emptyList()
                 ))
             }.build()
@@ -306,7 +311,24 @@ private class StickerOverlay(private val bitmap: Bitmap, private val sticker: St
             .setScale(scale, scale)
             // Anchors are -1..1 with y pointing up; the model's fractions run from the top-left.
             .setBackgroundFrameAnchor(placement.centerX * 2 - 1, 1 - placement.centerY * 2)
+            // Media3 turns counter-clockwise; the model turns clockwise.
+            .setRotationDegrees(-placement.angle)
             .build()
             .also { last = placement to it }
     }
+}
+
+/** Turns, zooms and moves one clip inside the output frame; whatever it uncovers is black. Keeps the frame size. */
+@OptIn(UnstableApi::class)
+private class FramingTransformation(framing: Framing, width: Int, height: Int) : MatrixTransformation {
+    private val matrix = android.graphics.Matrix().apply {
+        // The matrix works in -1..1 on both axes with y up, so turn in a space stretched to the frame's real shape.
+        val aspect = width.toFloat() / height
+        postScale(aspect, 1f)
+        postRotate(-framing.angle)
+        postScale(framing.zoom / aspect, framing.zoom)
+        postTranslate(framing.offsetX * 2, -framing.offsetY * 2)
+    }
+
+    override fun getMatrix(presentationTimeUs: Long): android.graphics.Matrix = matrix
 }
