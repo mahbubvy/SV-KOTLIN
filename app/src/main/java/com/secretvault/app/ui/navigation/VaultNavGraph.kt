@@ -118,6 +118,7 @@ fun VaultNavGraph(
                 onSettingsClick = { navController.navigate(Screen.Settings.route) },
                 onViewStreamClick = { navController.navigate(Screen.ViewStream.route) },
                 onReceiveFilesClick = { navController.navigate(Screen.ReceiveFiles.route) },
+                onVideoEditorClick = { navController.navigate(Screen.VideoProject.route) },
                 onSendToDevice = { ids ->
                     navController.currentBackStackEntry?.savedStateHandle?.set(SEND_IDS_KEY, ArrayList(ids))
                     navController.navigate(Screen.SendFiles.route)
@@ -247,6 +248,14 @@ fun VaultNavGraph(
                     navController.navigate(Screen.VideoEditor.createRoute(mediaId))
                 }
             )
+        }
+
+        composable(Screen.VideoProject.route) {
+            if (!isUnlocked) {
+                Box(modifier = Modifier.fillMaxSize().background(VaultDarkBg))
+                return@composable
+            }
+            com.secretvault.app.ui.editor.VideoProjectScreen(app = app, onBack = { navController.popBackStack() })
         }
 
         composable(

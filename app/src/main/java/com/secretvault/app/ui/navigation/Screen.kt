@@ -9,6 +9,7 @@ sealed class Screen(val route: String) {
     object ViewStream : Screen("view_stream")
     object ReceiveFiles : Screen("receive_files")
     object SendFiles : Screen("send_files")
+    object VideoProject : Screen("video_project")
     object CameraStream : Screen("camera_stream_test")
     object MediaViewer : Screen("media_viewer/{albumId}/{initialMediaId}") {
         fun createRoute(albumId: String?, initialMediaId: String, favoritesOnly: Boolean = false): String {

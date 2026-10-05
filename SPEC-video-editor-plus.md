@@ -119,8 +119,8 @@ Each phase must build (`./gradlew assembleDebug`) and keep the unit tests passin
 - [x] `VideoEditManager.start(project)` (reuses the old editor's manager, so no second manager): sequence export with per-clip trim, mute and Presentation, forced audio, then save into the vault.
 
 ### Phase 2: Editor screen v1 (first version the user can try)
-- [ ] Home **Video editor** button and a `Screen.VideoProject` route.
-- [ ] Screen: preview, play/pause, time, a simple fit-to-width clip track (tap to select), the vault video picker for **+ Add**, Split, Mute, Move, Delete, Save with a progress dialog, and Discard changes.
+- [x] Home **Video editor** button and a `Screen.VideoProject` route.
+- [x] Screen: preview, play/pause, time, a simple fit-to-width clip track (tap to select), the vault video picker for **+ Add**, Split, Mute, Move, Delete, Save with a progress dialog, and Discard changes.
 
 ### Phase 3: Timeline
 - [ ] A scrolling timeline with a fixed centre playhead, pinch zoom, frame thumbnails per clip, and dragging the selected clip's edges to trim.
@@ -157,3 +157,7 @@ adb install -r app/build/outputs/apk/debug/SecretVault-v1.1.1-camera-stream-test
   - `VideoProject` / `Clip` with 5 tests.
   - `VideoEditManager.start(project)`: per-clip trim and mute (`MuteAudioProcessor`), every clip fitted into the first clip's upright frame with `Presentation` `LAYOUT_SCALE_TO_FIT`, forced audio track, saved as `Edit_<date>.mp4`.
   - Not run on a device yet; the Phase 2 screen will exercise it.
+- 2026-10-05: Phase 2 done; installed, waiting for the user to try it.
+  - `ui/editor/VideoProjectScreen.kt`: playlist preview with per-clip clipping and mute volume, fit-to-width `ClipTrack`, a RangeSlider to trim the selected clip, tools (Add, Split, Mute, Left, Right, Delete), `VaultVideoPicker`, and Discard changes.
+  - Home FAB (MovieCreation icon), route `Screen.VideoProject`.
+  - The old editor's `SavingDialog` and `formatTime` are now `internal` for reuse.

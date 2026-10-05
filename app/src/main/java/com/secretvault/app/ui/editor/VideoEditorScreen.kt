@@ -487,7 +487,7 @@ private fun TimelineStrip(
 }
 
 @Composable
-private fun SavingDialog(state: VideoEditState.Running, onCancel: () -> Unit) {
+internal fun SavingDialog(state: VideoEditState.Running, onCancel: () -> Unit) {
     val cutting = state.stage == VideoEditState.Stage.CUTTING
     AlertDialog(
         onDismissRequest = {},
@@ -534,7 +534,7 @@ private suspend fun loadTimelineFrames(app: SecretVaultApp, item: MediaItem, dur
         }
     }
 
-private fun formatTime(ms: Long): String {
+internal fun formatTime(ms: Long): String {
     val tenths = (ms / 100) % 10
     val seconds = (ms / 1000) % 60
     val minutes = ms / 60_000
