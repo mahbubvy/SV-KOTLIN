@@ -19,6 +19,42 @@ data class Clip(
     val durationMs: Long get() = endMs - startMs
 }
 
+data class VideoProjectHistory(
+    val current: VideoProject = VideoProject(),
+    private val past: List<VideoProject> = emptyList(),
+    private val future: List<VideoProject> = emptyList(),
+    private val gestureStart: VideoProject? = null
+) {
+    val canUndo: Boolean get() = past.isNotEmpty()
+    val canRedo: Boolean get() = future.isNotEmpty()
+
+    fun change(next: VideoProject): VideoProjectHistory = when {
+        next == current -> this
+        gestureStart != null -> copy(current = next, future = emptyList())
+        else -> copy(current = next, past = (past + current).takeLast(100), future = emptyList())
+    }
+
+    // A drag can emit hundreds of changes; keep only its starting project in history.
+    fun beginGesture() = if (gestureStart != null) this else copy(gestureStart = current)
+    fun endGesture(): VideoProjectHistory = if (gestureStart == null) this else copy(
+        past = if (gestureStart == current) past else (past + gestureStart).takeLast(100), gestureStart = null
+    )
+
+    fun undo(): VideoProjectHistory {
+        val settled = endGesture()
+        return if (!settled.canUndo) settled else settled.copy(
+            current = settled.past.last(), past = settled.past.dropLast(1), future = settled.future + settled.current
+        )
+    }
+
+    fun redo(): VideoProjectHistory {
+        val settled = endGesture()
+        return if (!settled.canRedo) settled else settled.copy(
+            current = settled.future.last(), past = (settled.past + settled.current).takeLast(100), future = settled.future.dropLast(1)
+        )
+    }
+}
+
 /** The multi-clip editor's state. Every operation returns a new project and ignores invalid requests. */
 data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<Sticker> = emptyList()) {
     val durationMs: Long get() = clips.sumOf { it.durationMs }

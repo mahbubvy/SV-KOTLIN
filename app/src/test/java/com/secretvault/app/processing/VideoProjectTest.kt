@@ -7,6 +7,7 @@ import com.secretvault.app.core.processing.Placement
 import com.secretvault.app.core.processing.Sticker
 import com.secretvault.app.core.processing.StickerSource
 import com.secretvault.app.core.processing.VideoProject
+import com.secretvault.app.core.processing.VideoProjectHistory
 import com.secretvault.app.core.processing.snapAngle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -20,6 +21,22 @@ class VideoProjectTest {
     private val b = media("b")
     // a: 10 s, b: 4 s
     private val project = VideoProject().add(a, 10_000).add(b, 4_000)
+
+    @Test fun undoRedoGroupsGesturesAndDropsRedoAfterANewEdit() {
+        val initial = VideoProjectHistory(project)
+        val changed = initial.beginGesture().change(project.trim(0, 1_000, 9_000))
+            .change(project.trim(0, 2_000, 8_000)).endGesture()
+        assertEquals(project, changed.undo().current)
+        assertTrue(!changed.undo().canUndo)
+        assertEquals(changed.current, changed.undo().redo().current)
+        assertTrue(!changed.undo().change(project.toggleMute(0)).canRedo)
+        assertSame(initial, initial.change(project))
+        assertTrue(!initial.beginGesture().endGesture().canUndo)
+        assertEquals(project, initial.undo().current)
+        assertEquals(project, initial.redo().current)
+        val capped = (1..105).fold(initial) { h, _ -> h.change(h.current.toggleMute(0)) }
+        assertTrue(!(1..100).fold(capped) { h, _ -> h.undo() }.canUndo)
+    }
 
     @Test fun addBuildsTheTimeline() {
         assertEquals(14_000, project.durationMs)
