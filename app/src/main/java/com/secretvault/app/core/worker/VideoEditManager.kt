@@ -1,6 +1,7 @@
 package com.secretvault.app.core.worker
 
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.media3.common.util.Clock
@@ -12,14 +13,20 @@ import androidx.media3.transformer.DefaultAssetLoaderFactory
 import androidx.media3.transformer.DefaultDecoderFactory
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
+import androidx.media3.transformer.Effects
+import androidx.media3.effect.Presentation
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import com.secretvault.app.core.crypto.VaultCryptoEngine
 import com.secretvault.app.core.model.MediaItem
+import com.secretvault.app.core.player.DecryptingMediaDataSource
 import com.secretvault.app.core.player.EncryptedMediaDataSource
+import com.secretvault.app.core.processing.Clip
+import com.secretvault.app.core.processing.MuteAudioProcessor
 import com.secretvault.app.core.processing.VideoEditPlan
+import com.secretvault.app.core.processing.VideoProject
 import com.secretvault.app.core.processing.VideoSegment
 import com.secretvault.app.data.repository.MediaRepository
 import kotlinx.coroutines.CancellationException
@@ -33,8 +40,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 sealed interface VideoEditState {
     /** [progress] is 0..1, or null while it can't be measured yet. */
@@ -76,10 +87,28 @@ class VideoEditManager(
         context.cacheDir.listFiles { _, name -> name.startsWith(TEMP_PREFIX) }?.forEach { it.delete() }
     }
 
+    /** Single-video edit: keeps [segments] of [item] (the per-video Edit button). */
     fun start(item: MediaItem, segments: List<VideoSegment>) {
-        if (job?.isActive == true || segments.isEmpty()) return
+        if (segments.isEmpty()) return
+        run(segments.map { Clip(item, it.endMs, it.startMs, it.endMs) }, fitToFirst = false, item.sizeBytes * 2, item.albumId) { names ->
+            VideoEditPlan.editedFileName(item.filename, names)
+        }
+    }
+
+    /** Multi-clip editor: joins the project's clips into one new video in the first clip's album. */
+    fun start(project: VideoProject) {
+        val clips = project.clips.ifEmpty { return }
+        // Clips can share a source, so count each source once.
+        val sourceBytes = clips.distinctBy { it.media.id }.sumOf { it.media.sizeBytes }
+        run(clips, fitToFirst = true, sourceBytes * 2, clips.first().media.albumId) {
+            "Edit_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".mp4"
+        }
+    }
+
+    private fun run(clips: List<Clip>, fitToFirst: Boolean, neededBytes: Long, albumId: String, name: (Set<String>) -> String) {
+        if (job?.isActive == true) return
         // Room for the plaintext cut plus its encrypted copy; a re-encode can outgrow the source a little.
-        if (context.cacheDir.usableSpace < item.sizeBytes * 2) {
+        if (context.cacheDir.usableSpace < neededBytes) {
             _state.value = VideoEditState.Failed("Not enough storage to save the edited video.")
             return
         }
@@ -88,16 +117,13 @@ class VideoEditManager(
             val temp = File(context.cacheDir, "$TEMP_PREFIX${System.currentTimeMillis()}.mp4")
             try {
                 wakeLock?.acquire(30 * 60 * 1000L)
-                val result = export(item, segments, temp)
+                val result = export(clips, fitToFirst, temp)
                 _state.value = VideoEditState.Running(VideoEditState.Stage.ENCRYPTING, 0f)
                 val saved = mediaSaveQueue.saveVideo(
                     tempFile = temp,
-                    durationMs = result.durationMs.takeIf { it > 0 } ?: segments.sumOf { it.durationMs },
-                    albumId = item.albumId,
-                    name = VideoEditPlan.editedFileName(
-                        item.filename,
-                        mediaRepository.getMedia().first().mapTo(HashSet()) { it.filename }
-                    )
+                    durationMs = result.durationMs.takeIf { it > 0 } ?: clips.sumOf { it.durationMs },
+                    albumId = albumId,
+                    name = name(mediaRepository.getMedia().first().mapTo(HashSet()) { it.filename })
                 ) { progress -> _state.value = VideoEditState.Running(VideoEditState.Stage.ENCRYPTING, progress) }
                 _state.value = VideoEditState.Done(saved)
             } catch (e: CancellationException) {
@@ -125,20 +151,30 @@ class VideoEditManager(
         if (_state.value !is VideoEditState.Running) _state.value = null
     }
 
-    private suspend fun export(item: MediaItem, segments: List<VideoSegment>, output: File): ExportResult {
-        val uri = Uri.fromFile(File(item.encryptedPath))
-        val clips = segments.map { segment ->
+    /**
+     * [fitToFirst]: every clip is scaled into the first clip's upright frame (black bars), and the output always has
+     * an audio track, so clips of different shapes, muted clips and clips without sound can follow each other.
+     */
+    private suspend fun export(clips: List<Clip>, fitToFirst: Boolean, output: File): ExportResult {
+        val frame = if (fitToFirst) withContext(Dispatchers.IO) { uprightSize(clips.first().media) } else null
+        val items = clips.map { clip ->
             EditedMediaItem.Builder(
                 androidx.media3.common.MediaItem.Builder()
-                    .setUri(uri)
+                    .setUri(Uri.fromFile(File(clip.media.encryptedPath)))
                     .setClippingConfiguration(
                         androidx.media3.common.MediaItem.ClippingConfiguration.Builder()
-                            .setStartPositionMs(segment.startMs)
-                            .setEndPositionMs(segment.endMs)
+                            .setStartPositionMs(clip.startMs)
+                            .setEndPositionMs(clip.endMs)
                             .build()
                     )
                     .build()
-            ).build()
+            ).apply {
+                if (frame != null || clip.muted) setEffects(Effects(
+                    if (clip.muted) listOf(MuteAudioProcessor(listOf(VideoSegment(0L, Long.MAX_VALUE / 2_000)))) else emptyList(),
+                    frame?.let { (width, height) -> listOf(Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT)) }
+                        ?: emptyList()
+                ))
+            }.build()
         }
 
         val done = CompletableDeferred<ExportResult>()
@@ -165,7 +201,10 @@ class VideoEditManager(
             })
             .build()
 
-        transformer.start(Composition.Builder(EditedMediaItemSequence(clips)).build(), output.absolutePath)
+        val composition = Composition.Builder(EditedMediaItemSequence(items))
+            .apply { if (fitToFirst) experimentalSetForceAudioTrack(true) }
+            .build()
+        transformer.start(composition, output.absolutePath)
         val progress = ProgressHolder()
         try {
             while (true) {
@@ -179,7 +218,28 @@ class VideoEditManager(
         }
     }
 
+    /** The video's width × height as shown (rotation applied), rounded to even numbers for the encoder. */
+    private fun uprightSize(media: MediaItem): Pair<Int, Int> {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            DecryptingMediaDataSource(cryptoEngine, File(media.encryptedPath)).use { source ->
+                retriever.setDataSource(source)
+                fun meta(key: Int) = retriever.extractMetadata(key)?.toIntOrNull() ?: 0
+                val width = meta(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                val height = meta(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                val turned = meta(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION) % 180 != 0
+                val (w, h) = if (turned) height to width else width to height
+                if (w <= 0 || h <= 0) FALLBACK_FRAME else (w / 2 * 2) to (h / 2 * 2)
+            }
+        } catch (e: Exception) {
+            FALLBACK_FRAME
+        } finally {
+            retriever.release()
+        }
+    }
+
     private companion object {
         const val TEMP_PREFIX = "video_edit_"
+        val FALLBACK_FRAME = 1080 to 1920
     }
 }

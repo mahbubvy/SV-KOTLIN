@@ -1,0 +1,65 @@
+package com.secretvault.app.processing
+
+import com.secretvault.app.core.model.MediaItem
+import com.secretvault.app.core.model.MediaType
+import com.secretvault.app.core.processing.VideoProject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class VideoProjectTest {
+    private fun media(id: String) = MediaItem(id, "$id.mp4", "$id.mp4", MediaType.VIDEO, "video/mp4", "/v/$id.enc", null, 1, albumId = "a")
+    private val a = media("a")
+    private val b = media("b")
+    // a: 10 s, b: 4 s
+    private val project = VideoProject().add(a, 10_000).add(b, 4_000)
+
+    @Test fun addBuildsTheTimeline() {
+        assertEquals(14_000, project.durationMs)
+        assertEquals(10_000, project.outputStartOf(1))
+        assertSame(project, project.add(a, 400)) // too short to be a clip
+    }
+
+    @Test fun clipAtFindsClipAndOffset() {
+        assertEquals(0 to 0L, project.clipAt(0))
+        assertEquals(0 to 9_999L, project.clipAt(9_999))
+        assertEquals(1 to 0L, project.clipAt(10_000))
+        assertEquals(1 to 4_000L, project.clipAt(14_000)) // end belongs to the last clip
+        assertNull(VideoProject().clipAt(0))
+    }
+
+    @Test fun splitCutsTheClipUnderThePlayhead() {
+        val split = project.split(3_000)
+        assertEquals(listOf(a to (0L to 3_000L), a to (3_000L to 10_000L), b to (0L to 4_000L)),
+            split.clips.map { it.media to (it.startMs to it.endMs) })
+        assertEquals(14_000, split.durationMs)
+        assertTrue(split.clips[0].id != split.clips[1].id)
+        // A split inside the second clip uses its own source time.
+        assertEquals(1_000L, project.split(11_000).clips[1].endMs)
+        // Too close to an edge: nothing happens.
+        assertSame(project, project.split(200))
+        assertSame(project, project.split(9_800))
+    }
+
+    @Test fun trimStaysInsideTheSourceAndKeepsAMinimumLength() {
+        assertEquals(2_000L to 8_000L, project.trim(0, 2_000, 8_000).clips[0].let { it.startMs to it.endMs })
+        assertEquals(0L to 10_000L, project.trim(0, -5, 99_000).clips[0].let { it.startMs to it.endMs })
+        assertEquals(5_000L to 5_500L, project.trim(0, 5_000, 5_100).clips[0].let { it.startMs to it.endMs })
+        assertEquals(9_500L to 10_000L, project.trim(0, 10_000, 10_000).clips[0].let { it.startMs to it.endMs })
+        assertSame(project, project.trim(7, 0, 1))
+    }
+
+    @Test fun moveDeleteAndMute() {
+        assertEquals(listOf(b, a), project.move(0, 1).clips.map { it.media })
+        assertEquals(listOf(b, a), project.move(1, -1).clips.map { it.media })
+        assertSame(project, project.move(0, -1))
+        assertSame(project, project.move(1, 1))
+        assertEquals(listOf(b), project.delete(0).clips.map { it.media })
+        assertSame(project, project.delete(5))
+        val muted = project.toggleMute(1)
+        assertEquals(listOf(false, true), muted.clips.map { it.muted })
+        assertEquals(listOf(false, false), muted.toggleMute(1).clips.map { it.muted })
+    }
+}

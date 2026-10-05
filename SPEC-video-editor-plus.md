@@ -51,7 +51,7 @@ All paths are under `app/src/main/java/com/secretvault/app/`.
 | What | Where | Use |
 |---|---|---|
 | Encrypted playback and export input | `core/player/EncryptedMediaDataSource` | Both the ExoPlayer preview and the Transformer read vault files through it, as `VideoEditManager` does. |
-| Export → encrypt → save pipeline | `core/worker/VideoEditManager.kt` | Copy its pattern: Transformer on Main, plaintext temp in `cacheDir/video_edit_*` (wiped on start), `MediaSaveQueue.saveVideo`, wake lock, progress, cancel. Prefer a new `MultiClipExportManager` over changing the old editor's manager. |
+| Export → encrypt → save pipeline | `core/worker/VideoEditManager.kt` | **Shared** by both editors. `start(item, segments)` is the old Edit button and is unchanged. `start(project)` is the multi-clip editor. Both go through `run()` → `export(clips, fitToFirst)`. |
 | Timeline frames from an encrypted file | `loadTimelineFrames` in `ui/editor/VideoEditorScreen.kt` | Move it to a shared place and reuse it per clip. |
 | Range maths and mute processor (**already on this branch**) | `core/processing/VideoEditPlan.toOutput`, `core/processing/MuteAudioProcessor.kt` and tests | `MuteAudioProcessor(listOf(whole clip))` silences a clip. `toOutput` maps ranges between timelines. |
 | Vault media list | `app.mediaRepository.getMedia()` | The source for the Add picker, filtered to videos. |
@@ -115,8 +115,8 @@ Each phase must build (`./gradlew assembleDebug`) and keep the unit tests passin
 - [x] Agree this plan with the user. Mute processor and `toOutput` are kept from the earlier attempt; the Mute tab in the old editor was dropped.
 
 ### Phase 1: Model and export engine
-- [ ] `VideoProject` model and operations, with unit tests (split, trim limits, move, delete, mute, duration, `clipAt`).
-- [ ] `MultiClipExportManager`: sequence export with per-clip trim, mute and Presentation, forced audio, then save into the vault.
+- [x] `VideoProject` model and operations, with unit tests (split, trim limits, move, delete, mute, duration, `clipAt`).
+- [x] `VideoEditManager.start(project)` (reuses the old editor's manager, so no second manager): sequence export with per-clip trim, mute and Presentation, forced audio, then save into the vault.
 
 ### Phase 2: Editor screen v1 (first version the user can try)
 - [ ] Home **Video editor** button and a `Screen.VideoProject` route.
@@ -153,3 +153,7 @@ adb install -r app/build/outputs/apk/debug/SecretVault-v1.1.1-camera-stream-test
 
 ## Progress log
 - 2026-10-05: Plan changed from "add tabs to the old editor" to "separate multi-clip editor". Kept `MuteAudioProcessor` and `VideoEditPlan.toOutput` (with tests); the old editor is unchanged from `main`.
+- 2026-10-05: Phase 1 done.
+  - `VideoProject` / `Clip` with 5 tests.
+  - `VideoEditManager.start(project)`: per-clip trim and mute (`MuteAudioProcessor`), every clip fitted into the first clip's upright frame with `Presentation` `LAYOUT_SCALE_TO_FIT`, forced audio track, saved as `Edit_<date>.mp4`.
+  - Not run on a device yet; the Phase 2 screen will exercise it.
