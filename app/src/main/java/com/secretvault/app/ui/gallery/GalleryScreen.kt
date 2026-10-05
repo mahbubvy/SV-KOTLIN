@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.MoveToInbox
+import androidx.compose.material.icons.filled.MovieCreation
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.CircularProgressIndicator
@@ -84,6 +85,7 @@ fun GalleryScreen(
     onSettingsClick: () -> Unit,
     onViewStreamClick: () -> Unit,
     onReceiveFilesClick: () -> Unit = {},
+    onVideoEditorClick: () -> Unit = {},
     onSendToDevice: (List<String>) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -327,6 +329,10 @@ fun GalleryScreen(
                     FloatingActionButton(onClick = onReceiveFilesClick,
                         containerColor = VaultSurface, contentColor = VaultAccent) {
                         Icon(Icons.Default.MoveToInbox, contentDescription = "Receive files from another SV phone")
+                    }
+                    FloatingActionButton(onClick = onVideoEditorClick,
+                        containerColor = VaultSurface, contentColor = VaultAccent) {
+                        Icon(Icons.Default.MovieCreation, contentDescription = "Video editor")
                     }
                 }
                 // Import from Device Button

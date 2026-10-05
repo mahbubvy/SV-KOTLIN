@@ -487,7 +487,7 @@ private fun TimelineStrip(
 }
 
 @Composable
-private fun SavingDialog(state: VideoEditState.Running, onCancel: () -> Unit) {
+internal fun SavingDialog(state: VideoEditState.Running, onCancel: () -> Unit) {
     val cutting = state.stage == VideoEditState.Stage.CUTTING
     AlertDialog(
         onDismissRequest = {},
@@ -512,14 +512,14 @@ private fun SavingDialog(state: VideoEditState.Running, onCancel: () -> Unit) {
 }
 
 /** Small frames spread across the video, decoded straight from the encrypted file. */
-private suspend fun loadTimelineFrames(app: SecretVaultApp, item: MediaItem, durationMs: Long): List<Bitmap> =
+internal suspend fun loadTimelineFrames(app: SecretVaultApp, item: MediaItem, durationMs: Long, count: Int = TIMELINE_FRAMES): List<Bitmap> =
     withContext(Dispatchers.IO) {
         val retriever = MediaMetadataRetriever()
         try {
             DecryptingMediaDataSource(app.cryptoEngine, File(item.encryptedPath)).use { source ->
                 retriever.setDataSource(source)
-                (0 until TIMELINE_FRAMES).mapNotNull { i ->
-                    val atUs = durationMs * 1000L * (2 * i + 1) / (2 * TIMELINE_FRAMES)
+                (0 until count).mapNotNull { i ->
+                    val atUs = durationMs * 1000L * (2 * i + 1) / (2 * count)
                     retriever.getFrameAtTime(atUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.let { frame ->
                         val height = 96
                         val width = (height * frame.width / frame.height.coerceAtLeast(1)).coerceAtLeast(1)
@@ -534,7 +534,7 @@ private suspend fun loadTimelineFrames(app: SecretVaultApp, item: MediaItem, dur
         }
     }
 
-private fun formatTime(ms: Long): String {
+internal fun formatTime(ms: Long): String {
     val tenths = (ms / 100) % 10
     val seconds = (ms / 1000) % 60
     val minutes = ms / 60_000

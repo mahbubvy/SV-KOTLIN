@@ -33,7 +33,9 @@ fun VaultNavGraph(
     val isUnlocked by app.sessionManager.isUnlocked.collectAsState()
 
     LaunchedEffect(cameraEntryRequest) {
-        if (cameraEntryRequest > 0 && app.sessionManager.keepUnlocked.value && app.sessionManager.isUnlocked.value) {
+        // An edit in progress wins over the camera shortcut: stay in the editor.
+        if (cameraEntryRequest > 0 && app.sessionManager.keepUnlocked.value && app.sessionManager.isUnlocked.value &&
+            app.videoEditManager.draft == null) {
             navController.navigate(Screen.VaultHome.route) {
                 popUpTo(navController.graph.id)
                 launchSingleTop = true
@@ -94,6 +96,10 @@ fun VaultNavGraph(
                 Box(modifier = Modifier.fillMaxSize().background(VaultDarkBg))
                 return@composable
             }
+            // The vault locked mid-edit: go back to the editor, which picks up its draft.
+            LaunchedEffect(Unit) {
+                if (app.videoEditManager.draft != null) navController.navigate(Screen.VideoProject.route) { launchSingleTop = true }
+            }
             val galleryViewModel = viewModel<com.secretvault.app.ui.gallery.GalleryViewModel>(
                 factory = viewModelFactory {
                     initializer { com.secretvault.app.ui.gallery.GalleryViewModel(app.mediaRepository) }
@@ -118,6 +124,7 @@ fun VaultNavGraph(
                 onSettingsClick = { navController.navigate(Screen.Settings.route) },
                 onViewStreamClick = { navController.navigate(Screen.ViewStream.route) },
                 onReceiveFilesClick = { navController.navigate(Screen.ReceiveFiles.route) },
+                onVideoEditorClick = { navController.navigate(Screen.VideoProject.route) },
                 onSendToDevice = { ids ->
                     navController.currentBackStackEntry?.savedStateHandle?.set(SEND_IDS_KEY, ArrayList(ids))
                     navController.navigate(Screen.SendFiles.route)
@@ -247,6 +254,14 @@ fun VaultNavGraph(
                     navController.navigate(Screen.VideoEditor.createRoute(mediaId))
                 }
             )
+        }
+
+        composable(Screen.VideoProject.route) {
+            if (!isUnlocked) {
+                Box(modifier = Modifier.fillMaxSize().background(VaultDarkBg))
+                return@composable
+            }
+            com.secretvault.app.ui.editor.VideoProjectScreen(app = app, onBack = { navController.popBackStack() })
         }
 
         composable(

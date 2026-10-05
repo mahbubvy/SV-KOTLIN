@@ -83,6 +83,22 @@ class VideoEditPlanTest {
     }
 
     @Test
+    fun rangesMapOntoTheOutputTimeline() {
+        val whole = listOf(VideoSegment(0, 10_000))
+        assertEquals(listOf(VideoSegment(2_000, 3_000)), VideoEditPlan.toOutput(listOf(VideoSegment(2_000, 3_000)), whole))
+        // Trim to 4..8 s: a range at 3..5 s keeps only its 4..5 s part, which lands at 0..1 s.
+        assertEquals(listOf(VideoSegment(0, 1_000)), VideoEditPlan.toOutput(listOf(VideoSegment(3_000, 5_000)), listOf(VideoSegment(4_000, 8_000))))
+        // Remove 3..5 s: a range spanning the cut becomes two pieces that touch in the output.
+        val kept = listOf(VideoSegment(0, 3_000), VideoSegment(5_000, 10_000))
+        assertEquals(listOf(VideoSegment(2_000, 3_000), VideoSegment(3_000, 4_000)),
+            VideoEditPlan.toOutput(listOf(VideoSegment(2_000, 6_000)), kept))
+        // A range entirely inside the removed part disappears; a later one shifts left by the cut.
+        assertEquals(listOf(VideoSegment(5_000, 6_000)),
+            VideoEditPlan.toOutput(listOf(VideoSegment(3_500, 4_500), VideoSegment(7_000, 8_000)), kept))
+        assertTrue(VideoEditPlan.toOutput(emptyList(), kept).isEmpty())
+    }
+
+    @Test
     fun editedFileNameIncrementsWhenTaken() {
         assertEquals("SV_01_edited.mp4", VideoEditPlan.editedFileName("SV_01.mp4", emptySet()))
         assertEquals("SV_01_edited_1.mp4", VideoEditPlan.editedFileName("SV_01.mp4", setOf("SV_01_edited.mp4")))
