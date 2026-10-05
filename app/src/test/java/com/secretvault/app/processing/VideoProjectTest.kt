@@ -91,7 +91,11 @@ class VideoProjectTest {
     @Test fun keyframesGlideBetweenPlacements() {
         // Shown from 10 s to 14 s; keys at 1 s (left) and 3 s (right, twice as wide).
         val still = Sticker(StickerSource.Emoji("x"), 10_000, 14_000, Placement(0.2f, 0.5f, 0.2f))
-        assertEquals(Placement(0.2f, 0.5f, 0.2f), still.placeAt(12_000) { it }.placementAt(13_000)) // no keys: one place
+        assertEquals(Placement(0.2f, 0.5f, 0.2f), still.placementAt(13_000)) // no keys: one place
+        // Dragging at the moment it was placed just moves it; at another moment it starts moving from there to here.
+        assertTrue(still.placeAt(10_100) { it.copy(centerX = 0.6f) }.keys.isEmpty())
+        assertEquals(listOf(0L to 0.2f, 2_000L to 0.6f),
+            still.placeAt(12_000) { it.copy(centerX = 0.6f) }.keys.map { it.atMs to it.placement.centerX })
 
         val moving = still.toggleKeyAt(11_000).placeAt(13_000) { it.copy(centerX = 0.8f, widthFraction = 0.4f) }
         assertEquals(listOf(1_000L, 3_000L), moving.keys.map { it.atMs })

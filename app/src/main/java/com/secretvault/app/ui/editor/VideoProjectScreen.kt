@@ -332,7 +332,7 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
             if (sticker != null) {
                 val onKey = sticker.keyAt(positionMs) != null
                 Text(when {
-                    sticker.keys.isEmpty() -> "Drag to move, pinch to resize. Add a key to make it move over time."
+                    sticker.keys.isEmpty() -> "Drag to place, pinch to resize. Do it at another time to make it move."
                     onKey -> "On a key: drag or pinch to change it."
                     else -> "${sticker.keys.size} keys. Drag or pinch here to add one."
                 }, color = TextMuted, fontSize = 12.sp, maxLines = 1)

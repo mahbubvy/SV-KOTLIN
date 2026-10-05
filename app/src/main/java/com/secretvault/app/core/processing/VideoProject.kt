@@ -122,8 +122,9 @@ data class Placement(val centerX: Float = 0.5f, val centerY: Float = 0.5f, val w
 data class Keyframe(val atMs: Long, val placement: Placement)
 
 /**
- * An image over the video from [startMs] to [endMs] of the output. Without [keys] it stays at [placement]; with
- * keys it glides in straight lines from one to the next, holding the first before it and the last after it.
+ * An image over the video from [startMs] to [endMs] of the output. Without [keys] it stays at [placement], last set
+ * [placedAtMs] after it appears; with keys it glides in straight lines from one to the next, holding the first before
+ * it and the last after it.
  */
 data class Sticker(
     val source: StickerSource,
@@ -131,6 +132,7 @@ data class Sticker(
     val endMs: Long,
     val placement: Placement = Placement(),
     val keys: List<Keyframe> = emptyList(), // sorted by atMs
+    val placedAtMs: Long = 0L,
     val id: String = UUID.randomUUID().toString()
 ) {
     fun placementAt(outputMs: Long): Placement {
@@ -150,13 +152,21 @@ data class Sticker(
     /** The keyframe the playhead at [outputMs] is on, allowing for a playhead that lands a little off it. */
     fun keyAt(outputMs: Long): Keyframe? = keys.firstOrNull { abs(it.atMs - (outputMs - startMs)) <= KEY_SNAP_MS }
 
-    /** Changes the placement shown at [outputMs]: the whole sticker without keyframes, else the keyframe there (added if new). */
+    /**
+     * Changes the placement shown at [outputMs]. Without keyframes, at the moment it was placed this just moves it;
+     * at any other moment it starts moving, After Effects style: one key where it was placed and one here. With
+     * keyframes, it changes the key there, or adds one.
+     */
     fun placeAt(outputMs: Long, change: (Placement) -> Placement): Sticker {
         val placed = change(placementAt(outputMs)).fitted()
-        if (keys.isEmpty()) return copy(placement = placed)
+        val at = (outputMs - startMs).coerceIn(0L, endMs - startMs)
+        if (keys.isEmpty()) {
+            val placedAt = placedAtMs.coerceIn(0L, endMs - startMs)
+            return if (abs(at - placedAt) <= KEY_SNAP_MS) copy(placement = placed, placedAtMs = at)
+            else copy(keys = listOf(Keyframe(placedAt, placement), Keyframe(at, placed)).sortedBy { it.atMs })
+        }
         val existing = keyAt(outputMs)
-        val at = existing?.atMs ?: (outputMs - startMs).coerceIn(0L, endMs - startMs)
-        return copy(keys = (keys.filter { it !== existing } + Keyframe(at, placed)).sortedBy { it.atMs })
+        return copy(keys = (keys.filter { it !== existing } + Keyframe(existing?.atMs ?: at, placed)).sortedBy { it.atMs })
     }
 
     /** Adds a keyframe at [outputMs] holding what's shown there, or removes the one already there. */
@@ -164,7 +174,7 @@ data class Sticker(
         val existing = keyAt(outputMs)
         return when {
             // The last one going: stay where it was rather than jump back.
-            existing != null && keys.size == 1 -> copy(keys = emptyList(), placement = existing.placement)
+            existing != null && keys.size == 1 -> copy(keys = emptyList(), placement = existing.placement, placedAtMs = existing.atMs)
             existing != null -> copy(keys = keys - existing)
             else -> copy(keys = (keys + Keyframe((outputMs - startMs).coerceIn(0L, endMs - startMs), placementAt(outputMs))).sortedBy { it.atMs })
         }
