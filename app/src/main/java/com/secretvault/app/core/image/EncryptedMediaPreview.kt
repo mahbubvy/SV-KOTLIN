@@ -42,19 +42,7 @@ fun writeEncryptedPreview(cryptoEngine: VaultCryptoEngine, encFile: File, isVide
     }
 
     DecryptingMediaDataSource(cryptoEngine, encFile).use { source ->
-        fun stream() = object : InputStream() {
-            private var position = 0L
-            override fun read(): Int {
-                val one = ByteArray(1)
-                return if (read(one, 0, 1) < 0) -1 else one[0].toInt() and 255
-            }
-            override fun read(bytes: ByteArray, offset: Int, count: Int): Int {
-                if (count == 0) return 0
-                val read = source.readAt(position, bytes, offset, count)
-                if (read > 0) position += read
-                return read
-            }
-        }
+        fun stream() = source.plainStream()
         val orientation = runCatching {
             stream().use { ExifInterface(it).let { exif -> exif.rotationDegrees to exif.isFlipped } }
         }.getOrNull()
@@ -70,6 +58,39 @@ fun writeEncryptedPreview(cryptoEngine: VaultCryptoEngine, encFile: File, isVide
         } else Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
         writeEncryptedThumbnail(cryptoEngine, thumbBitmap, thumbFile)
         return if (rotation == 90 || rotation == 270) MediaPreview(rawHeight, rawWidth, 0L) else MediaPreview(rawWidth, rawHeight, 0L)
+    }
+}
+
+/** Decodes an encrypted vault photo in memory, upright and no larger than [maxSide] on its long side. */
+fun decodeEncryptedImage(cryptoEngine: VaultCryptoEngine, encFile: File, maxSide: Int): Bitmap? =
+    DecryptingMediaDataSource(cryptoEngine, encFile).use { source ->
+        val orientation = runCatching {
+            source.plainStream().use { ExifInterface(it).let { exif -> exif.rotationDegrees to exif.isFlipped } }
+        }.getOrNull()
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        source.plainStream().use { BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
+        val decoded = source.plainStream().use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) }
+            ?.let { applyExifOrientation(it, orientation) } ?: return@use null
+        val scale = maxSide.toFloat() / maxOf(decoded.width, decoded.height)
+        if (scale >= 1f) decoded
+        else Bitmap.createScaledBitmap(decoded, (decoded.width * scale).toInt().coerceAtLeast(1), (decoded.height * scale).toInt().coerceAtLeast(1), true)
+            .also { if (it !== decoded) decoded.recycle() }
+    }
+
+/** Reads the decrypted bytes from the start, without writing them anywhere. */
+private fun DecryptingMediaDataSource.plainStream() = object : InputStream() {
+    private var position = 0L
+    override fun read(): Int {
+        val one = ByteArray(1)
+        return if (read(one, 0, 1) < 0) -1 else one[0].toInt() and 255
+    }
+    override fun read(bytes: ByteArray, offset: Int, count: Int): Int {
+        if (count == 0) return 0
+        val read = readAt(position, bytes, offset, count)
+        if (read > 0) position += read
+        return read
     }
 }
 

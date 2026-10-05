@@ -1,9 +1,11 @@
 package com.secretvault.app.core.worker
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.util.Clock
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSourceBitmapLoader
@@ -14,17 +16,23 @@ import androidx.media3.transformer.DefaultDecoderFactory
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
+import androidx.media3.effect.BitmapOverlay
+import androidx.media3.effect.OverlayEffect
+import androidx.media3.effect.OverlaySettings
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import com.secretvault.app.core.crypto.VaultCryptoEngine
+import com.secretvault.app.core.image.key
+import com.secretvault.app.core.image.stickerBitmap
 import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.player.DecryptingMediaDataSource
 import com.secretvault.app.core.player.EncryptedMediaDataSource
 import com.secretvault.app.core.processing.Clip
 import com.secretvault.app.core.processing.MuteAudioProcessor
+import com.secretvault.app.core.processing.Sticker
 import com.secretvault.app.core.processing.VideoEditPlan
 import com.secretvault.app.core.processing.VideoProject
 import com.secretvault.app.core.processing.VideoSegment
@@ -90,7 +98,7 @@ class VideoEditManager(
     /** Single-video edit: keeps [segments] of [item] (the per-video Edit button). */
     fun start(item: MediaItem, segments: List<VideoSegment>) {
         if (segments.isEmpty()) return
-        run(segments.map { Clip(item, it.endMs, it.startMs, it.endMs) }, fitToFirst = false, item.sizeBytes * 2, item.albumId) { names ->
+        run(segments.map { Clip(item, it.endMs, it.startMs, it.endMs) }, emptyList(), fitToFirst = false, item.sizeBytes * 2, item.albumId) { names ->
             VideoEditPlan.editedFileName(item.filename, names)
         }
     }
@@ -100,12 +108,12 @@ class VideoEditManager(
         val clips = project.clips.ifEmpty { return }
         // Clips can share a source, so count each source once.
         val sourceBytes = clips.distinctBy { it.media.id }.sumOf { it.media.sizeBytes }
-        run(clips, fitToFirst = true, sourceBytes * 2, clips.first().media.albumId) {
+        run(clips, project.stickers, fitToFirst = true, sourceBytes * 2, clips.first().media.albumId) {
             "Edit_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".mp4"
         }
     }
 
-    private fun run(clips: List<Clip>, fitToFirst: Boolean, neededBytes: Long, albumId: String, name: (Set<String>) -> String) {
+    private fun run(clips: List<Clip>, stickers: List<Sticker>, fitToFirst: Boolean, neededBytes: Long, albumId: String, name: (Set<String>) -> String) {
         if (job?.isActive == true) return
         // Room for the plaintext cut plus its encrypted copy; a re-encode can outgrow the source a little.
         if (context.cacheDir.usableSpace < neededBytes) {
@@ -117,7 +125,7 @@ class VideoEditManager(
             val temp = File(context.cacheDir, "$TEMP_PREFIX${System.currentTimeMillis()}.mp4")
             try {
                 wakeLock?.acquire(30 * 60 * 1000L)
-                val result = export(clips, fitToFirst, temp)
+                val result = export(clips, stickers, fitToFirst, temp)
                 _state.value = VideoEditState.Running(VideoEditState.Stage.ENCRYPTING, 0f)
                 val saved = mediaSaveQueue.saveVideo(
                     tempFile = temp,
@@ -155,7 +163,7 @@ class VideoEditManager(
      * [fitToFirst]: every clip is scaled into the first clip's upright frame (black bars), and the output always has
      * an audio track, so clips of different shapes, muted clips and clips without sound can follow each other.
      */
-    private suspend fun export(clips: List<Clip>, fitToFirst: Boolean, output: File): ExportResult {
+    private suspend fun export(clips: List<Clip>, stickers: List<Sticker>, fitToFirst: Boolean, output: File): ExportResult {
         val frame = if (fitToFirst) withContext(Dispatchers.IO) { uprightSize(clips.first().media) } else null
         val items = clips.map { clip ->
             EditedMediaItem.Builder(
@@ -201,8 +209,16 @@ class VideoEditManager(
             })
             .build()
 
+        // Stickers go on the joined video, after every clip has been fitted into the frame.
+        val overlays = if (frame == null) emptyList() else withContext(Dispatchers.IO) {
+            val bitmaps = stickers.map { it.source.key }.distinct().associateWith { key ->
+                stickerBitmap(cryptoEngine, stickers.first { it.source.key == key }.source)
+            }
+            stickers.mapNotNull { sticker -> bitmaps[sticker.source.key]?.let { StickerOverlay(it, sticker, frame.first) } }
+        }
         val composition = Composition.Builder(EditedMediaItemSequence(items))
             .apply { if (fitToFirst) experimentalSetForceAudioTrack(true) }
+            .apply { if (overlays.isNotEmpty()) setEffects(Effects(emptyList(), listOf(OverlayEffect(overlays)))) }
             .build()
         transformer.start(composition, output.absolutePath)
         val progress = ProgressHolder()
@@ -219,7 +235,7 @@ class VideoEditManager(
     }
 
     /** The video's width × height as shown (rotation applied), rounded to even numbers for the encoder. */
-    private fun uprightSize(media: MediaItem): Pair<Int, Int> {
+    fun uprightSize(media: MediaItem): Pair<Int, Int> {
         val retriever = MediaMetadataRetriever()
         return try {
             DecryptingMediaDataSource(cryptoEngine, File(media.encryptedPath)).use { source ->
@@ -241,5 +257,29 @@ class VideoEditManager(
     private companion object {
         const val TEMP_PREFIX = "video_edit_"
         val FALLBACK_FRAME = 1080 to 1920
+    }
+}
+
+/**
+ * One sticker on the exported video. Hidden (alpha 0) outside its time range. Times are counted from the first
+ * frame this overlay sees, so they're the output timeline whatever offset the frames' timestamps start at.
+ */
+@OptIn(UnstableApi::class)
+private class StickerOverlay(private val bitmap: Bitmap, private val sticker: Sticker, frameWidth: Int) : BitmapOverlay() {
+    private var firstUs = C.TIME_UNSET
+    private val hidden = OverlaySettings.Builder().setAlphaScale(0f).build()
+    private val shown = OverlaySettings.Builder()
+        // The overlay starts at its own pixel size; scale it to its share of the frame's width.
+        .setScale(sticker.widthFraction * frameWidth / bitmap.width, sticker.widthFraction * frameWidth / bitmap.width)
+        // Anchors are -1..1 with y pointing up; the model's fractions run from the top-left.
+        .setBackgroundFrameAnchor(sticker.centerX * 2 - 1, 1 - sticker.centerY * 2)
+        .build()
+
+    override fun getBitmap(presentationTimeUs: Long): Bitmap = bitmap
+
+    override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
+        if (firstUs == C.TIME_UNSET) firstUs = presentationTimeUs
+        val ms = (presentationTimeUs - firstUs) / 1_000
+        return if (ms >= sticker.startMs && ms < sticker.endMs) shown else hidden
     }
 }

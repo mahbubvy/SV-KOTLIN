@@ -2,6 +2,7 @@ package com.secretvault.app.processing
 
 import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.model.MediaType
+import com.secretvault.app.core.processing.StickerSource
 import com.secretvault.app.core.processing.VideoProject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -61,5 +62,27 @@ class VideoProjectTest {
         val muted = project.toggleMute(1)
         assertEquals(listOf(false, true), muted.clips.map { it.muted })
         assertEquals(listOf(false, false), muted.toggleMute(1).clips.map { it.muted })
+    }
+
+    @Test fun stickersStayInsideTheVideo() {
+        val smile = StickerSource.Emoji("😀")
+        val withSticker = project.addSticker(smile, 13_000)
+        val s = withSticker.stickers.single()
+        assertEquals(13_000L to 14_000L, s.startMs to s.endMs) // the default 3 s is cut at the end
+        assertEquals(13_500L, withSticker.addSticker(smile, 99_000).stickers[1].startMs) // room for the shortest sticker
+
+        val moved = withSticker.updateSticker(s.id) { it.copy(startMs = -5, endMs = 2_000, centerX = 2f, widthFraction = 0f) }.stickers.single()
+        assertEquals(listOf(0L, 2_000L), listOf(moved.startMs, moved.endMs))
+        assertEquals(1f, moved.centerX)
+        assertEquals(0.05f, moved.widthFraction)
+
+        // Deleting the 10 s clip leaves 4 s, so the sticker is pulled back inside it.
+        val shrunk = withSticker.delete(0).stickers.single()
+        assertEquals(3_500L to 4_000L, shrunk.startMs to shrunk.endMs)
+        assertTrue(withSticker.delete(0).delete(0).stickers.isEmpty())
+
+        val full = (1..VideoProject.MAX_STICKERS).fold(project) { p, _ -> p.addSticker(smile, 0) }
+        assertSame(full, full.addSticker(smile, 0))
+        assertTrue(full.deleteSticker(full.stickers[0].id).stickers.size == VideoProject.MAX_STICKERS - 1)
     }
 }

@@ -126,7 +126,7 @@ Each phase must build (`./gradlew assembleDebug`) and keep the unit tests passin
 - [x] A scrolling timeline with a fixed centre playhead, pinch zoom, frame thumbnails per clip, and dragging the selected clip's edges to trim.
 
 ### Phase 4: Stickers
-- [ ] Sticker track (bars, drag, edges), emoji grid and vault-photo picker, placing on the preview (drag and pinch), delete, export overlay.
+- [x] Sticker track (bars, drag, edges), emoji grid and vault-photo picker, placing on the preview (drag and pinch), delete, export overlay.
 
 ### Phase 5: Device test and docs
 - [ ] On the phone, test:
@@ -166,3 +166,9 @@ adb install -r app/build/outputs/apk/debug/SecretVault-v1.1.1-camera-stream-test
   - Swipe scrubs (seeks with `CLOSEST_SYNC` while the finger is down, `EXACT` on release), pinch zooms (10–400 dp per second), tap selects, dragging the selected clip's edge trims and parks that edge under the playhead.
   - Frames: `loadTimelineFrames` (old editor, now `internal` with a `count`) loads 4–30 frames per source video; square tiles pick the nearest one.
   - No fling after a swipe yet.
+- 2026-10-05: Phase 4 done; installed, waiting for the user to try it (the export overlay is the part to check).
+  - Model: `Sticker` / `StickerSource` (Emoji, Photo) in `VideoProject.kt`; `addSticker`, `updateSticker`, `deleteSticker`; every clip change re-fits stickers into the video (`withClips`). Test `stickersStayInsideTheVideo`.
+  - Bitmaps: `core/image/StickerBitmap.kt` (emoji drawn with Paint; photos via the new `decodeEncryptedImage`, in memory, max 1024 px). Shared by preview and export.
+  - Preview: the frame takes the first clip's shape (`VideoEditManager.uprightSize`, now public), stickers are Compose `Image`s on it. Tap picks a sticker, drag moves, pinch resizes.
+  - Timeline: sticker lanes under the clips (first free lane), tap to select, drag the bar to move, edges to trim.
+  - Export: composition-level `OverlayEffect` with one `StickerOverlay` (BitmapOverlay) per sticker; alpha 0 outside its range; time counted from the first frame the overlay sees. Scale = widthFraction × frame width ÷ bitmap width (Media3 starts overlays at their pixel size).
