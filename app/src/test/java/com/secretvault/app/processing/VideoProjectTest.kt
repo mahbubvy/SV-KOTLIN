@@ -126,4 +126,11 @@ class VideoProjectTest {
         val s = Sticker(StickerSource.Emoji("x"), 0, 4_000).placeAt(1_000) { it.copy(rotation = 40f) }
         assertEquals(20f, s.placementAt(500).rotation, 0.0001f)
     }
+
+    @Test fun adjustmentsArePerClipAndCanBeCopiedToAll() {
+        val bright = project.adjust(0) { it.with(com.secretvault.app.core.processing.Adjustment.BRIGHTNESS, 30) }
+        assertTrue(bright.clips[1].adjustments.isNone)
+        assertEquals(bright.clips[0].adjustments, bright.split(3_000).clips[1].adjustments) // halves keep it
+        assertEquals(bright.clips[0].adjustments, bright.adjustAllLike(0).clips[1].adjustments)
+    }
 }

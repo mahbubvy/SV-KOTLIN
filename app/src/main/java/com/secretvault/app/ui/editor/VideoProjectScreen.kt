@@ -12,6 +12,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
@@ -33,6 +35,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.Diamond
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Pause
@@ -64,6 +68,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -73,6 +78,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.Player
+import androidx.media3.effect.SingleColorLut
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -85,14 +91,18 @@ import com.secretvault.app.core.player.DecryptingMediaDataSource
 import com.secretvault.app.core.player.EncryptedMediaDataSource
 import com.secretvault.app.core.image.key
 import com.secretvault.app.core.image.stickerBitmap
+import com.secretvault.app.core.processing.Adjustment
+import com.secretvault.app.core.processing.Adjustments
 import com.secretvault.app.core.processing.Framing
 import com.secretvault.app.core.processing.Sticker
 import com.secretvault.app.core.processing.StickerSource
 import com.secretvault.app.core.processing.VideoProject
+import com.secretvault.app.core.processing.snapAngle
 import com.secretvault.app.core.worker.VideoEditState
 import com.secretvault.app.ui.gallery.components.StableEncryptedThumbnail
 import com.secretvault.app.ui.theme.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -124,6 +134,7 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     var touching by remember { mutableStateOf(false) }
     var stickerId by remember { mutableStateOf<String?>(null) }
     var showStickerPicker by remember { mutableStateOf(false) }
+    var panel by remember { mutableStateOf<Panel?>(null) }
     val latestProject by rememberUpdatedState(project)
     val clip = project.clips.getOrNull(selected)
     val sticker = project.stickers.firstOrNull { it.id == stickerId }
@@ -195,6 +206,41 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     // The preview frame takes the first clip's shape, like the export, so stickers land where they'll be saved.
     val frameSize by produceState<Pair<Int, Int>?>(null, project.clips.firstOrNull()?.media?.id) {
         value = latestProject.clips.firstOrNull()?.let { withContext(Dispatchers.IO) { app.videoEditManager.uprightSize(it.media) } }
+    }
+
+    // The clip on screen's colour, applied by the player itself with the same lookup table the export uses.
+    val onScreenLook = project.clipAt(positionMs)?.let { (index, _) -> project.clips[index].adjustments } ?: Adjustments()
+    var lookApplied by remember { mutableStateOf(false) }
+    LaunchedEffect(onScreenLook) {
+        if (onScreenLook.isNone && !lookApplied) return@LaunchedEffect // never turn the effect pipeline on for nothing
+        delay(60L) // let a moving slider settle
+        val lut = if (onScreenLook.isNone) null else withContext(Dispatchers.Default) { SingleColorLut.createFromCube(onScreenLook.lutCube()) }
+        player.setVideoEffects(listOfNotNull(lut))
+        lookApplied = true
+        // A paused player keeps showing the old frame; seeking in place redraws it with the new look.
+        if (!player.isPlaying) player.seekTo(player.currentPosition)
+    }
+
+    fun openPanel(which: Panel) {
+        panel = which
+        player.pause()
+        if (project.clipAt(positionMs)?.first != selected) seekTo(project.outputStartOf(selected))
+    }
+
+    /** Zooms the selected clip until it covers the whole frame, cropping what spills over. */
+    fun fillFrame() {
+        val index = selected
+        val c = project.clips.getOrNull(index) ?: return
+        val (frameW, frameH) = frameSize ?: return
+        scope.launch {
+            val (clipW, clipH) = withContext(Dispatchers.IO) { app.videoEditManager.uprightSize(c.media) }
+            // Fitted (zoom 1) the clip touches two sides of the frame; a quarter turn then swaps its sides.
+            val fit = min(frameW.toFloat() / clipW, frameH.toFloat() / clipH)
+            val turned = (c.framing.angle / 90f).roundToInt() % 2 != 0
+            val w = (if (turned) clipH else clipW) * fit
+            val h = (if (turned) clipW else clipH) * fit
+            project = project.frame(index) { it.copy(zoom = max(frameW / w, frameH / h), offsetX = 0f, offsetY = 0f) }
+        }
     }
 
     fun togglePlay() {
@@ -330,8 +376,9 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                 Text("${formatTime(positionMs)} / ${formatTime(project.durationMs)}", color = TextSecondary, fontSize = 13.sp)
             }
             Timeline(project, selected, sticker?.id, positionMs, frames, stickerImages, enabled = !saving,
-                onSelect = { selected = it; stickerId = null },
                 onSelectSticker = { stickerId = it },
+                // With a panel open, show the clip it now edits.
+                onSelect = { selected = it; stickerId = null; if (panel != null) seekTo(project.outputStartOf(it)) },
                 onStickerTime = { startMs, endMs, atEnd ->
                     val id = stickerId ?: return@Timeline
                     project = project.updateSticker(id) { it.copy(startMs = startMs, endMs = endMs) }
@@ -365,17 +412,22 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     Tool(Icons.Default.Delete, "Delete", !saving) { project = project.deleteSticker(sticker.id); stickerId = null }
                     Tool(Icons.Default.Check, "Done", true) { stickerId = null }
                 }
+            } else if (clip != null && panel == Panel.SIZE) {
+                SizePanel(clip.framing, enabled = !saving, onChange = { f -> project = project.frame(selected) { f } },
+                    onFill = ::fillFrame, onDone = { panel = null })
+            } else if (clip != null && panel == Panel.ADJUST) {
+                AdjustPanel(clip.adjustments, enabled = !saving, onChange = { a -> project = project.adjust(selected) { a } },
+                    onApplyToAll = {
+                        project = project.adjustAllLike(selected)
+                        Toast.makeText(context, "Applied to all clips", Toast.LENGTH_SHORT).show()
+                    },
+                    onDone = { panel = null })
             } else if (clip != null) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Clip ${selected + 1} of ${project.clips.size}: ${formatTime(clip.startMs)} – ${formatTime(clip.endMs)} of " +
-                        "${clip.media.originalName}${if (clip.muted) " · muted" else ""}", color = TextMuted, fontSize = 12.sp, maxLines = 1,
-                        modifier = Modifier.weight(1f))
-                    // Two fingers on the video turn and zoom the clip; this puts it back.
-                    if (clip.framing != Framing()) TextButton(onClick = { project = project.frame(selected) { Framing() } }, enabled = !saving,
-                        contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Reset frame", color = VaultAccent, fontSize = 12.sp) }
-                }
+                Text("Clip ${selected + 1} of ${project.clips.size}: ${formatTime(clip.startMs)} – ${formatTime(clip.endMs)} of " +
+                    "${clip.media.originalName}${if (clip.muted) " · muted" else ""}", color = TextMuted, fontSize = 12.sp, maxLines = 1)
             }
-            if (sticker == null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            if (sticker == null && panel == null) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 val ready = !saving
                 Tool(Icons.Default.Add, "Add", ready) { showPicker = true }
                 Tool(Icons.Default.ContentCut, "Split", ready && clip != null) {
@@ -392,6 +444,8 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     project = project.move(selected, 1); selected++
                 }
                 Tool(Icons.Default.Delete, "Delete", ready && clip != null) { project = project.delete(selected) }
+                Tool(Icons.Default.ZoomIn, "Size", ready && clip != null) { openPanel(Panel.SIZE) }
+                Tool(Icons.Default.Tune, "Adjust", ready && clip != null) { openPanel(Panel.ADJUST) }
                 Tool(Icons.Default.EmojiEmotions, "Sticker", ready && clip != null && project.stickers.size < VideoProject.MAX_STICKERS) {
                     showStickerPicker = true
                 }
@@ -644,6 +698,74 @@ private fun Tool(icon: ImageVector, label: String, enabled: Boolean, onClick: ()
         modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = enabled, onClick = onClick).padding(horizontal = 2.dp, vertical = 4.dp)) {
         Icon(icon, null, tint = tint)
         Text(label, color = tint, fontSize = 11.sp)
+    }
+}
+
+private enum class Panel { SIZE, ADJUST }
+
+/** The selected clip's zoom and turn as controls: the same thing two fingers do on the video. */
+@Composable
+private fun SizePanel(framing: Framing, enabled: Boolean, onChange: (Framing) -> Unit, onFill: () -> Unit, onDone: () -> Unit) {
+    Column {
+        LabeledSlider("Zoom", "${(framing.zoom * 100).roundToInt()}%", framing.zoom, 0.25f..5f, enabled) { onChange(framing.copy(zoom = it)) }
+        // A twist can wind the stored angle past a full turn; the slider shows it within one.
+        val turn = ((framing.rotation + 180f) % 360f + 360f) % 360f - 180f
+        LabeledSlider("Rotate", "${framing.angle.roundToInt()}°", turn, -180f..180f, enabled) { onChange(framing.copy(rotation = it)) }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+            PanelButton("Fit", enabled) { onChange(framing.copy(zoom = 1f, offsetX = 0f, offsetY = 0f)) }
+            PanelButton("Fill", enabled, onFill)
+            PanelButton("Rotate 90°", enabled) {
+                val next = snapAngle(framing.angle) + 90f
+                onChange(framing.copy(rotation = if (next > 180f) next - 360f else next))
+            }
+            PanelButton("Reset", enabled) { onChange(Framing()) }
+            Spacer(Modifier.weight(1f))
+            PanelButton("Done", true, onDone)
+        }
+    }
+}
+
+/** Colour adjustments for the selected clip: pick one with a chip, set it with the slider. A dot marks the ones in use. */
+@Composable
+private fun AdjustPanel(adjustments: Adjustments, enabled: Boolean, onChange: (Adjustments) -> Unit, onApplyToAll: () -> Unit, onDone: () -> Unit) {
+    var current by remember { mutableStateOf(Adjustment.BRIGHTNESS) }
+    Column {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Adjustment.entries.forEach { a ->
+                FilterChip(selected = a == current, onClick = { current = a },
+                    label = { Text(if (adjustments[a] != 0) "${a.label} •" else a.label, fontSize = 12.sp) },
+                    colors = FilterChipDefaults.filterChipColors(labelColor = TextSecondary, selectedContainerColor = VaultAccent,
+                        selectedLabelColor = VaultDarkBg))
+            }
+        }
+        val value = adjustments[current]
+        LabeledSlider(current.label, if (value > 0) "+$value" else "$value", value.toFloat(), -100f..100f, enabled) {
+            onChange(adjustments.with(current, it.roundToInt()))
+        }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+            PanelButton("Reset", enabled && value != 0) { onChange(adjustments.with(current, 0)) }
+            PanelButton("Reset all", enabled && !adjustments.isNone) { onChange(Adjustments()) }
+            PanelButton("Apply to all clips", enabled, onApplyToAll)
+            Spacer(Modifier.weight(1f))
+            PanelButton("Done", true, onDone)
+        }
+    }
+}
+
+@Composable
+private fun LabeledSlider(label: String, value: String, current: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean, onChange: (Float) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = TextSecondary, fontSize = 12.sp, modifier = Modifier.width(76.dp))
+        Slider(current, onChange, Modifier.weight(1f), enabled, range,
+            colors = SliderDefaults.colors(thumbColor = VaultAccent, activeTrackColor = VaultAccent, inactiveTrackColor = Color.White.copy(alpha = 0.3f)))
+        Text(value, color = TextPrimary, fontSize = 12.sp, textAlign = TextAlign.End, modifier = Modifier.width(44.dp))
+    }
+}
+
+@Composable
+private fun PanelButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+    TextButton(onClick = onClick, enabled = enabled, contentPadding = PaddingValues(horizontal = 10.dp)) {
+        Text(label, color = if (enabled) VaultAccent else TextMuted, fontSize = 13.sp)
     }
 }
 

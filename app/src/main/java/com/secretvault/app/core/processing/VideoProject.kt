@@ -13,6 +13,7 @@ data class Clip(
     val endMs: Long = sourceDurationMs,
     val muted: Boolean = false,
     val framing: Framing = Framing(),
+    val adjustments: Adjustments = Adjustments(),
     val id: String = UUID.randomUUID().toString()
 ) {
     val durationMs: Long get() = endMs - startMs
@@ -70,6 +71,17 @@ data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<
     fun frame(index: Int, change: (Framing) -> Framing): VideoProject {
         val clip = clips.getOrNull(index) ?: return this
         return replace(index, listOf(clip.copy(framing = change(clip.framing).fitted())))
+    }
+
+    fun adjust(index: Int, change: (Adjustments) -> Adjustments): VideoProject {
+        val clip = clips.getOrNull(index) ?: return this
+        return replace(index, listOf(clip.copy(adjustments = change(clip.adjustments))))
+    }
+
+    /** Gives every clip the adjustments of clip [index]. */
+    fun adjustAllLike(index: Int): VideoProject {
+        val adjustments = clips.getOrNull(index)?.adjustments ?: return this
+        return withClips(clips.map { it.copy(adjustments = adjustments) })
     }
 
     fun toggleMute(index: Int): VideoProject {

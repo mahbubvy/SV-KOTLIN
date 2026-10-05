@@ -21,6 +21,7 @@ import androidx.media3.effect.MatrixTransformation
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.OverlaySettings
 import androidx.media3.effect.Presentation
+import androidx.media3.effect.SingleColorLut
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
@@ -204,7 +205,10 @@ class VideoEditManager(
                 if (frame != null || clip.muted) setEffects(Effects(
                     if (clip.muted) listOf(MuteAudioProcessor(listOf(VideoSegment(0L, Long.MAX_VALUE / 2_000)))) else emptyList(),
                     frame?.let { (width, height) ->
-                        listOfNotNull(Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT),
+                        listOfNotNull(
+                            // Colour first, so the black bars Presentation adds stay black.
+                            clip.adjustments.takeUnless { it.isNone }?.let { SingleColorLut.createFromCube(it.lutCube()) },
+                            Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT),
                             clip.framing.takeIf { it != Framing() }?.let { FramingTransformation(it, width, height) })
                     }
                         ?: emptyList()
