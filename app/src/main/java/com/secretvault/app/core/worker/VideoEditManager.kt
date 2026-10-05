@@ -103,17 +103,37 @@ class VideoEditManager(
         }
     }
 
+    /**
+     * The multi-clip editor's unsaved project and playhead, so a vault lock doesn't lose the edit. Memory only: it
+     * holds vault item references, never decrypted content, and is gone with the process.
+     */
+    var draft: VideoProject? = null
+        private set
+    var draftPositionMs = 0L
+        private set
+
+    fun keepDraft(project: VideoProject, positionMs: Long) {
+        draft = project.takeIf { it.clips.isNotEmpty() }
+        draftPositionMs = positionMs
+    }
+
+    fun clearDraft() = keepDraft(VideoProject(), 0L)
+
     /** Multi-clip editor: joins the project's clips into one new video in the first clip's album. */
     fun start(project: VideoProject) {
         val clips = project.clips.ifEmpty { return }
         // Clips can share a source, so count each source once.
         val sourceBytes = clips.distinctBy { it.media.id }.sumOf { it.media.sizeBytes }
-        run(clips, project.stickers, fitToFirst = true, sourceBytes * 2, clips.first().media.albumId) {
+        // Saved, so there's nothing left to come back to, even if the vault locked during the save.
+        run(clips, project.stickers, fitToFirst = true, sourceBytes * 2, clips.first().media.albumId, onSaved = ::clearDraft) {
             "Edit_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".mp4"
         }
     }
 
-    private fun run(clips: List<Clip>, stickers: List<Sticker>, fitToFirst: Boolean, neededBytes: Long, albumId: String, name: (Set<String>) -> String) {
+    private fun run(
+        clips: List<Clip>, stickers: List<Sticker>, fitToFirst: Boolean, neededBytes: Long, albumId: String,
+        onSaved: () -> Unit = {}, name: (Set<String>) -> String
+    ) {
         if (job?.isActive == true) return
         // Room for the plaintext cut plus its encrypted copy; a re-encode can outgrow the source a little.
         if (context.cacheDir.usableSpace < neededBytes) {
@@ -133,6 +153,7 @@ class VideoEditManager(
                     albumId = albumId,
                     name = name(mediaRepository.getMedia().first().mapTo(HashSet()) { it.filename })
                 ) { progress -> _state.value = VideoEditState.Running(VideoEditState.Stage.ENCRYPTING, progress) }
+                onSaved()
                 _state.value = VideoEditState.Done(saved)
             } catch (e: CancellationException) {
                 _state.value = null

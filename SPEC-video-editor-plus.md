@@ -23,7 +23,7 @@ is**.
 | Clip tools | Trim (drag the selected clip's edges), **split** at the playhead, **mute** the clip, move left / right, delete. |
 | Stickers | **Emoji** (a fixed list in the app) or a **vault photo**. PNG transparency is kept. Up to **10**, each with its own position, size and time range. |
 | Output shape | Takes the **first clip's shape**. Other clips fit inside it with black bars. |
-| Projects | **No drafts.** One session: edit, then Save. Leaving with changes asks "Discard changes?". |
+| Projects | **No saved drafts.** One session: edit, then Save. Leaving with changes asks "Discard changes?". A vault lock keeps the session in memory (`VideoEditManager.draft`) and unlocking returns to it; playback pauses whenever the app is hidden. |
 | Save | Exports **one new video** into the album of the first clip, named `Edit_<date>`. Source clips are never changed. |
 | Out of scope for v1 | Drafts, photos, text, transitions, music, speed, filters, volume levels. |
 
@@ -173,3 +173,4 @@ adb install -r app/build/outputs/apk/debug/SecretVault-v1.1.1-camera-stream-test
   - Timeline: sticker lanes under the clips (first free lane), tap to select, drag the bar to move, edges to trim.
   - Export: composition-level `OverlayEffect` with one `StickerOverlay` (BitmapOverlay) per sticker; alpha 0 outside its range; time counted from the first frame the overlay sees. Scale = widthFraction × frame width ÷ bitmap width (Media3 starts overlays at their pixel size).
 - 2026-10-05: Phase 5 done. Owner confirmed joining, the timeline and stickers on the CMF Phone 1; a transparent PNG sticker is still to test. Features doc and changelog updated.
+- 2026-10-05: Locking mid-edit lost the project (the lock drops every vault screen). Now `VideoEditManager.draft` holds the project and playhead in memory, the editor restores from it, Home reopens the editor after unlock, and ON_STOP pauses playback. Cleared on Save, Discard or leaving an empty editor.

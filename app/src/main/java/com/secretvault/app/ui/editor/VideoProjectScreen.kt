@@ -66,6 +66,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -105,11 +108,14 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val editState by app.videoEditManager.state.collectAsState()
-    var project by remember { mutableStateOf(VideoProject()) }
+    // A draft means the vault locked mid-edit: carry on where it stopped.
+    val restored = remember { app.videoEditManager.draft }
+    var project by remember { mutableStateOf(restored ?: VideoProject()) }
     var selected by remember { mutableIntStateOf(0) }
-    var positionMs by remember { mutableLongStateOf(0L) }
+    var positionMs by remember { mutableLongStateOf(if (restored != null) app.videoEditManager.draftPositionMs else 0L) }
     var isPlaying by remember { mutableStateOf(false) }
-    var showPicker by remember { mutableStateOf(true) }
+    var showPicker by remember { mutableStateOf(restored == null) }
+    var leaving by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var touching by remember { mutableStateOf(false) }
     var stickerId by remember { mutableStateOf<String?>(null) }
@@ -193,21 +199,33 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
         }
     }
 
-    // Results belong to this visit only.
-    LaunchedEffect(Unit) { app.videoEditManager.clearResult() }
+    // Kept up to date so a lock (which drops this screen without warning) loses nothing; cleared only on purpose.
+    SideEffect { if (!leaving) app.videoEditManager.keepDraft(project, positionMs) }
+    fun close() { leaving = true; app.videoEditManager.clearDraft(); onBack() }
+
+    // Hidden (screen off, home button, lock): pause rather than play on unseen.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) player.pause() }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+
+    // Results belong to this visit only, unless it's a restored edit whose save was running or failed meanwhile.
+    LaunchedEffect(Unit) { if (restored == null) app.videoEditManager.clearResult() }
     LaunchedEffect(editState) {
         when (editState) {
             is VideoEditState.Running -> player.pause()
             is VideoEditState.Done -> {
                 Toast.makeText(context, "Saved as a new video", Toast.LENGTH_SHORT).show()
                 app.videoEditManager.clearResult()
-                onBack()
+                close()
             }
             else -> Unit
         }
     }
 
-    fun leave() { if (project.clips.isEmpty()) onBack() else confirmDiscard = true }
+    fun leave() { if (project.clips.isEmpty()) close() else confirmDiscard = true }
     BackHandler { leave() }
 
     Column(Modifier.fillMaxSize().background(Color.Black).systemBarsPadding()) {
@@ -361,7 +379,7 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     if (confirmDiscard) AlertDialog(onDismissRequest = { confirmDiscard = false }, containerColor = VaultSurface,
         title = { Text("Discard changes?", color = TextPrimary) },
         text = { Text("Your edit hasn't been saved. The original videos are not affected.", color = TextSecondary) },
-        confirmButton = { TextButton(onClick = { confirmDiscard = false; onBack() }) { Text("Discard", color = VaultError) } },
+        confirmButton = { TextButton(onClick = { confirmDiscard = false; close() }) { Text("Discard", color = VaultError) } },
         dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("Keep editing", color = VaultAccent) } })
 
     when (val state = editState) {

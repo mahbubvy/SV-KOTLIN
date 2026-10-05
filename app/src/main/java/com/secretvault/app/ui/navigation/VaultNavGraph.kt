@@ -94,6 +94,10 @@ fun VaultNavGraph(
                 Box(modifier = Modifier.fillMaxSize().background(VaultDarkBg))
                 return@composable
             }
+            // The vault locked mid-edit: go back to the editor, which picks up its draft.
+            LaunchedEffect(Unit) {
+                if (app.videoEditManager.draft != null) navController.navigate(Screen.VideoProject.route) { launchSingleTop = true }
+            }
             val galleryViewModel = viewModel<com.secretvault.app.ui.gallery.GalleryViewModel>(
                 factory = viewModelFactory {
                     initializer { com.secretvault.app.ui.gallery.GalleryViewModel(app.mediaRepository) }
