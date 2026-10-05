@@ -12,8 +12,6 @@ import androidx.media3.transformer.DefaultAssetLoaderFactory
 import androidx.media3.transformer.DefaultDecoderFactory
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
-import androidx.media3.transformer.Effects
-import com.secretvault.app.core.processing.MuteAudioProcessor
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
@@ -78,8 +76,7 @@ class VideoEditManager(
         context.cacheDir.listFiles { _, name -> name.startsWith(TEMP_PREFIX) }?.forEach { it.delete() }
     }
 
-    /** [mutes] are picked on the original timeline and silenced wherever they survive the cut. */
-    fun start(item: MediaItem, segments: List<VideoSegment>, mutes: List<VideoSegment> = emptyList()) {
+    fun start(item: MediaItem, segments: List<VideoSegment>) {
         if (job?.isActive == true || segments.isEmpty()) return
         // Room for the plaintext cut plus its encrypted copy; a re-encode can outgrow the source a little.
         if (context.cacheDir.usableSpace < item.sizeBytes * 2) {
@@ -91,7 +88,7 @@ class VideoEditManager(
             val temp = File(context.cacheDir, "$TEMP_PREFIX${System.currentTimeMillis()}.mp4")
             try {
                 wakeLock?.acquire(30 * 60 * 1000L)
-                val result = export(item, segments, VideoEditPlan.toOutput(mutes, segments), temp)
+                val result = export(item, segments, temp)
                 _state.value = VideoEditState.Running(VideoEditState.Stage.ENCRYPTING, 0f)
                 val saved = mediaSaveQueue.saveVideo(
                     tempFile = temp,
@@ -128,7 +125,7 @@ class VideoEditManager(
         if (_state.value !is VideoEditState.Running) _state.value = null
     }
 
-    private suspend fun export(item: MediaItem, segments: List<VideoSegment>, mutes: List<VideoSegment>, output: File): ExportResult {
+    private suspend fun export(item: MediaItem, segments: List<VideoSegment>, output: File): ExportResult {
         val uri = Uri.fromFile(File(item.encryptedPath))
         val clips = segments.map { segment ->
             EditedMediaItem.Builder(
@@ -168,10 +165,7 @@ class VideoEditManager(
             })
             .build()
 
-        val composition = Composition.Builder(EditedMediaItemSequence(clips))
-            .setEffects(Effects(listOf(MuteAudioProcessor(mutes)), emptyList()))
-            .build()
-        transformer.start(composition, output.absolutePath)
+        transformer.start(Composition.Builder(EditedMediaItemSequence(clips)).build(), output.absolutePath)
         val progress = ProgressHolder()
         try {
             while (true) {

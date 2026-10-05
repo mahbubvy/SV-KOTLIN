@@ -5,7 +5,7 @@ data class VideoSegment(val startMs: Long, val endMs: Long) {
     operator fun contains(ms: Long): Boolean = ms in startMs..endMs
 }
 
-enum class VideoEditMode { TRIM, REMOVE_SECTION, MUTE }
+enum class VideoEditMode { TRIM, REMOVE_SECTION }
 
 object VideoEditPlan {
     const val MIN_RESULT_MS = 1_000L
