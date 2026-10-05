@@ -1,6 +1,6 @@
 # Spec: Multi-clip video editor
 
-Status: **Planned.** Work happens on branch `video-editor-plus`. Tick the boxes in [Phases](#phases) as you go, and
+Status: **Done** (a transparent PNG sticker still to test). Work happens on branch `video-editor-plus`. Tick the boxes in [Phases](#phases) as you go, and
 add a dated note under [Progress log](#progress-log).
 
 ## Goal
@@ -129,7 +129,7 @@ Each phase must build (`./gradlew assembleDebug`) and keep the unit tests passin
 - [x] Sticker track (bars, drag, edges), emoji grid and vault-photo picker, placing on the preview (drag and pinch), delete, export overlay.
 
 ### Phase 5: Device test and docs
-- [ ] On the phone, test:
+- [x] On the phone, test (owner confirmed all but the PNG logo):
   - 3 clips of different shapes (portrait + landscape)
   - a clip with no sound
   - split, then mute one half
@@ -138,7 +138,7 @@ Each phase must build (`./gradlew assembleDebug`) and keep the unit tests passin
   - a PNG logo
   - cancelling a save
   - leaving with unsaved changes
-- [ ] Update `SecretVault-Features.md` and `CHANGELOG.md`.
+- [x] Update `SecretVault-Features.md` and `CHANGELOG.md`.
 
 ## Test installs
 Install only as the `.debug` test copy. **Never** reinstall or uninstall `com.secretvault.app` on the user's phone,
@@ -172,3 +172,4 @@ adb install -r app/build/outputs/apk/debug/SecretVault-v1.1.1-camera-stream-test
   - Preview: the frame takes the first clip's shape (`VideoEditManager.uprightSize`, now public), stickers are Compose `Image`s on it. Tap picks a sticker, drag moves, pinch resizes.
   - Timeline: sticker lanes under the clips (first free lane), tap to select, drag the bar to move, edges to trim.
   - Export: composition-level `OverlayEffect` with one `StickerOverlay` (BitmapOverlay) per sticker; alpha 0 outside its range; time counted from the first frame the overlay sees. Scale = widthFraction × frame width ÷ bitmap width (Media3 starts overlays at their pixel size).
+- 2026-10-05: Phase 5 done. Owner confirmed joining, the timeline and stickers on the CMF Phone 1; a transparent PNG sticker is still to test. Features doc and changelog updated.

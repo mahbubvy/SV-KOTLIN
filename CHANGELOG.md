@@ -5,6 +5,7 @@
 ### Added
 - Pause and resume local or remotely controlled video recordings, excluding paused time from the saved recording duration.
 - Direct photo/video sharing between SV devices on the same Wi-Fi, with per-transfer Accept/Decline, optional streaming-PIN pairing and delivery to Imports.
+- Multi-clip video editor from a new Home button: join vault videos, trim, split, mute and reorder clips on a scrolling, zoomable timeline, and add up to 10 emoji or vault-photo stickers. Saves one new video in the first clip's shape; the per-video Edit button is unchanged.
 
 ### Fixed
 - Preserve required file-sharing PIN mode when its saved PIN is unavailable.
@@ -13,6 +14,7 @@
 
 ### Validation
 - Combined unit suite passes 128 tests. Generated-file transfers pass CMF to Pixel without PIN and Pixel to CMF with PIN; decline and cancellation from either side pass.
+- Video editor confirmed by the owner on the CMF Phone 1: joining clips of different shapes, timeline swiping and trimming, and emoji stickers in the saved video. A transparent PNG sticker is not tested yet.
 - Recording pause/resume was confirmed by the owner. File-sharing engine checks, corrections and remaining manual/device limits are recorded in `tasks/pr2-pr3-validation.md`.
 
 ## 1.1.1-optimized-20261004 - 2026-10-04
