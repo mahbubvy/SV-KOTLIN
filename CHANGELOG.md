@@ -16,6 +16,7 @@
 ### Validation
 - Combined unit suite passes 128 tests. Generated-file transfers pass CMF to Pixel without PIN and Pixel to CMF with PIN; decline and cancellation from either side pass.
 - Video editor confirmed by the owner on the CMF Phone 1: joining clips of different shapes, timeline swiping and trimming, and emoji stickers in the saved video. A transparent PNG sticker is not tested yet.
+- Photo editor confirmed by the owner on the CMF Phone 1: all four tabs and saving, then the instant preview, mosaic brush, brush size circle, pinch zoom and tool icons. Keeping an unsaved photo edit through a vault lock is not confirmed yet.
 - Recording pause/resume was confirmed by the owner. File-sharing engine checks, corrections and remaining manual/device limits are recorded in `tasks/pr2-pr3-validation.md`.
 
 ## 1.1.1-optimized-20261004 - 2026-10-04

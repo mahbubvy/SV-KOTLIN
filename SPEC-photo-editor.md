@@ -1,6 +1,6 @@
 # Spec: Photo editor
 
-Status: **Built, on-device testing pending**. Work happens on branch `photo-editor` (from `main`). Tick the boxes in [Phases](#phases) as you
+Status: **Done** (keeping the edit through a vault lock still to confirm). Work happens on branch `photo-editor` (from `main`). Tick the boxes in [Phases](#phases) as you
 go, and add a dated note under [Progress log](#progress-log).
 
 ## Goal
@@ -43,7 +43,7 @@ Edits are kept as data and applied in a fixed order, so every step stays changea
 - [x] 2. Crop tab: crop box, shapes, straighten, rotate 90°, flips.
 - [x] 3. Filters tab: presets, thumbnails, strength.
 - [x] 4. Draw tab: brush, softness, colour, blur brush, undo.
-- [ ] 5. Lock handling, docs, tests (done); PR (waiting for on-device testing).
+- [x] 5. Lock handling, docs, tests, PR.
 
 ## Progress log
 
@@ -52,3 +52,7 @@ Edits are kept as data and applied in a fixed order, so every step stays changea
   CPU for both preview and save rather than GPU shaders: one renderer keeps the preview exactly like the saved photo
   on every Android version, and drawing in the preview at 900 px while a slider moves keeps it responsive. Photos
   larger than 6000 px on the long side are saved at 6000 px. Not yet tried on a phone.
+- 2026-10-06: Owner testing on the CMF Phone 1: everything worked but changes showed a beat late. On Android 13+
+  colour, filters and grain moved to an AGSL shader over the preview (instant), with painted strokes drawn on top;
+  the CPU now only redraws the shape and blur strokes. Added a Mosaic brush and strength slider for Blur/Mosaic, a
+  brush size circle, pinch zoom (1–5×), a bigger brush range, and icons on the tool chips. Owner confirmed it works.
