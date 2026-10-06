@@ -251,6 +251,10 @@ class VideoEditorDeviceTest {
                 waitForProject("Undo did not remove the duplicate") { it.stickers.size == 3 }
                 clickNode("Undo")
                 waitForProject("Undo did not remove the pack sticker") { it.stickers.size == 2 }
+                repeat(4) {
+                    if (findNode("Sticker") == null) swipe(app.resources.displayMetrics.widthPixels * 0.85f, toolsY,
+                        app.resources.displayMetrics.widthPixels * 0.2f, toolsY)
+                }
                 clickNode("Sticker")
                 assertTrue(waitForText("Add sticker"))
                 clickNode("😀")

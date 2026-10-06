@@ -7,14 +7,18 @@
 - Direct photo/video sharing between SV devices on the same Wi-Fi, with per-transfer Accept/Decline, optional streaming-PIN pairing and delivery to Imports.
 - Multi-clip video editor from a new Home button: join vault videos, trim, split, mute and reorder clips on a scrolling, zoomable timeline; rotate, zoom and colour-adjust each clip; and add up to 10 stickers (emoji, a bundled pack with animated GIFs, or vault photos and GIFs) that can be resized, rotated, duplicated and moved over time with keyframes; and blur or cover faces, by hand or by scanning a clip for faces that are then tracked. Saves one new video in the first clip's shape; the per-video Edit button is unchanged.
 - Photo editor from the photo viewer's Edit button: adjustments with grain, crop and straighten with rotate and flip, filters with strength, and drawing with a brush or blur brush. Saves a new copy beside the original.
+- Video-editor undo/redo, time ruler, fixed centre playhead and left Add column, with clips and Mute scrolling beneath the playhead.
 
 ### Fixed
+- Keep flipped/rotated photo crops aligned, prevent crop resizing errors at edges and match paint/blur/mosaic preview order to the saved photo.
+- Fail video export when a face-covering image cannot load; require complete detected-face coverage before omitting it from a rescan and bound face previews to available region slots.
 - Preserve required file-sharing PIN mode when its saved PIN is unavailable.
 - Cancel connection and preview work safely while preserving already completed transfers.
 - Read incoming/backup preview media through bounded encrypted buffers, avoiding full plaintext video staging and whole-photo memory copies.
 
 ### Validation
-- Combined unit suite passes 148 of 149 tests; the remaining failure is the existing CrossCompatibilityTest. Generated-file transfers pass CMF to Pixel without PIN and Pixel to CMF with PIN; decline and cancellation from either side pass.
+- Combined editor unit suite passes all 158 tests. Generated-file transfers previously passed CMF to Pixel without PIN and Pixel to CMF with PIN; decline and cancellation from either side passed.
+- CMF generated-photo matrix/pixel tests and GIF/missing-face-image export regressions pass. Optimized app and instrumentation builds pass; Pixel is unavailable for this integration. See `tasks/pr5-pr7-review.md` for exact review heads, fixes and remaining device limits.
 - Video editor confirmed by the owner on the CMF Phone 1: joining clips of different shapes, timeline swiping and trimming, emoji and transparent PNG stickers, manual blur regions, and face tracking on 1080p video. Not confirmed yet: animated GIF stickers, sticker handles, face stickers, head tilt, the faster scan, re-scan skipping and 4K scans.
 - Photo editor confirmed by the owner on the CMF Phone 1: all four tabs and saving, then the instant preview, mosaic brush, brush size circle, pinch zoom and tool icons. Keeping an unsaved photo edit through a vault lock is not confirmed yet.
 - Recording pause/resume was confirmed by the owner. File-sharing engine checks, corrections and remaining manual/device limits are recorded in `tasks/pr2-pr3-validation.md`.
