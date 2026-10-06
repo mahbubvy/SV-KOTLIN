@@ -47,6 +47,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Size
@@ -687,12 +688,12 @@ private class TimelineState(
 )
 
 @Composable
-internal fun Tool(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun Tool(icon: ImageVector, label: String, enabled: Boolean, iconRotation: Float = 0f, onClick: () -> Unit) {
     val tint = if (enabled) TextPrimary else TextMuted
     Column(horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.widthIn(min = 60.dp).clip(RoundedCornerShape(10.dp)).clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 6.dp)) {
-        Icon(icon, null, tint = tint, modifier = Modifier.size(28.dp))
+        Icon(icon, null, tint = tint, modifier = Modifier.size(28.dp).rotate(iconRotation))
         Spacer(Modifier.height(2.dp))
         Text(label, color = tint, fontSize = 12.sp, maxLines = 1)
     }

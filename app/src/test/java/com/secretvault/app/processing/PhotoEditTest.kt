@@ -83,4 +83,17 @@ class PhotoEditTest {
         assertEquals(1f, wide.width, 0.0001f)
         assertEquals(3000f / (16f / 9f) / 4000f, wide.height, 0.0001f)
     }
+
+    @Test fun cropCornersDragAndKeepTheirShape() {
+        // Free: the bottom-right corner follows the finger; the top-left stays.
+        val free = CropRect.FULL.dragCorner(right = true, bottom = true, x = 0.6f, y = 0.7f, ratio = null, frameW = 4000, frameH = 3000)
+        assertNear(CropRect(0f, 0f, 0.6f, 0.7f), free)
+        // Square on a 4:3 frame: as big as fits under the finger, still square in pixels.
+        val square = CropRect.FULL.dragCorner(right = true, bottom = true, x = 0.6f, y = 0.9f, ratio = 1f, frameW = 4000, frameH = 3000)
+        assertEquals(1f, square.width * 4000 / (square.height * 3000), 0.001f)
+        assertEquals(0.6f, square.right, 0.0001f)
+        // Never smaller than the minimum, and a moved box stays inside the frame.
+        assertEquals(CropRect.MIN, CropRect.FULL.dragCorner(true, true, 0f, 0f, null, 100, 100).width, 0.0001f)
+        assertNear(CropRect(0.5f, 0.5f, 1f, 1f), CropRect(0.2f, 0.2f, 0.7f, 0.7f).moved(0.9f, 0.3f))
+    }
 }

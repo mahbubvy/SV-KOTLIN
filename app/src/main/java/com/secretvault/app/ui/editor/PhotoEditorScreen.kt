@@ -3,35 +3,49 @@ package com.secretvault.app.ui.editor
 import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.FilterVintage
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.secretvault.app.SecretVaultApp
 import com.secretvault.app.core.image.decodeEncryptedImage
+import com.secretvault.app.core.image.frameSize
 import com.secretvault.app.core.image.renderPhoto
 import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.processing.Adjustment
+import com.secretvault.app.core.processing.CropRect
 import com.secretvault.app.core.processing.PhotoEdit
 import com.secretvault.app.core.processing.VideoEditPlan
 import com.secretvault.app.ui.theme.*
@@ -43,6 +57,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.min
+import kotlin.math.roundToInt
 
 /** The preview works on a copy this big (long side); the save uses the full photo. */
 private const val PREVIEW_SIDE = 1600
@@ -67,6 +83,8 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
     var moving by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
+    // The crop shape picked (an index into CROP_SHAPES); a fixed shape keeps the crop box that shape while dragging.
+    var cropShape by remember { mutableIntStateOf(0) }
 
     // A smaller copy for the preview; null while loading, and a failed decode shows an error.
     var failed by remember { mutableStateOf(false) }
@@ -75,13 +93,13 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
         if (value == null) failed = true
     }
     // The edited preview, redrawn whenever the edit changes; a newer edit stops an older render part-way.
-    var preview by remember { mutableStateOf<Bitmap?>(null) }
+    var preview by remember { mutableStateOf<Rendered?>(null) }
     LaunchedEffect(source) {
         val src = source ?: return@LaunchedEffect
         snapshotFlow { Triple(edit, tab == PhotoTab.CROP, moving) }.collectLatest { (e, wholeFrame, quick) ->
             withContext(Dispatchers.Default) {
                 renderPhoto(src, e, cropped = !wholeFrame, maxSide = if (quick) QUICK_SIDE else PREVIEW_SIDE) { isActive }
-            }?.let { preview = it }
+            }?.let { preview = Rendered(it, e, wholeFrame) }
         }
     }
 
@@ -121,10 +139,24 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
 
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
             val shown = preview
+            val cropRatio = source?.let { s -> frameSize(s.width, s.height, edit).let { (w, h) -> shapeRatio(cropShape, w, h) } }
             when {
                 failed -> Text("This photo couldn't be opened.", color = TextSecondary)
                 shown == null -> CircularProgressIndicator(color = VaultAccent)
-                else -> Image(shown.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                else -> {
+                    Image(shown.bitmap.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                    // Where the picture sits in this box, for the tools drawn over it.
+                    val boxW = constraints.maxWidth.toFloat()
+                    val boxH = constraints.maxHeight.toFloat()
+                    val fit = min(boxW / shown.bitmap.width, boxH / shown.bitmap.height)
+                    val picture = Rect(Offset((boxW - shown.bitmap.width * fit) / 2, (boxH - shown.bitmap.height * fit) / 2),
+                        Size(shown.bitmap.width * fit, shown.bitmap.height * fit))
+                    val src = source
+                    if (tab == PhotoTab.CROP && shown.wholeFrame && src != null && !saving) {
+                        val (fw, fh) = frameSize(src.width, src.height, edit)
+                        CropOverlay(edit.crop, picture, cropRatio, fw, fh, onMoving = { moving = it }) { edit = edit.copy(crop = it) }
+                    }
+                }
             }
         }
 
@@ -132,6 +164,10 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
             val ready = source != null && !saving
             when (tab) {
                 PhotoTab.ADJUST -> PhotoAdjustPanel(edit, ready, onMoving = { moving = it }) { edit = it }
+                PhotoTab.CROP -> source?.let { src ->
+                    CropPanel(edit, src.width, src.height, cropShape, ready, onMoving = { moving = it },
+                        onShape = { shape -> cropShape = shape }) { edit = it }
+                }
                 else -> Unit
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -198,6 +234,110 @@ private fun PhotoAdjustPanel(edit: PhotoEdit, enabled: Boolean, onMoving: (Boole
         PanelButton("Reset", enabled && value != 0) { onChange(if (a == null) edit.copy(grain = 0) else edit.copy(adjustments = edit.adjustments.with(a, 0))) }
         PanelButton("Reset all", enabled && (!edit.adjustments.isNone || edit.grain != 0)) {
             onChange(edit.copy(adjustments = com.secretvault.app.core.processing.Adjustments(), grain = 0))
+        }
+    }
+}
+
+/** A preview and the edit it shows; [wholeFrame] when drawn uncropped, for the crop tool. */
+private class Rendered(val bitmap: Bitmap, val edit: PhotoEdit, val wholeFrame: Boolean)
+
+/** Crop shapes: a name and width / height, null for free; Original is the photo's own shape (as turned). */
+private val CROP_SHAPES = listOf("Free" to null, "Original" to 0f, "1:1" to 1f, "4:5" to 4f / 5, "3:4" to 3f / 4, "16:9" to 16f / 9, "9:16" to 9f / 16)
+
+private fun shapeRatio(shape: Int, frameW: Int, frameH: Int): Float? =
+    CROP_SHAPES[shape].second?.let { if (it == 0f) frameW.toFloat() / frameH else it }
+
+/**
+ * The crop box over the whole straightened [picture] (in this box's pixels): the outside dimmed, thirds while
+ * dragging. Drag a corner to resize (keeping [ratio] when set) or the inside to move.
+ */
+@Composable
+private fun CropOverlay(crop: CropRect, picture: Rect, ratio: Float?, frameW: Int, frameH: Int, onMoving: (Boolean) -> Unit,
+                        onChange: (CropRect) -> Unit) {
+    val current by rememberUpdatedState(crop)
+    val area by rememberUpdatedState(picture)
+    val shape by rememberUpdatedState(ratio)
+    val change by rememberUpdatedState(onChange)
+    val moving by rememberUpdatedState(onMoving)
+    var dragging by remember { mutableStateOf(false) }
+    val reach = with(LocalDensity.current) { 32.dp.toPx() }
+    Canvas(Modifier.fillMaxSize().pointerInput(frameW, frameH) {
+        awaitEachGesture {
+            val down = awaitFirstDown()
+            val start = current
+            val a = area
+            fun fraction(o: Offset) = Offset((o.x - a.left) / a.width, (o.y - a.top) / a.height)
+            fun corner(right: Boolean, bottom: Boolean) =
+                Offset(a.left + (if (right) start.right else start.left) * a.width, a.top + (if (bottom) start.bottom else start.top) * a.height)
+            val grip = listOf(false to false, true to false, false to true, true to true)
+                .filter { (r, b) -> (corner(r, b) - down.position).getDistance() <= reach }
+                .minByOrNull { (r, b) -> (corner(r, b) - down.position).getDistance() }
+            val from = fraction(down.position)
+            if (grip == null && (from.x !in start.left..start.right || from.y !in start.top..start.bottom)) return@awaitEachGesture
+            down.consume()
+            dragging = true
+            moving(true)
+            while (true) {
+                val c = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                if (!c.pressed) break
+                c.consume()
+                val to = fraction(c.position)
+                change(grip?.let { (r, b) -> start.dragCorner(r, b, to.x, to.y, shape, frameW, frameH) } ?: start.moved(to.x - from.x, to.y - from.y))
+            }
+            dragging = false
+            moving(false)
+        }
+    }) {
+        val box = Rect(area.left + crop.left * area.width, area.top + crop.top * area.height,
+            area.left + crop.right * area.width, area.top + crop.bottom * area.height)
+        val dim = Color.Black.copy(alpha = 0.6f)
+        drawRect(dim, Offset(area.left, area.top), Size(area.width, box.top - area.top))
+        drawRect(dim, Offset(area.left, box.bottom), Size(area.width, area.bottom - box.bottom))
+        drawRect(dim, Offset(area.left, box.top), Size(box.left - area.left, box.height))
+        drawRect(dim, Offset(box.right, box.top), Size(area.right - box.right, box.height))
+        if (dragging) for (i in 1..2) {
+            val x = box.left + box.width * i / 3
+            val y = box.top + box.height * i / 3
+            drawLine(Color.White.copy(alpha = 0.5f), Offset(x, box.top), Offset(x, box.bottom), 1.dp.toPx())
+            drawLine(Color.White.copy(alpha = 0.5f), Offset(box.left, y), Offset(box.right, y), 1.dp.toPx())
+        }
+        drawRect(Color.White, box.topLeft, box.size, style = Stroke(1.5.dp.toPx()))
+        // An L at each corner, to show where to grab.
+        val l = 18.dp.toPx()
+        val t = 4.dp.toPx()
+        for ((cx, sx) in listOf(box.left to 1f, box.right to -1f)) for ((cy, sy) in listOf(box.top to 1f, box.bottom to -1f)) {
+            drawLine(Color.White, Offset(cx, cy), Offset(cx + sx * l, cy), t)
+            drawLine(Color.White, Offset(cx, cy), Offset(cx, cy + sy * l), t)
+        }
+    }
+}
+
+/** Crop shapes, straighten, quarter turns and flips. */
+@Composable
+private fun CropPanel(edit: PhotoEdit, srcW: Int, srcH: Int, shape: Int, enabled: Boolean, onMoving: (Boolean) -> Unit,
+                      onShape: (Int) -> Unit, onChange: (PhotoEdit) -> Unit) {
+    val (fw, fh) = frameSize(srcW, srcH, edit)
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        CROP_SHAPES.forEachIndexed { i, (name, _) ->
+            FilterChip(selected = shape == i, enabled = enabled, onClick = {
+                onShape(i)
+                shapeRatio(i, fw, fh)?.let { onChange(edit.copy(crop = CropRect.centred(it, fw, fh))) }
+            }, label = { Text(name) }, colors = FilterChipDefaults.filterChipColors(labelColor = TextSecondary,
+                selectedLabelColor = VaultDarkBg, selectedContainerColor = VaultAccent))
+        }
+    }
+    LabeledSlider("Straighten", "${edit.straighten.roundToInt()}°", edit.straighten, -30f..30f, enabled, onDone = { onMoving(false) }) {
+        onMoving(true)
+        onChange(edit.copy(straighten = (it * 2).roundToInt() / 2f))
+    }
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // A turn swaps the frame's sides, so the box turns too (4:5 becomes 5:4) and the shape goes back to Free.
+        Tool(Icons.AutoMirrored.Filled.RotateRight, "Rotate 90°", enabled) { onShape(0); onChange(edit.turned()) }
+        Tool(Icons.Default.Flip, "Flip H", enabled) { onChange(edit.flippedH()) }
+        Tool(Icons.Default.Flip, "Flip V", enabled, iconRotation = 90f) { onChange(edit.flippedV()) }
+        Tool(Icons.Default.RestartAlt, "Reset", enabled) {
+            onShape(0)
+            onChange(edit.copy(quarterTurns = 0, flipH = false, flipV = false, straighten = 0f, crop = CropRect.FULL))
         }
     }
 }

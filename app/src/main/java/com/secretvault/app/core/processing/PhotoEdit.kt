@@ -46,8 +46,38 @@ data class CropRect(val left: Float = 0f, val top: Float = 0f, val right: Float 
     fun flippedH() = CropRect(1 - right, top, 1 - left, bottom)
     fun flippedV() = CropRect(left, 1 - bottom, right, 1 - top)
 
+    /**
+     * The crop with one corner ([right], [bottom] say which) dragged to [x], [y], the opposite corner staying put. With
+     * a [ratio] (width / height in pixels of a [frameW]×[frameH] frame) it keeps that shape, as big as fits under the
+     * finger and inside the frame. Never smaller than [MIN].
+     */
+    fun dragCorner(right: Boolean, bottom: Boolean, x: Float, y: Float, ratio: Float?, frameW: Int, frameH: Int): CropRect {
+        val ax = if (right) left else this.right
+        val ay = if (bottom) top else this.bottom
+        val maxW = if (right) 1 - ax else ax
+        val maxH = if (bottom) 1 - ay else ay
+        var w = abs(x - ax).coerceIn(MIN, maxW)
+        var h = abs(y - ay).coerceIn(MIN, maxH)
+        if (ratio != null) {
+            // Fractions of a frame that isn't square: w·frameW / (h·frameH) = ratio.
+            val k = frameW / (ratio * frameH)
+            if (w * k <= h) h = w * k else w = h / k
+            if (h > maxH) { h = maxH; w = h / k }
+            if (w > maxW) { w = maxW; h = w * k }
+        }
+        return CropRect(if (right) ax else ax - w, if (bottom) ay else ay - h, if (right) ax + w else ax, if (bottom) ay + h else ay)
+    }
+
+    /** The crop moved by [dx], [dy], kept inside the frame. */
+    fun moved(dx: Float, dy: Float): CropRect {
+        val x = dx.coerceIn(-left, 1 - right)
+        val y = dy.coerceIn(-top, 1 - bottom)
+        return CropRect(left + x, top + y, right + x, bottom + y)
+    }
+
     companion object {
         val FULL = CropRect()
+        const val MIN = 0.1f
 
         /** The biggest crop of [ratio] (width / height, in pixels) centred in a [frameW]×[frameH] frame. */
         fun centred(ratio: Float, frameW: Int, frameH: Int): CropRect {
