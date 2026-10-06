@@ -6,12 +6,14 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.RotateRight
@@ -45,8 +47,10 @@ import com.secretvault.app.core.image.frameSize
 import com.secretvault.app.core.image.renderPhoto
 import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.processing.Adjustment
+import com.secretvault.app.core.processing.Adjustments
 import com.secretvault.app.core.processing.CropRect
 import com.secretvault.app.core.processing.PhotoEdit
+import com.secretvault.app.core.processing.PhotoFilter
 import com.secretvault.app.core.processing.VideoEditPlan
 import com.secretvault.app.ui.theme.*
 import kotlinx.coroutines.Dispatchers
@@ -168,6 +172,7 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
                     CropPanel(edit, src.width, src.height, cropShape, ready, onMoving = { moving = it },
                         onShape = { shape -> cropShape = shape }) { edit = it }
                 }
+                PhotoTab.FILTERS -> source?.let { src -> FiltersPanel(edit, src, ready, onMoving = { moving = it }) { edit = it } }
                 else -> Unit
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -339,5 +344,38 @@ private fun CropPanel(edit: PhotoEdit, srcW: Int, srcH: Int, shape: Int, enabled
             onShape(0)
             onChange(edit.copy(quarterTurns = 0, flipH = false, flipV = false, straighten = 0f, crop = CropRect.FULL))
         }
+    }
+}
+
+/** A thumbnail per filter (and none) of the photo as it's cropped now; the picked one gets a strength slider. */
+@Composable
+private fun FiltersPanel(edit: PhotoEdit, source: Bitmap, enabled: Boolean, onMoving: (Boolean) -> Unit, onChange: (PhotoEdit) -> Unit) {
+    val geometry = edit.copy(filter = null, filterStrength = 1f, adjustments = Adjustments(), grain = 0, strokes = emptyList())
+    val thumbs by produceState<List<Bitmap>?>(null, geometry) {
+        value = withContext(Dispatchers.Default) {
+            val base = renderPhoto(source, geometry, maxSide = 200) ?: return@withContext null
+            listOf(base) + PhotoFilter.entries.mapNotNull { renderPhoto(base, PhotoEdit(filter = it)) }
+        }
+    }
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        (listOf(null) + PhotoFilter.entries).forEachIndexed { i, f ->
+            val picked = edit.filter == f
+            Column(horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = enabled) {
+                    // A newly picked filter starts at full strength.
+                    if (!picked) onChange(edit.copy(filter = f, filterStrength = 1f))
+                }) {
+                Box(Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)).background(VaultSurface)
+                    .border(if (picked) 2.dp else 0.dp, if (picked) VaultAccent else Color.Transparent, RoundedCornerShape(8.dp))) {
+                    thumbs?.getOrNull(i)?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                }
+                Text(f?.label ?: "None", color = if (picked) VaultAccent else TextSecondary, fontSize = 12.sp)
+            }
+        }
+    }
+    if (edit.filter != null) LabeledSlider("Strength", "${(edit.filterStrength * 100).roundToInt()}%", edit.filterStrength, 0f..1f, enabled,
+        onDone = { onMoving(false) }) {
+        onMoving(true)
+        onChange(edit.copy(filterStrength = it))
     }
 }
