@@ -64,12 +64,14 @@ import androidx.media3.exoplayer.SeekParameters
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import coil.compose.AsyncImage
@@ -431,7 +433,10 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     renderEffect = effect?.asComposeRenderEffect()
                 })
                 // Stickers that follow a face sit on their clip's picture, so they turn and zoom with the clip.
-                if (shown != null) Box(Modifier.fillMaxSize().graphicsLayer { frameLike() }) {
+                if (shown != null) Box(Modifier.fillMaxSize().graphicsLayer {
+                    frameLike()
+                    renderEffect = look?.asComposeRenderEffect()
+                }) {
                     val density = LocalDensity.current
                     val pic = shown.picture
                     shown.clip.regions.forEach { r ->
@@ -624,8 +629,10 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     scanJob = scope.launch {
                         try {
                             val result = scanFaces(app.cryptoEngine, target) { p -> scope.launch { scanProgress = p } }
+                            if (result.omitted > 0) Toast.makeText(context, "Showing faces that fit the ${VideoProject.MAX_REGIONS}-region limit", Toast.LENGTH_LONG).show()
                             when {
                                 result.faces.isNotEmpty() -> found = target.id to result.faces
+                                result.omitted > 0 -> Unit
                                 result.alreadyCovered > 0 -> Toast.makeText(context, "Every face found already has a region", Toast.LENGTH_SHORT).show()
                                 else -> Toast.makeText(context, "No faces found in this clip", Toast.LENGTH_SHORT).show()
                             }
@@ -879,7 +886,7 @@ private fun StickerPicker(app: SecretVaultApp, onDismiss: () -> Unit, onPick: (S
                 tab == 1 -> LazyVerticalGrid(GridCells.Adaptive(96.dp), contentPadding = PaddingValues(8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(pack) { asset ->
-                        AsyncImage("file:///android_asset/$asset", null,
+                        AsyncImage("file:///android_asset/$asset", asset.substringAfterLast('/').substringBeforeLast('.'),
                             Modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).clickable { onPick(StickerSource.Pack(asset)) }.padding(4.dp))
                     }
                 }

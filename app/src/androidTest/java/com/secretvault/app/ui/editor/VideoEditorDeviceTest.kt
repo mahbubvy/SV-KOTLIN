@@ -242,6 +242,17 @@ class VideoEditorDeviceTest {
                 swipe(app.resources.displayMetrics.widthPixels * 0.85f, toolsY, app.resources.displayMetrics.widthPixels * 0.2f, toolsY)
                 clickNode("Sticker")
                 assertTrue(waitForText("Add sticker"))
+                clickNode("Stickers")
+                clickNode("01-orange")
+                waitForProject("Pack picker did not add a sticker") { it.stickers.size == 3 }
+                clickNode("Duplicate")
+                waitForProject("Sticker handles did not duplicate") { it.stickers.size == 4 }
+                clickNode("Undo")
+                waitForProject("Undo did not remove the duplicate") { it.stickers.size == 3 }
+                clickNode("Undo")
+                waitForProject("Undo did not remove the pack sticker") { it.stickers.size == 2 }
+                clickNode("Sticker")
+                assertTrue(waitForText("Add sticker"))
                 clickNode("😀")
                 waitForProject("Sticker picker did not add a track") { it.stickers.size == 3 }
                 clickNode("Add key")
@@ -252,6 +263,22 @@ class VideoEditorDeviceTest {
                 waitForProject("Sticker Delete did not remove its track") { it.stickers.size == 2 }
                 clickNode("Undo")
                 waitForProject("Undo did not restore the sticker") { it.stickers.size == 3 }
+                selectFirst()
+                repeat(4) {
+                    if (findNode("Blur") == null) swipe(app.resources.displayMetrics.widthPixels * 0.85f, toolsY,
+                        app.resources.displayMetrics.widthPixels * 0.2f, toolsY)
+                }
+                clickNode("Blur")
+                waitForProject("Blur did not add a region") { it.clips[0].regions.size == 1 }
+                val strength = bounds("Strength")
+                swipe(strength.left + strength.width() * 0.5f, strength.exactCenterY(), strength.left + strength.width() * 0.8f, strength.exactCenterY())
+                val changedStrength = (manager.draft!!.clips[0].regions.single().source as StickerSource.Blur).strength
+                clickNode("Undo")
+                waitForProject("Strength undo did not restore the region") {
+                    (it.clips[0].regions.single().source as StickerSource.Blur).strength != changedStrength
+                }
+                clickNode("Undo")
+                waitForProject("Undo did not remove the blur region") { it.clips[0].regions.isEmpty() }
                 clickNode("Back")
                 assertTrue(waitForText("Discard changes?"))
                 clickNode("Keep editing")

@@ -28,6 +28,7 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.geometry.*
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.*
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
@@ -66,7 +67,9 @@ internal fun Timeline(
             c.regions.map { it.id to (start to start + c.durationMs) }
         }.toMap()
         project.layers.map { s -> windows[s.id]?.let { (start, end) ->
-            s.copy(startMs = max(s.startMs, start), endMs = min(s.endMs, end))
+            val shownStart = max(s.startMs, start)
+            s.copy(startMs = shownStart, endMs = min(s.endMs, end),
+                keys = s.keys.map { it.copy(atMs = it.atMs + s.startMs - shownStart) })
         } ?: s }.filter { it.endMs > it.startMs }
     }
     val lanes = remember(layers) { stickerLanes(layers) }
@@ -287,6 +290,7 @@ internal fun Timeline(
                             val d = 8.dp.toPx()
                             s.keys.forEach { k ->
                                 val kx = screenX(s.startMs + k.atMs)
+                                if (kx < l || kx > r) return@forEach
                                 rotate(45f, Offset(kx, top + height / 2)) {
                                     drawRect(VaultDarkBg, Offset(kx - d / 2, top + height / 2 - d / 2), Size(d, d))
                                     drawRect(Color.White, Offset(kx - d / 2, top + height / 2 - d / 2), Size(d, d), style = Stroke(1.dp.toPx()))

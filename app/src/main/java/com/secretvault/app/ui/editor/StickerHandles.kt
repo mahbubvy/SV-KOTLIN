@@ -3,6 +3,7 @@ package com.secretvault.app.ui.editor
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +38,10 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.secretvault.app.core.processing.Placement
@@ -151,28 +156,31 @@ internal fun StickerHandles(
 
         // Rotate button, turned with the box.
         val rotateAt = center + Offset((-(h / 2 + rotateGap) * sin(a)).toFloat(), ((h / 2 + rotateGap) * cos(a)).toFloat())
-        val button = with(density) { 30.dp.toPx() }
+        val button = with(density) { 48.dp.toPx() }
         Box(Modifier.offset { IntOffset((rotateAt.x - button / 2).roundToInt(), (rotateAt.y - button / 2).roundToInt()) }
-            .size(30.dp).graphicsLayer { rotationZ = p.angle }.shadow(2.dp, CircleShape).background(Color.White, CircleShape)
+            .size(48.dp).semantics {
+                role = Role.Button
+                onClick("Rotate") { start(); change { it.copy(rotation = snapAngle90(p.rotation + 90f)) }; true }
+            }.focusable().graphicsLayer { rotationZ = p.angle }.shadow(2.dp, CircleShape).background(Color.White, CircleShape)
             .border(0.5.dp, Color(0xFFE4E4E4), CircleShape), contentAlignment = Alignment.Center) {
             Icon(Icons.AutoMirrored.Filled.RotateRight, "Rotate", tint = Ink, modifier = Modifier.size(20.dp))
         }
 
         // Duplicate and delete, upright above the box (or below it when there's no room above).
-        val barW = with(density) { 88.dp.toPx() }
-        val barH = with(density) { 40.dp.toPx() }
+        val barW = with(density) { 104.dp.toPx() }
+        val barH = with(density) { 48.dp.toPx() }
         val gap = with(density) { 14.dp.toPx() }
         val halfTall = (abs(w * sin(a)) + abs(h * cos(a))).toFloat() / 2
         val above = center.y - halfTall - gap - barH
         val barY = if (above >= 0f) above else (center.y + halfTall + rotateGap + gap).coerceAtMost(fh - barH)
         val barX = (center.x - barW / 2).coerceIn(0f, (fw - barW).coerceAtLeast(0f))
-        Row(Modifier.offset { IntOffset(barX.roundToInt(), barY.roundToInt()) }.size(88.dp, 40.dp)
+        Row(Modifier.offset { IntOffset(barX.roundToInt(), barY.roundToInt()) }.size(104.dp, 48.dp)
             .shadow(3.dp, RoundedCornerShape(20.dp)).background(Color.White, RoundedCornerShape(20.dp)),
             horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onDuplicate, enabled = canDuplicate, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = onDuplicate, enabled = canDuplicate, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Outlined.LibraryAdd, "Duplicate", tint = if (canDuplicate) Ink else Ink.copy(alpha = 0.3f), modifier = Modifier.size(22.dp))
             }
-            IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Outlined.Delete, "Delete", tint = Ink, modifier = Modifier.size(22.dp))
             }
         }
