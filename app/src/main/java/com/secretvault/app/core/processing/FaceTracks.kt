@@ -1,8 +1,10 @@
 package com.secretvault.app.core.processing
 
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.sin
 
 /** A face the detector found, in fractions of the upright picture, leaning [roll] degrees clockwise. */
 data class FaceBox(val left: Float, val top: Float, val right: Float, val bottom: Float, val roll: Float = 0f) {
@@ -62,13 +64,29 @@ fun faceTracks(samples: List<FaceSample>, maxGapMs: Long = 1_000): List<FaceTrac
     return (done + open).map(::FaceTrack)
 }
 
-/** Whether one of [regions] (source time) already sits on this face for at least half the samples it was seen in. */
-fun FaceTrack.coveredBy(regions: List<Sticker>): Boolean = regions.any { r ->
-    points.count { (at, face) ->
-        at in r.startMs until r.endMs && r.placementAt(at).let { p ->
-            abs(p.centerX - face.centerX) <= face.width && abs(p.centerY - face.centerY) <= face.height
+/** A blur fully contains every sampled face box. Image regions aren't assumed opaque. [aspect] is frame width / height. */
+fun FaceTrack.coveredBy(regions: List<Sticker>, aspect: Float = 1f): Boolean {
+    if (points.isEmpty() || !aspect.isFinite() || aspect <= 0f) return false
+    return regions.any { r ->
+        val look = r.source as? StickerSource.Blur ?: return@any false
+        points.all { (at, face) ->
+            if (at !in r.startMs until r.endMs) return@all false
+            val p = r.placementAt(at)
+            val halfW = p.widthFraction / 2
+            val halfH = halfW * p.stretch
+            if (halfW <= 0f || halfH <= 0f) return@all false
+            val angle = Math.toRadians(p.angle.toDouble())
+            listOf(face.left, face.right).all { x ->
+                listOf(face.top, face.bottom).all { y ->
+                    val dx = x - p.centerX
+                    val dy = (y - p.centerY) / aspect
+                    val u = (dx * cos(angle) + dy * sin(angle)) / halfW
+                    val v = (dy * cos(angle) - dx * sin(angle)) / halfH
+                    if (look.oval) u * u + v * v <= 1.00001 else abs(u) <= 1.00001 && abs(v) <= 1.00001
+                }
+            }
         }
-    } * 2 >= points.size
+    }
 }
 
 /**

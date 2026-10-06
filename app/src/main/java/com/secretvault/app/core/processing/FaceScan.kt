@@ -32,7 +32,7 @@ private const val SAMPLE_MS = 200L
 private const val SCAN_SIDE = 720 // frames are scaled to fit this square for detection
 
 /** What a scan found: faces without a region yet, and how many it skipped because one already covers them. */
-class FaceScanResult(val faces: List<FoundFace>, val alreadyCovered: Int)
+class FaceScanResult(val faces: List<FoundFace>, val alreadyCovered: Int, val omitted: Int = 0)
 
 /**
  * Finds faces in [clip]'s trimmed part, five times a second, with the on-device detector. Frames are read straight
@@ -92,12 +92,13 @@ suspend fun scanFaces(cryptoEngine: VaultCryptoEngine, clip: Clip, onProgress: (
                         onProgress((i + 1f) / times.size)
                     }
                 }
-                val (covered, fresh) = faceTracks(samples).partition { it.coveredBy(clip.regions) }
-                FaceScanResult(fresh.sortedByDescending { it.points.size }.map { track ->
+                val (covered, fresh) = faceTracks(samples).partition { it.coveredBy(clip.regions, aspect) }
+                val room = (VideoProject.MAX_REGIONS - clip.regions.size).coerceAtLeast(0)
+                FaceScanResult(fresh.sortedByDescending { it.points.size }.take(room).map { track ->
                     ensureActive()
                     val (at, box) = track.clearest
                     FoundFace(track.toBlur(clip.sourceDurationMs, aspect, SAMPLE_MS), frameAt(at)?.let { faceCrop(it, box) })
-                }, covered.size)
+                }, covered.size, (fresh.size - room).coerceAtLeast(0))
             }
         } finally {
             retriever.release()
