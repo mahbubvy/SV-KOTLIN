@@ -33,6 +33,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -41,11 +42,16 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -112,6 +118,9 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
     var brush by remember { mutableStateOf(BrushSettings()) }
     // The Size or Softness slider is moving: the brush circle shows.
     var sizing by remember { mutableStateOf(false) }
+    // Pinch zoom of the preview.
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var pan by remember { mutableStateOf(Offset.Zero) }
 
     // A smaller copy for the preview; null while loading, and a failed decode shows an error.
     var failed by remember { mutableStateOf(false) }
@@ -179,7 +188,26 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
             }
         }
 
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(8.dp).clipToBounds()
+            // Two fingers zoom (1–5×) and pan the photo, seen before the tools so a pinch never draws or drags the crop.
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    do {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.changes.count { it.pressed } >= 2) {
+                            val z = (zoom * event.calculateZoom()).coerceIn(1f, 5f)
+                            val centre = event.calculateCentroid(useCurrent = true)
+                            // Keep the point between the fingers still, follow them as they move, and never show past an edge.
+                            val p = centre - (centre - pan) * (z / zoom) + event.calculatePan()
+                            pan = Offset(p.x.coerceIn(size.width * (1 - z), 0f), p.y.coerceIn(size.height * (1 - z), 0f))
+                            zoom = z
+                            event.changes.forEach { it.consume() }
+                        }
+                    } while (event.changes.any { it.pressed })
+                    if (zoom < 1.05f) { zoom = 1f; pan = Offset.Zero }
+                }
+            }, contentAlignment = Alignment.Center) {
             val shown = preview
             val src = source
             val cropRatio = src?.let { s -> frameSize(s.width, s.height, edit).let { (w, h) -> shapeRatio(cropShape, w, h) } }
@@ -206,20 +234,32 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
                             }
                         }
                     }
-                    Image(shown.bitmap.asImageBitmap(), null, Modifier.fillMaxSize().graphicsLayer { renderEffect = look?.asComposeRenderEffect() },
-                        contentScale = ContentScale.Fit)
-                    // Painted strokes over the GPU preview, untouched by its colour (the CPU draws them otherwise).
-                    if (gpu && edit.strokes.any { !it.blur }) Canvas(Modifier.fillMaxSize()) {
-                        drawIntoCanvas { drawPaintStrokes(it.nativeCanvas, toScreen, src.width, src.height, edit.strokes) }
-                    }
+                    // Pinch zoom and pan: the picture and everything drawn over it, scaled from the top-left by [zoom] then
+                    // moved by [pan]. The tools inside get touches in their own (unzoomed) coordinates.
+                    Box(Modifier.fillMaxSize().graphicsLayer {
+                        transformOrigin = TransformOrigin(0f, 0f)
+                        scaleX = zoom
+                        scaleY = zoom
+                        translationX = pan.x
+                        translationY = pan.y
+                    }) {
+                        Image(shown.bitmap.asImageBitmap(), null, Modifier.fillMaxSize().graphicsLayer { renderEffect = look?.asComposeRenderEffect() },
+                            contentScale = ContentScale.Fit)
+                        // Painted strokes over the GPU preview, untouched by its colour (the CPU draws them otherwise).
+                        if (gpu && edit.strokes.any { !it.blur }) Canvas(Modifier.fillMaxSize()) {
+                            drawIntoCanvas { drawPaintStrokes(it.nativeCanvas, toScreen, src.width, src.height, edit.strokes) }
+                        }
 
-                    if (tab == PhotoTab.CROP && shown.wholeFrame && !saving) {
-                        val (fw, fh) = frameSize(src.width, src.height, edit)
-                        CropOverlay(edit.crop, picture, cropRatio, fw, fh, onMoving = { moving = it }) { edit = edit.copy(crop = it) }
-                    }
-                    if (tab == PhotoTab.DRAW && !shown.wholeFrame && !saving) {
-                        DrawOverlay(toScreen, src.width, src.height, brush) { edit = edit.copy(strokes = edit.strokes + it) }
-                        BrushSizeCircle(brush, sizing, picture.center, brush.width * min(src.width, src.height) * toScreen.mapRadius(1f))
+                        if (tab == PhotoTab.CROP && shown.wholeFrame && !saving) {
+                            val (fw, fh) = frameSize(src.width, src.height, edit)
+                            CropOverlay(edit.crop, picture, cropRatio, fw, fh, onMoving = { moving = it }) { edit = edit.copy(crop = it) }
+                        }
+                        if (tab == PhotoTab.DRAW && !shown.wholeFrame && !saving) {
+                            DrawOverlay(toScreen, src.width, src.height, brush) { edit = edit.copy(strokes = edit.strokes + it) }
+                            // In the middle of what's on screen, zoomed in or not.
+                            BrushSizeCircle(brush, sizing, Offset((boxW / 2 - pan.x) / zoom, (boxH / 2 - pan.y) / zoom),
+                                brush.width * min(src.width, src.height) * toScreen.mapRadius(1f))
+                        }
                     }
                 }
             }
@@ -345,7 +385,9 @@ private fun CropOverlay(crop: CropRect, picture: Rect, ratio: Float?, frameW: In
             dragging = true
             moving(true)
             while (true) {
-                val c = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                val event = awaitPointerEvent()
+                if (event.changes.size > 1 || event.changes.any { it.isConsumed }) break // a pinch zoom takes over
+                val c = event.changes.firstOrNull { it.id == down.id } ?: break
                 if (!c.pressed) break
                 c.consume()
                 val to = fraction(c.position)
@@ -447,13 +489,13 @@ private enum class BrushMode(val label: String) { PAINT("Brush"), BLUR("Blur"), 
 /** The brush as set in the Draw panel: [size] 1..100, [softness] and [strength] (blur or mosaic) 0..1. */
 private data class BrushSettings(
     val mode: BrushMode = BrushMode.PAINT,
-    val size: Float = 20f,
+    val size: Float = 28f,
     val softness: Float = 0f,
     val strength: Float = 0.5f,
     val color: Int = 0xFFFFFFFF.toInt()
 ) {
-    /** Stroke width as a fraction of the photo's short side. */
-    val width: Float get() = 0.004f + size / 100f * 0.08f
+    /** Stroke width as a fraction of the photo's short side, up to a quarter of it; finer steps at the small end. */
+    val width: Float get() = 0.003f + (size / 100f).let { it * it } * 0.25f
     val hides: Boolean get() = mode != BrushMode.PAINT
 
     fun stroke(points: List<Pair<Float, Float>>) =
@@ -489,15 +531,19 @@ private fun DrawOverlay(toScreen: Matrix, srcW: Int, srcH: Int, brush: BrushSett
             down.consume()
             val points = mutableListOf(down.position)
             live = points.toList()
+            var pinched = false
             while (true) {
-                val c = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                val event = awaitPointerEvent()
+                // A second finger means a pinch zoom: this was never a stroke.
+                if (event.changes.size > 1 || event.changes.any { it.isConsumed }) { pinched = true; break }
+                val c = event.changes.firstOrNull { it.id == down.id } ?: break
                 if (!c.pressed) break
                 c.consume()
                 if ((c.position - points.last()).getDistance() >= 3f) { points += c.position; live = points.toList() }
             }
             val xy = FloatArray(points.size * 2).also { a -> points.forEachIndexed { i, p -> a[i * 2] = p.x; a[i * 2 + 1] = p.y } }
             toPhoto.mapPoints(xy)
-            add(settings.stroke(points.indices.map { xy[it * 2] / srcW to xy[it * 2 + 1] / srcH }))
+            if (!pinched) add(settings.stroke(points.indices.map { xy[it * 2] / srcW to xy[it * 2 + 1] / srcH }))
             live = emptyList()
         }
     }) {
