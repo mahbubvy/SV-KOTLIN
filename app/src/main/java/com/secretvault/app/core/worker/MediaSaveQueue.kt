@@ -177,9 +177,6 @@ class MediaSaveQueue(
             rawBitmap ?: Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)
         }
 
-        val width = bitmap.width
-        val height = bitmap.height
-
         if (autoFaceBlur) {
             try {
                 bitmap = faceBlurProcessor.processFaceBlur(bitmap)
@@ -188,6 +185,21 @@ class MediaSaveQueue(
             }
         }
 
+        storePhoto(bitmap, id, timestamp, filename, AlbumEntity.ALBUM_CAMERA_ID, quality = 92)
+    }
+
+    /**
+     * Stores an edited photo as a new vault item named [name] in [albumId]: thumbnailed, compressed and encrypted in
+     * memory, never written as plaintext. Recycles [bitmap].
+     */
+    suspend fun savePhoto(bitmap: Bitmap, albumId: String, name: String): MediaItem = withContext(Dispatchers.IO) {
+        storePhoto(bitmap, "photo_" + UUID.randomUUID().toString().take(8), System.currentTimeMillis(), name, albumId, quality = 95)
+    }
+
+    private suspend fun storePhoto(bitmap: Bitmap, id: String, timestamp: Long, filename: String, albumId: String, quality: Int): MediaItem {
+        val width = bitmap.width
+        val height = bitmap.height
+
         val encryptedThumbBytes = encryptedGalleryThumbnail(bitmap, cryptoEngine)
         val thumbFile = File(context.filesDir, "vault_thumbs/$id$GALLERY_THUMBNAIL_SUFFIX")
         thumbFile.parentFile?.mkdirs()
@@ -195,7 +207,7 @@ class MediaSaveQueue(
 
         // 2. Compress and Encrypt Full Image
         val fullImageStream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 92, fullImageStream)
+        bitmap.compress(Bitmap.CompressFormat.JPEG, quality, fullImageStream)
         val fullBytes = fullImageStream.toByteArray()
         bitmap.recycle()
         fullImageStream.close()
@@ -218,11 +230,11 @@ class MediaSaveQueue(
             width = width,
             height = height,
             createdAt = timestamp,
-            albumId = AlbumEntity.ALBUM_CAMERA_ID
+            albumId = albumId
         )
 
         mediaRepository.insertMedia(item)
-        item
+        return item
     }
 
     /**

@@ -687,7 +687,7 @@ private class TimelineState(
 )
 
 @Composable
-private fun Tool(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun Tool(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
     val tint = if (enabled) TextPrimary else TextMuted
     Column(horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.widthIn(min = 60.dp).clip(RoundedCornerShape(10.dp)).clickable(enabled = enabled, onClick = onClick)
@@ -750,17 +750,18 @@ private fun AdjustPanel(adjustments: Adjustments, enabled: Boolean, onChange: (A
 }
 
 @Composable
-private fun LabeledSlider(label: String, value: String, current: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean, onChange: (Float) -> Unit) {
+internal fun LabeledSlider(label: String, value: String, current: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean,
+                           onDone: () -> Unit = {}, onChange: (Float) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = TextSecondary, fontSize = 12.sp, modifier = Modifier.width(76.dp))
-        Slider(current, onChange, Modifier.weight(1f), enabled, range,
+        Slider(current, onChange, Modifier.weight(1f), enabled, range, onValueChangeFinished = onDone,
             colors = SliderDefaults.colors(thumbColor = VaultAccent, activeTrackColor = VaultAccent, inactiveTrackColor = Color.White.copy(alpha = 0.3f)))
         Text(value, color = TextPrimary, fontSize = 12.sp, textAlign = TextAlign.End, modifier = Modifier.width(44.dp))
     }
 }
 
 @Composable
-private fun PanelButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun PanelButton(label: String, enabled: Boolean, onClick: () -> Unit) {
     TextButton(onClick = onClick, enabled = enabled, contentPadding = PaddingValues(horizontal = 10.dp)) {
         Text(label, color = if (enabled) VaultAccent else TextMuted, fontSize = 13.sp)
     }

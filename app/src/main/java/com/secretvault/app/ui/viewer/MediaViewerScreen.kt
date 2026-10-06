@@ -44,6 +44,7 @@ fun MediaViewerScreen(
     viewModel: MediaViewerViewModel,
     onBack: () -> Unit,
     onEditVideo: (String) -> Unit,
+    onEditPhoto: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -171,7 +172,9 @@ fun MediaViewerScreen(
                             app.ephemeralShareManager.shareItem(act, currentItem)
                         }
                     },
-                    onEdit = if (currentItem.mediaType == MediaType.VIDEO) {
+                    onEdit = if (currentItem.mediaType == MediaType.PHOTO) {
+                        { onEditPhoto(currentItem.id) }
+                    } else if (currentItem.mediaType == MediaType.VIDEO) {
                         { onEditVideo(currentItem.id) }
                     } else null,
                     onSetCover = { showSetCoverDialog = true },
