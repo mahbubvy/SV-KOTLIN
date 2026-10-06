@@ -35,7 +35,7 @@ fun VaultNavGraph(
     LaunchedEffect(cameraEntryRequest) {
         // An edit in progress wins over the camera shortcut: stay in the editor.
         if (cameraEntryRequest > 0 && app.sessionManager.keepUnlocked.value && app.sessionManager.isUnlocked.value &&
-            app.videoEditManager.draft == null) {
+            app.videoEditManager.draft == null && app.videoEditManager.photoDraft == null) {
             navController.navigate(Screen.VaultHome.route) {
                 popUpTo(navController.graph.id)
                 launchSingleTop = true
@@ -98,7 +98,9 @@ fun VaultNavGraph(
             }
             // The vault locked mid-edit: go back to the editor, which picks up its draft.
             LaunchedEffect(Unit) {
+                val photo = app.videoEditManager.photoDraft
                 if (app.videoEditManager.draft != null) navController.navigate(Screen.VideoProject.route) { launchSingleTop = true }
+                else if (photo != null) navController.navigate(Screen.PhotoEditor.createRoute(photo.first)) { launchSingleTop = true }
             }
             val galleryViewModel = viewModel<com.secretvault.app.ui.gallery.GalleryViewModel>(
                 factory = viewModelFactory {
@@ -250,6 +252,7 @@ fun VaultNavGraph(
                 onBack = {
                     navController.popBackStack()
                 },
+                onEditPhoto = { mediaId -> navController.navigate(Screen.PhotoEditor.createRoute(mediaId)) },
                 onEditVideo = { mediaId ->
                     navController.navigate(Screen.VideoEditor.createRoute(mediaId))
                 }
@@ -262,6 +265,32 @@ fun VaultNavGraph(
                 return@composable
             }
             com.secretvault.app.ui.editor.VideoProjectScreen(app = app, onBack = { navController.popBackStack() })
+        }
+
+        composable(
+            route = Screen.PhotoEditor.route,
+            arguments = listOf(
+                androidx.navigation.navArgument("mediaId") { type = androidx.navigation.NavType.StringType }
+            )
+        ) { backStackEntry ->
+            if (!isUnlocked) {
+                Box(modifier = Modifier.fillMaxSize().background(VaultDarkBg))
+                return@composable
+            }
+            val mediaId = backStackEntry.arguments?.getString("mediaId") ?: ""
+            val item by androidx.compose.runtime.produceState<com.secretvault.app.core.model.MediaItem?>(null, mediaId) {
+                value = app.mediaRepository.getMediaById(mediaId)
+            }
+            val loaded = item
+            if (loaded == null) {
+                Box(modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black))
+            } else {
+                com.secretvault.app.ui.editor.PhotoEditorScreen(
+                    app = app,
+                    item = loaded,
+                    onBack = { navController.popBackStack() }
+                )
+            }
         }
 
         composable(

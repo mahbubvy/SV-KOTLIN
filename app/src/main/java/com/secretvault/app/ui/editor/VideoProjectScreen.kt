@@ -54,6 +54,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
@@ -720,13 +721,13 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
 
 
 @Composable
-private fun Tool(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun Tool(icon: ImageVector, label: String, enabled: Boolean, iconRotation: Float = 0f, onClick: () -> Unit) {
     val tint = if (enabled) TextPrimary else TextMuted
     Column(horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.widthIn(min = 64.dp).heightIn(min = 64.dp).clip(RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
             .padding(8.dp)) {
-        Icon(icon, null, tint = tint, modifier = Modifier.size(28.dp))
+        Icon(icon, null, tint = tint, modifier = Modifier.size(28.dp).rotate(iconRotation))
         Spacer(Modifier.height(4.dp))
         Text(label, color = tint, fontSize = 12.sp, maxLines = 1)
     }
@@ -765,8 +766,7 @@ private fun AdjustPanel(adjustments: Adjustments, enabled: Boolean, onGesture: (
             Adjustment.entries.forEach { a ->
                 FilterChip(selected = a == current, onClick = { current = a },
                     label = { Text(if (adjustments[a] != 0) "${a.label} •" else a.label, fontSize = 12.sp) },
-                    colors = FilterChipDefaults.filterChipColors(labelColor = TextSecondary, selectedContainerColor = VaultAccent,
-                        selectedLabelColor = VaultDarkBg))
+                    leadingIcon = { ChipIcon(a.icon) }, colors = editorChipColors())
             }
         }
         val value = adjustments[current]
@@ -784,21 +784,21 @@ private fun AdjustPanel(adjustments: Adjustments, enabled: Boolean, onGesture: (
 }
 
 @Composable
-private fun LabeledSlider(label: String, value: String, current: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean, onGesture: (Boolean) -> Unit, onChange: (Float) -> Unit) {
+internal fun LabeledSlider(label: String, value: String, current: Float, range: ClosedFloatingPointRange<Float>, enabled: Boolean, onGesture: (Boolean) -> Unit = {}, onDone: () -> Unit = {}, onChange: (Float) -> Unit) {
     var changing by remember { mutableStateOf(false) }
     DisposableEffect(Unit) { onDispose { if (changing) onGesture(false) } }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = TextSecondary, fontSize = 12.sp, modifier = Modifier.width(76.dp))
         Slider(current, { if (!changing) { changing = true; onGesture(true) }; onChange(it) },
             Modifier.weight(1f).semantics { contentDescription = label }, enabled, range,
-            onValueChangeFinished = { changing = false; onGesture(false) },
+            onValueChangeFinished = { changing = false; onGesture(false); onDone() },
             colors = SliderDefaults.colors(thumbColor = VaultAccent, activeTrackColor = VaultAccent, inactiveTrackColor = Color.White.copy(alpha = 0.4f)))
         Text(value, color = TextPrimary, fontSize = 12.sp, textAlign = TextAlign.End, modifier = Modifier.width(44.dp))
     }
 }
 
 @Composable
-private fun PanelButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun PanelButton(label: String, enabled: Boolean, onClick: () -> Unit) {
     TextButton(onClick = onClick, enabled = enabled, contentPadding = PaddingValues(horizontal = 12.dp)) {
         Text(label, color = if (enabled) VaultAccent else TextMuted, fontSize = 14.sp)
     }

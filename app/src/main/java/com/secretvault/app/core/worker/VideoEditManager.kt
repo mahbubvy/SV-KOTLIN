@@ -119,6 +119,12 @@ class VideoEditManager(
     var draftHistory: VideoProjectHistory? = null
         private set
 
+    /**
+     * The photo editor's unsaved edit, with its photo's id, kept like [draft] so a vault lock doesn't lose it. Memory only;
+     * it holds the edit steps, never the photo.
+     */
+    var photoDraft: Pair<String, com.secretvault.app.core.processing.PhotoEdit>? = null
+
     fun keepDraft(project: VideoProject, positionMs: Long, history: VideoProjectHistory? = null) {
         draft = project.takeIf { it.clips.isNotEmpty() || history?.canUndo == true || history?.canRedo == true }
         draftPositionMs = positionMs
@@ -203,7 +209,10 @@ class VideoEditManager(
                 faceStickers.takeIf { it.isNotEmpty() }?.let { faces ->
                     withContext(Dispatchers.IO) {
                         val clipWidth = uprightSize(clip.media).first
-                        faces.mapNotNull { s -> StickerImage.load(context, cryptoEngine, s.source)?.let { StickerOverlay(it, s.shifted(-clip.startMs), clipWidth) } }
+                        faces.map { s ->
+                            val image = requireNotNull(StickerImage.load(context, cryptoEngine, s.source)) { "Couldn't load a face covering" }
+                            StickerOverlay(image, s.shifted(-clip.startMs), clipWidth)
+                        }
                     }.takeIf { it.isNotEmpty() }?.let { OverlayEffect(it) }
                 })
             EditedMediaItem.Builder(
