@@ -36,6 +36,7 @@ import com.secretvault.app.core.processing.Framing
 import com.secretvault.app.core.processing.MuteAudioProcessor
 import com.secretvault.app.core.processing.Placement
 import com.secretvault.app.core.processing.Sticker
+import com.secretvault.app.core.processing.StickerSource
 import com.secretvault.app.core.processing.VideoEditPlan
 import com.secretvault.app.core.processing.VideoProject
 import com.secretvault.app.core.processing.VideoProjectHistory
@@ -194,6 +195,17 @@ class VideoEditManager(
     private suspend fun export(clips: List<Clip>, stickers: List<Sticker>, fitToFirst: Boolean, output: File): ExportResult {
         val frame = if (fitToFirst) withContext(Dispatchers.IO) { uprightSize(clips.first().media) } else null
         val items = clips.map { clip ->
+            // On the clip's own frame, before it's fitted, so they stay on what they cover: blur regions, then stickers
+            // that follow a face, drawn over them. Sticker times count from the clip's start, as its frames do.
+            val faceStickers = clip.regions.filter { it.source !is StickerSource.Blur }
+            val clipEffects = listOfNotNull(
+                clip.regions.takeIf { r -> r.any { it.source is StickerSource.Blur } }?.let { BlurRegionsEffect(it, clip.startMs) },
+                faceStickers.takeIf { it.isNotEmpty() }?.let { faces ->
+                    withContext(Dispatchers.IO) {
+                        val clipWidth = uprightSize(clip.media).first
+                        faces.mapNotNull { s -> StickerImage.load(context, cryptoEngine, s.source)?.let { StickerOverlay(it, s.shifted(-clip.startMs), clipWidth) } }
+                    }.takeIf { it.isNotEmpty() }?.let { OverlayEffect(it) }
+                })
             EditedMediaItem.Builder(
                 androidx.media3.common.MediaItem.Builder()
                     .setUri(Uri.fromFile(File(clip.media.encryptedPath)))
@@ -205,9 +217,10 @@ class VideoEditManager(
                     )
                     .build()
             ).apply {
-                if (frame != null || clip.muted) setEffects(Effects(
+                if (frame != null || clip.muted || clipEffects.isNotEmpty()) setEffects(Effects(
                     if (clip.muted) listOf(MuteAudioProcessor(listOf(VideoSegment(0L, Long.MAX_VALUE / 2_000)))) else emptyList(),
-                    frame?.let { (width, height) ->
+                    clipEffects +
+                    (frame?.let { (width, height) ->
                         listOfNotNull(
                             Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT),
                             // Colour after fitting and before framing, like the preview: its shader covers the fitted
@@ -215,7 +228,7 @@ class VideoEditManager(
                             clip.adjustments.takeUnless { it.isNone }?.let { SingleColorLut.createFromCube(it.lutCube()) },
                             clip.framing.takeIf { it != Framing() }?.let { FramingTransformation(it, width, height) })
                     }
-                        ?: emptyList()
+                        ?: emptyList())
                 ))
             }.build()
         }
@@ -319,7 +332,7 @@ private class StickerOverlay(private val image: StickerImage, private val sticke
         val scale = placement.widthFraction * frameWidth / image.width
         return OverlaySettings.Builder()
             // The overlay starts at its own pixel size; scale it to its share of the frame's width.
-            .setScale(scale, scale)
+            .setScale(scale, scale * placement.stretch)
             // Anchors are -1..1 with y pointing up; the model's fractions run from the top-left.
             .setBackgroundFrameAnchor(placement.centerX * 2 - 1, 1 - placement.centerY * 2)
             // Media3 turns counter-clockwise; the model turns clockwise.

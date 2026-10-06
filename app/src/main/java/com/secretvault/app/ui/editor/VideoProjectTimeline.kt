@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -37,6 +38,7 @@ import androidx.compose.ui.unit.*
 import com.secretvault.app.core.image.key
 import com.secretvault.app.core.image.StickerImage
 import com.secretvault.app.core.processing.Sticker
+import com.secretvault.app.core.processing.StickerSource
 import com.secretvault.app.core.processing.VideoProject
 import com.secretvault.app.ui.theme.*
 import kotlin.math.*
@@ -58,10 +60,20 @@ internal fun Timeline(
     val pxPerMs = with(LocalDensity.current) { dpPerSecond.dp.toPx() } / 1000f
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
-    val lanes = remember(project.stickers) { stickerLanes(project.stickers) }
+    val layers = remember(project) {
+        val windows = project.clips.flatMapIndexed { i, c ->
+            val start = project.outputStartOf(i)
+            c.regions.map { it.id to (start to start + c.durationMs) }
+        }.toMap()
+        project.layers.map { s -> windows[s.id]?.let { (start, end) ->
+            s.copy(startMs = max(s.startMs, start), endMs = min(s.endMs, end))
+        } ?: s }.filter { it.endMs > it.startMs }
+    }
+    val lanes = remember(layers) { stickerLanes(layers) }
+    val blurPainter = rememberVectorPainter(Icons.Default.BlurOn)
     val laneCount = (lanes.values.maxOrNull() ?: -1) + 1
     var focused by remember { mutableStateOf(false) }
-    val state by rememberUpdatedState(TimelineState(project, selected, stickerId, positionMs, pxPerMs, lanes,
+    val state by rememberUpdatedState(TimelineState(project, selected, stickerId, positionMs, pxPerMs, layers, lanes,
         onSelect, onSelectSticker, onTouch, onScrub, onTrim, onStickerTime))
 
     BoxWithConstraints(Modifier.fillMaxWidth().clipToBounds()) {
@@ -117,7 +129,7 @@ internal fun Timeline(
                                 CustomAccessibilityAction("Mute or unmute selected clip") { onMute(selected); true }
                             ) + project.clips.indices.map { index ->
                                 CustomAccessibilityAction("Select clip ${index + 1}") { onSelect(index); true }
-                            } + project.stickers.mapIndexed { index, sticker ->
+                            } + layers.mapIndexed { index, sticker ->
                                 CustomAccessibilityAction("Select sticker ${index + 1}") { onSelectSticker(sticker.id); true }
                             }
                         } else disabled()
@@ -140,7 +152,7 @@ internal fun Timeline(
                                 abs(x - right) <= reach -> 1
                                 else -> 0
                             }
-                            val sticker = begin.project.stickers.firstOrNull { it.id == begin.stickerId }
+                            val sticker = begin.layers.firstOrNull { it.id == begin.stickerId }
                             val clip = begin.project.clips.getOrNull(begin.selected)
                             val drag = when {
                                 sticker != null && lane >= 0 && lane == begin.lanes[sticker.id] -> {
@@ -202,7 +214,7 @@ internal fun Timeline(
                             if (!moving && !scrollingLanes) {
                                 val atMs = begin.positionMs + ((x - centre) / begin.pxPerMs).toLong()
                                 if (lane < 0) begin.project.clipAt(atMs)?.let { (index, _) -> begin.onSelect(index) }
-                                else begin.onSelectSticker(begin.project.stickers.firstOrNull { begin.lanes[it.id] == lane && atMs in it.startMs until it.endMs }?.id)
+                                else begin.onSelectSticker(begin.layers.firstOrNull { begin.lanes[it.id] == lane && atMs in it.startMs until it.endMs }?.id)
                             }
                             } finally { if (moving) state.onTouch(false) }
                         }
@@ -248,7 +260,7 @@ internal fun Timeline(
                             if (index == selected && stickerId == null) handles(l, r, 0f, videoRow, VaultAccent, VaultDarkBg)
                         }
 
-                        project.stickers.forEach { s ->
+                        layers.forEach { s ->
                             val top = videoRow + (LANE_GAP + LANE * (lanes[s.id] ?: return@forEach)).toPx()
                             val height = LANE.toPx() - 4.dp.toPx()
                             val l = screenX(s.startMs)
@@ -256,7 +268,13 @@ internal fun Timeline(
                             if (r < 0f || l > size.width) return@forEach
                             drawRoundRect(VaultSurfaceVariant, Offset(l, top), Size(r - l, height), CornerRadius(4.dp.toPx()))
                             drawRoundRect(TextSecondary, Offset(l, top), Size(r - l, height), CornerRadius(4.dp.toPx()), style = Stroke(1.dp.toPx()))
-                    stickerImages[s.source.key]?.poster?.asImageBitmap()?.let { img ->
+                            if (s.source is StickerSource.Blur) {
+                                val h = height - 8.dp.toPx()
+                                val x = l + handle + 4.dp.toPx()
+                                if (x + h < r) translate(x, top + 4.dp.toPx()) {
+                                    with(blurPainter) { draw(Size(h, h), colorFilter = ColorFilter.tint(TextPrimary)) }
+                                }
+                            } else stickerImages[s.source.key]?.poster?.asImageBitmap()?.let { img ->
                                 // A small copy of the sticker at the visible start of its bar.
                                 val h = height - 4.dp.toPx()
                                 val w = h * img.width / img.height
@@ -320,7 +338,7 @@ private fun stickerLanes(stickers: List<Sticker>): Map<String, Int> {
 /** Everything the timeline's gesture handler reads, captured together so one gesture sees a consistent snapshot. */
 private class TimelineState(
     val project: VideoProject, val selected: Int, val stickerId: String?, val positionMs: Long, val pxPerMs: Float,
-    val lanes: Map<String, Int>,
+    val layers: List<Sticker>, val lanes: Map<String, Int>,
     val onSelect: (Int) -> Unit, val onSelectSticker: (String?) -> Unit, val onTouch: (Boolean) -> Unit,
     val onScrub: (Long) -> Unit, val onTrim: (Boolean, Long, Long) -> Unit, val onStickerTime: (Long, Long, Boolean) -> Unit
 )

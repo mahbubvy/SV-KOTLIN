@@ -5,7 +5,7 @@
 ### Added
 - Pause and resume local or remotely controlled video recordings, excluding paused time from the saved recording duration.
 - Direct photo/video sharing between SV devices on the same Wi-Fi, with per-transfer Accept/Decline, optional streaming-PIN pairing and delivery to Imports.
-- Multi-clip video editor from a new Home button: join vault videos, trim, split, mute and reorder clips on a scrolling, zoomable timeline; rotate, zoom and colour-adjust each clip; and add up to 10 stickers (emoji, a bundled pack with animated GIFs, or vault photos and GIFs) that can be resized, rotated, duplicated and moved over time with keyframes. Saves one new video in the first clip's shape; the per-video Edit button is unchanged.
+- Multi-clip video editor from a new Home button: join vault videos, trim, split, mute and reorder clips on a scrolling, zoomable timeline; rotate, zoom and colour-adjust each clip; and add up to 10 stickers (emoji, a bundled pack with animated GIFs, or vault photos and GIFs) that can be resized, rotated, duplicated and moved over time with keyframes; and blur or cover faces, by hand or by scanning a clip for faces that are then tracked. Saves one new video in the first clip's shape; the per-video Edit button is unchanged.
 
 ### Fixed
 - Preserve required file-sharing PIN mode when its saved PIN is unavailable.
@@ -13,8 +13,8 @@
 - Read incoming/backup preview media through bounded encrypted buffers, avoiding full plaintext video staging and whole-photo memory copies.
 
 ### Validation
-- Combined unit suite passes 128 tests. Generated-file transfers pass CMF to Pixel without PIN and Pixel to CMF with PIN; decline and cancellation from either side pass.
-- Video editor confirmed by the owner on the CMF Phone 1: joining clips of different shapes, timeline swiping and trimming, and emoji stickers in the saved video. Transparent PNG stickers confirmed. Animated GIF stickers and the sticker handles are not confirmed yet.
+- Combined unit suite passes 148 of 149 tests; the remaining failure is the existing CrossCompatibilityTest. Generated-file transfers pass CMF to Pixel without PIN and Pixel to CMF with PIN; decline and cancellation from either side pass.
+- Video editor confirmed by the owner on the CMF Phone 1: joining clips of different shapes, timeline swiping and trimming, emoji and transparent PNG stickers, manual blur regions, and face tracking on 1080p video. Not confirmed yet: animated GIF stickers, sticker handles, face stickers, head tilt, the faster scan, re-scan skipping and 4K scans.
 - Recording pause/resume was confirmed by the owner. File-sharing engine checks, corrections and remaining manual/device limits are recorded in `tasks/pr2-pr3-validation.md`.
 
 ## 1.1.1-optimized-20261004 - 2026-10-04

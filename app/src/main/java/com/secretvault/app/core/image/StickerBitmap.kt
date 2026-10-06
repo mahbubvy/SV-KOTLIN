@@ -54,11 +54,12 @@ val StickerSource.key: String
         is StickerSource.Emoji -> "emoji:$text"
         is StickerSource.Photo -> "photo:${media.id}"
         is StickerSource.Pack -> "pack:$asset"
+        is StickerSource.Blur -> "blur"
     }
 
 private fun gifBytes(context: Context, cryptoEngine: VaultCryptoEngine, source: StickerSource): ByteArray? = runCatching {
     when (source) {
-        is StickerSource.Emoji -> null
+        is StickerSource.Emoji, is StickerSource.Blur -> null
         is StickerSource.Pack -> source.asset.takeIf { it.endsWith(".gif", ignoreCase = true) }?.let { context.assets.open(it).use { s -> s.readBytes() } }
         is StickerSource.Photo -> source.media.takeIf { (it.mimeType == "image/gif" || it.originalName.endsWith(".gif", true)) && it.sizeBytes <= MAX_GIF_BYTES }
             ?.let { readEncryptedBytes(cryptoEngine, File(it.encryptedPath)) }
@@ -74,6 +75,7 @@ private fun stickerBitmap(context: Context, cryptoEngine: VaultCryptoEngine, sou
     is StickerSource.Emoji -> emojiBitmap(source.text)
     is StickerSource.Photo -> runCatching { decodeEncryptedImage(cryptoEngine, File(source.media.encryptedPath), 1024) }.getOrNull()
     is StickerSource.Pack -> runCatching { context.assets.open(source.asset).use(BitmapFactory::decodeStream) }.getOrNull()
+    is StickerSource.Blur -> null
 }
 
 private fun emojiBitmap(text: String): Bitmap {
