@@ -35,6 +35,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.*
 import com.secretvault.app.core.image.key
+import com.secretvault.app.core.image.StickerImage
 import com.secretvault.app.core.processing.Sticker
 import com.secretvault.app.core.processing.VideoProject
 import com.secretvault.app.ui.theme.*
@@ -48,7 +49,7 @@ import kotlin.math.*
 @Composable
 internal fun Timeline(
     project: VideoProject, selected: Int, stickerId: String?, positionMs: Long, frames: Map<String, List<ImageBitmap>>,
-    stickerImages: Map<String, ImageBitmap?>, enabled: Boolean, onAdd: () -> Unit, onMute: (Int) -> Unit,
+    stickerImages: Map<String, StickerImage?>, enabled: Boolean, onAdd: () -> Unit, onMute: (Int) -> Unit,
     onSelect: (Int) -> Unit, onSelectSticker: (String?) -> Unit, onTouch: (Boolean) -> Unit, onScrub: (Long) -> Unit,
     onTrim: (start: Boolean, startMs: Long, endMs: Long) -> Unit,
     onStickerTime: (startMs: Long, endMs: Long, atEnd: Boolean) -> Unit
@@ -255,7 +256,7 @@ internal fun Timeline(
                             if (r < 0f || l > size.width) return@forEach
                             drawRoundRect(VaultSurfaceVariant, Offset(l, top), Size(r - l, height), CornerRadius(4.dp.toPx()))
                             drawRoundRect(TextSecondary, Offset(l, top), Size(r - l, height), CornerRadius(4.dp.toPx()), style = Stroke(1.dp.toPx()))
-                            stickerImages[s.source.key]?.let { img ->
+                    stickerImages[s.source.key]?.poster?.asImageBitmap()?.let { img ->
                                 // A small copy of the sticker at the visible start of its bar.
                                 val h = height - 4.dp.toPx()
                                 val w = h * img.width / img.height

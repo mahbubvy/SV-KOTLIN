@@ -61,6 +61,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import coil.compose.AsyncImage
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -83,7 +84,7 @@ import com.secretvault.app.core.model.MediaType
 import com.secretvault.app.core.player.DecryptingMediaDataSource
 import com.secretvault.app.core.player.EncryptedMediaDataSource
 import com.secretvault.app.core.image.key
-import com.secretvault.app.core.image.stickerBitmap
+import com.secretvault.app.core.image.StickerImage
 import com.secretvault.app.core.processing.Adjustment
 import com.secretvault.app.core.processing.Adjustments
 import com.secretvault.app.core.processing.Framing
@@ -195,11 +196,12 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
         }
     }
 
-    // Sticker images, once per emoji or photo; null when a photo can't be decoded.
-    val stickerImages = remember { mutableStateMapOf<String, ImageBitmap?>() }
+    // Sticker pictures, once per emoji, photo or pack sticker; null when a photo can't be decoded.
+    // ponytail: two stickers of the same GIF share one picture, so they animate in step in the preview (not the export).
+    val stickerImages = remember { mutableStateMapOf<String, StickerImage?>() }
     LaunchedEffect(project.stickers.mapTo(HashSet()) { it.source.key }) {
         latestProject.stickers.map { it.source }.distinctBy { it.key }.filter { it.key !in stickerImages }.forEach { source ->
-            stickerImages[source.key] = withContext(Dispatchers.IO) { stickerBitmap(app.cryptoEngine, source) }?.asImageBitmap()
+            stickerImages[source.key] = withContext(Dispatchers.IO) { StickerImage.load(app, app.cryptoEngine, source) }
         }
     }
 
@@ -368,10 +370,19 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     val p = s.placementAt(positionMs)
                     val w = frameW * p.widthFraction
                     val h = w * img.height / img.width
-                    Image(img, null, Modifier.offset(frameW * p.centerX - w / 2, frameH * p.centerY - h / 2).size(w, h)
-                        .graphicsLayer { rotationZ = p.angle }
-                        .then(if (s.id == stickerId) Modifier.border(1.5.dp, Color.White) else Modifier))
+                    Image(img.frameAt(positionMs - s.startMs).asImageBitmap(), null, Modifier.offset(frameW * p.centerX - w / 2, frameH * p.centerY - h / 2).size(w, h)
+                        .graphicsLayer { rotationZ = p.angle })
                 }
+                val img = sticker?.let { stickerImages[it.source.key] }
+                if (sticker != null && img != null && !saving) StickerHandles(sticker.placementAt(positionMs), img.height.toFloat() / img.width,
+                    canDuplicate = project.stickers.size < VideoProject.MAX_STICKERS,
+                    onStart = { player.pause() },
+                    onChange = { change -> edit(history.current.updateSticker(sticker.id) { it.placeAt(positionMs, change) }) },
+                    onDuplicate = {
+                        edit(history.current.duplicateSticker(sticker.id))
+                        stickerId = history.current.stickers.last().id
+                    },
+                    onDelete = { edit(history.current.deleteSticker(sticker.id)); stickerId = null })
             }
             if (project.clips.isEmpty()) Button(onClick = { showPicker = true },
                 colors = ButtonDefaults.buttonColors(containerColor = VaultAccent, contentColor = VaultDarkBg)) {
@@ -654,11 +665,12 @@ private val EMOJI = listOf(
     "💯", "✅", "❌", "⚠️", "📍", "🎵", "📸", "🎬", "🌞", "🌙", "🌈", "⚡", "❄️", "🌸", "🐶", "🐱"
 )
 
-/** Emoji or a vault photo for a new sticker; photo PNGs keep their transparency. */
+/** Emoji, a bundled sticker or a vault photo for a new sticker; PNGs and WebPs keep their transparency. */
 @Composable
 private fun StickerPicker(app: SecretVaultApp, onDismiss: () -> Unit, onPick: (StickerSource) -> Unit) {
     var tab by remember { mutableIntStateOf(0) }
     val media by remember { app.mediaRepository.getMedia() }.collectAsState(initial = null)
+    val pack = remember { app.assets.list("stickers").orEmpty().sorted().map { "stickers/$it" } }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(Modifier.fillMaxSize().background(VaultDarkBg).systemBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -667,7 +679,8 @@ private fun StickerPicker(app: SecretVaultApp, onDismiss: () -> Unit, onPick: (S
             }
             TabRow(selectedTabIndex = tab, containerColor = VaultDarkBg, contentColor = VaultAccent) {
                 Tab(tab == 0, onClick = { tab = 0 }, text = { Text("Emoji") })
-                Tab(tab == 1, onClick = { tab = 1 }, text = { Text("Vault photo") })
+                Tab(tab == 1, onClick = { tab = 1 }, text = { Text("Stickers") })
+                Tab(tab == 2, onClick = { tab = 2 }, text = { Text("Vault photo") })
             }
             val photos = media?.filter { it.mediaType == MediaType.PHOTO }
             when {
@@ -675,6 +688,14 @@ private fun StickerPicker(app: SecretVaultApp, onDismiss: () -> Unit, onPick: (S
                     items(EMOJI) { emoji ->
                         Box(Modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).clickable { onPick(StickerSource.Emoji(emoji)) },
                             contentAlignment = Alignment.Center) { Text(emoji, fontSize = 32.sp) }
+                    }
+                }
+                // Every image in assets/stickers, in file-name order.
+                tab == 1 -> LazyVerticalGrid(GridCells.Adaptive(96.dp), contentPadding = PaddingValues(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(pack) { asset ->
+                        AsyncImage("file:///android_asset/$asset", null,
+                            Modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).clickable { onPick(StickerSource.Pack(asset)) }.padding(4.dp))
                     }
                 }
                 photos == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = VaultAccent) }

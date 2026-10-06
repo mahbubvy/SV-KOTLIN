@@ -105,6 +105,13 @@ class VideoProjectTest {
         val full = (1..VideoProject.MAX_STICKERS).fold(project) { p, _ -> p.addSticker(smile, 0) }
         assertSame(full, full.addSticker(smile, 0))
         assertTrue(full.deleteSticker(full.stickers[0].id).stickers.size == VideoProject.MAX_STICKERS - 1)
+
+        // A duplicate is a new sticker just down and right of the original, with the same times.
+        val twice = withSticker.duplicateSticker(s.id).stickers
+        assertEquals(2, twice.map { it.id }.distinct().size)
+        assertEquals(s.startMs to s.endMs, twice[1].startMs to twice[1].endMs)
+        assertEquals(0.55f, twice[1].placement.centerX, 0.0001f)
+        assertSame(full, full.duplicateSticker(full.stickers[0].id))
     }
 
     @Test fun keyframesGlideBetweenPlacements() {
