@@ -60,7 +60,7 @@ SecretVault (shown as **Weather Today**) is an offline Android photo and video v
 - Per-clip tools: trim by dragging the clip's edges, split at the playhead, mute, move left or right, delete, and turn, zoom and move the clip with two fingers on the video (snaps to quarter turns), or with the Size panel's zoom and rotate sliders and Fit, Fill and Rotate 90°.
 - Per-clip colour adjustments: brightness, exposure, contrast, saturation, vibrance, shadows, highlights, warmth, tint and fade, previewed live and copyable to every clip.
 - Output takes the first clip's shape; other clips fit inside it with black bars, and the preview shows the same frame.
-- Up to 10 emoji or vault-photo stickers, each with its own position, size and time range, moved and resized on the preview and timed on the timeline. Stickers turn with a two-finger twist, and keyframes make them glide between positions, sizes and angles over time.
+- Up to 10 stickers: emoji, a bundled pack (including animated GIFs), or vault photos and GIFs. Each has its own position, size and time range, moved and resized on the preview and timed on the timeline. A selected sticker shows resize handles, a rotate button, and Duplicate and Delete. GIFs loop in the preview and the saved video. Keyframes make stickers glide between positions, sizes and angles over time.
 - Editing reads the encrypted files directly; the only plaintext is the export's temporary file in app cache, deleted when the save finishes. Sticker photos are decoded in memory only.
 - One editing session, no saved drafts; leaving with changes asks before discarding. Locking the vault mid-edit keeps the edit in memory and unlocking returns to it, paused.
 

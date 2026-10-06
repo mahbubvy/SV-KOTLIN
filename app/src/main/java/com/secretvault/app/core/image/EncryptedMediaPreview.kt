@@ -61,6 +61,10 @@ fun writeEncryptedPreview(cryptoEngine: VaultCryptoEngine, encFile: File, isVide
     }
 }
 
+/** The whole decrypted file, in memory only; for small files such as a GIF sticker. */
+fun readEncryptedBytes(cryptoEngine: VaultCryptoEngine, encFile: File): ByteArray =
+    DecryptingMediaDataSource(cryptoEngine, encFile).use { it.plainStream().readBytes() }
+
 /** Decodes an encrypted vault photo in memory, upright and no larger than [maxSide] on its long side. */
 fun decodeEncryptedImage(cryptoEngine: VaultCryptoEngine, encFile: File, maxSide: Int): Bitmap? =
     DecryptingMediaDataSource(cryptoEngine, encFile).use { source ->

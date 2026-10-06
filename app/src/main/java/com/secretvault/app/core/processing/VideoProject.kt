@@ -105,6 +105,15 @@ data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<
 
     fun deleteSticker(id: String): VideoProject = copy(stickers = stickers.filter { it.id != id })
 
+    /** Adds a copy of sticker [id] a little down and right of it, keys and all; ignored at [MAX_STICKERS]. */
+    fun duplicateSticker(id: String): VideoProject {
+        val s = stickers.firstOrNull { it.id == id } ?: return this
+        if (stickers.size >= MAX_STICKERS) return this
+        fun nudge(p: Placement) = p.copy(centerX = p.centerX + 0.05f, centerY = p.centerY + 0.05f).fitted()
+        return copy(stickers = stickers + s.copy(placement = nudge(s.placement), keys = s.keys.map { it.copy(placement = nudge(it.placement)) },
+            id = UUID.randomUUID().toString()))
+    }
+
     // Stickers follow the video's length; with no video left there is nothing to put them on.
     private fun withClips(newClips: List<Clip>): VideoProject {
         val next = copy(clips = newClips)
@@ -145,6 +154,8 @@ fun snapAngle(degrees: Float): Float {
 sealed interface StickerSource {
     data class Emoji(val text: String) : StickerSource
     data class Photo(val media: MediaItem) : StickerSource
+    /** A bundled sticker, by its path in the app's assets. */
+    data class Pack(val asset: String) : StickerSource
 }
 
 /**

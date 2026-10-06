@@ -27,8 +27,7 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import com.secretvault.app.core.crypto.VaultCryptoEngine
-import com.secretvault.app.core.image.key
-import com.secretvault.app.core.image.stickerBitmap
+import com.secretvault.app.core.image.StickerImage
 import com.secretvault.app.core.model.MediaItem
 import com.secretvault.app.core.player.DecryptingMediaDataSource
 import com.secretvault.app.core.player.EncryptedMediaDataSource
@@ -241,12 +240,10 @@ class VideoEditManager(
             })
             .build()
 
-        // Stickers go on the joined video, after every clip has been fitted into the frame.
+        // Stickers go on the joined video, after every clip has been fitted into the frame. Each loads its own
+        // picture, since a GIF's frame depends on that sticker's start.
         val overlays = if (frame == null) emptyList() else withContext(Dispatchers.IO) {
-            val bitmaps = stickers.map { it.source.key }.distinct().associateWith { key ->
-                stickerBitmap(cryptoEngine, stickers.first { it.source.key == key }.source)
-            }
-            stickers.mapNotNull { sticker -> bitmaps[sticker.source.key]?.let { StickerOverlay(it, sticker, frame.first) } }
+            stickers.mapNotNull { sticker -> StickerImage.load(context, cryptoEngine, sticker.source)?.let { StickerOverlay(it, sticker, frame.first) } }
         }
         val composition = Composition.Builder(EditedMediaItemSequence(items))
             .apply { if (fitToFirst) experimentalSetForceAudioTrack(true) }
@@ -297,20 +294,25 @@ class VideoEditManager(
  * frame this overlay sees, so they're the output timeline whatever offset the frames' timestamps start at.
  */
 @OptIn(UnstableApi::class)
-private class StickerOverlay(private val bitmap: Bitmap, private val sticker: Sticker, private val frameWidth: Int) : BitmapOverlay() {
+private class StickerOverlay(private val image: StickerImage, private val sticker: Sticker, private val frameWidth: Int) : BitmapOverlay() {
     private var firstUs = C.TIME_UNSET
     private val hidden = OverlaySettings.Builder().setAlphaScale(0f).build()
     private var last: Pair<Placement, OverlaySettings>? = null
 
-    override fun getBitmap(presentationTimeUs: Long): Bitmap = bitmap
+    /** Milliseconds into the joined video, counted from the first frame the overlay sees. */
+    private fun outputMs(presentationTimeUs: Long): Long {
+        if (firstUs == C.TIME_UNSET) firstUs = presentationTimeUs
+        return (presentationTimeUs - firstUs) / 1_000
+    }
+
+    override fun getBitmap(presentationTimeUs: Long): Bitmap = image.frameAt(outputMs(presentationTimeUs) - sticker.startMs)
 
     override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
-        if (firstUs == C.TIME_UNSET) firstUs = presentationTimeUs
-        val ms = (presentationTimeUs - firstUs) / 1_000
+        val ms = outputMs(presentationTimeUs)
         if (ms < sticker.startMs || ms >= sticker.endMs) return hidden
         val placement = sticker.placementAt(ms)
         last?.let { (p, settings) -> if (p == placement) return settings }
-        val scale = placement.widthFraction * frameWidth / bitmap.width
+        val scale = placement.widthFraction * frameWidth / image.width
         return OverlaySettings.Builder()
             // The overlay starts at its own pixel size; scale it to its share of the frame's width.
             .setScale(scale, scale)
