@@ -19,6 +19,10 @@ import kotlin.math.roundToInt
 
 private const val TABLE = 33
 
+// Blur/mosaic must see earlier paint strokes, so splitting them into separate GPU layers changes the result.
+internal fun gpuPhotoPreview(edit: PhotoEdit, shaderAvailable: Boolean): Boolean =
+    shaderAvailable && edit.strokes.none { it.blur }
+
 /** The photo's size once turned: [srcW]×[srcH], sides swapped by an odd number of quarter turns. */
 fun frameSize(srcW: Int, srcH: Int, edit: PhotoEdit): Pair<Int, Int> = if (edit.turnsSideways) srcH to srcW else srcW to srcH
 

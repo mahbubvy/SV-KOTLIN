@@ -72,6 +72,7 @@ import com.secretvault.app.SecretVaultApp
 import com.secretvault.app.core.image.decodeEncryptedImage
 import com.secretvault.app.core.image.drawPaintStrokes
 import com.secretvault.app.core.image.frameSize
+import com.secretvault.app.core.image.gpuPhotoPreview
 import com.secretvault.app.core.image.photoMatrix
 import com.secretvault.app.core.image.renderPhoto
 import com.secretvault.app.core.model.MediaItem
@@ -139,22 +140,22 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
         if (value == null) failed = true
     }
     // On Android 13+ colour, filters and grain are a GPU shader over the preview and painted strokes are drawn on top,
-    // so those change instantly; the CPU only redraws the shape (turn, crop, straighten) and blur strokes.
+    // so those change instantly. Blur/mosaic uses the complete CPU renderer to preserve stroke order.
     val photoLook = remember { if (Build.VERSION.SDK_INT >= 33) PhotoLook() else null }
-    val gpu = photoLook != null
+    val gpu = gpuPhotoPreview(edit, photoLook != null)
 
     // The edited preview, redrawn whenever what it shows changes; a newer edit stops an older render part-way.
     var preview by remember { mutableStateOf<Rendered?>(null) }
-    LaunchedEffect(source) {
+    LaunchedEffect(source, gpu) {
         val src = source ?: return@LaunchedEffect
         snapshotFlow {
             val shape = if (gpu) edit.copy(filter = null, filterStrength = 1f, adjustments = Adjustments(), grain = 0,
-                strokes = edit.strokes.filter { it.blur }) else edit
+                strokes = emptyList()) else edit
             Triple(shape, tab == PhotoTab.CROP, moving)
         }.collectLatest { (e, wholeFrame, quick) ->
             withContext(Dispatchers.Default) {
                 renderPhoto(src, e, cropped = !wholeFrame, maxSide = if (quick) QUICK_SIDE else PREVIEW_SIDE, colour = !gpu) { isActive }
-            }?.let { preview = Rendered(it, e, wholeFrame) }
+            }?.let { preview = Rendered(it, e, wholeFrame, gpu) }
         }
     }
 
@@ -237,8 +238,8 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
                     val savedLong = max(max(item.width, item.height).takeIf { it > 0 } ?: max(src.width, src.height), 1).coerceAtMost(SAVE_SIDE)
                     val grainCell = 2.5f * toScreen.mapRadius(1f) * max(src.width, src.height) / savedLong
                     val colourKey = Triple(edit.filter to edit.filterStrength, edit.adjustments, edit.grain)
-                    val look by produceState<android.graphics.RenderEffect?>(null, colourKey, (grainCell * 10).roundToInt()) {
-                        value = photoLook?.let { gpuLook ->
+                    val look by produceState<android.graphics.RenderEffect?>(null, colourKey, (grainCell * 10).roundToInt(), shown.gpu) {
+                        value = photoLook?.takeIf { shown.gpu }?.let { gpuLook ->
                             withContext(Dispatchers.Default) {
                                 gpuLook.effect(if (edit.changesColour) edit.colourTable(GPU_TABLE) else null, GPU_TABLE, edit.grain, grainCell)
                             }
@@ -253,10 +254,10 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
                         translationX = pan.x
                         translationY = pan.y
                     }) {
-                        Image(shown.bitmap.asImageBitmap(), null, Modifier.fillMaxSize().graphicsLayer { renderEffect = look?.asComposeRenderEffect() },
+                        Image(shown.bitmap.asImageBitmap(), null, Modifier.fillMaxSize().graphicsLayer { renderEffect = if (shown.gpu) look?.asComposeRenderEffect() else null },
                             contentScale = ContentScale.Fit)
                         // Painted strokes over the GPU preview, untouched by its colour (the CPU draws them otherwise).
-                        if (gpu && edit.strokes.any { !it.blur }) Canvas(Modifier.fillMaxSize()) {
+                        if (shown.gpu && edit.strokes.any { !it.blur }) Canvas(Modifier.fillMaxSize()) {
                             drawIntoCanvas { drawPaintStrokes(it.nativeCanvas, toScreen, src.width, src.height, edit.strokes) }
                         }
 
@@ -355,7 +356,7 @@ private fun PhotoAdjustPanel(edit: PhotoEdit, enabled: Boolean, onMoving: (Boole
 }
 
 /** A preview and the edit it shows; [wholeFrame] when drawn uncropped, for the crop tool. */
-private class Rendered(val bitmap: Bitmap, val edit: PhotoEdit, val wholeFrame: Boolean)
+private class Rendered(val bitmap: Bitmap, val edit: PhotoEdit, val wholeFrame: Boolean, val gpu: Boolean)
 
 /** Crop shapes: a name and width / height, null for free; Original is the photo's own shape (as turned). */
 private val CROP_SHAPES = listOf("Free" to null, "Original" to 0f, "1:1" to 1f, "4:5" to 4f / 5, "3:4" to 3f / 4, "16:9" to 16f / 9, "9:16" to 9f / 16)

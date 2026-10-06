@@ -96,4 +96,21 @@ class PhotoEditTest {
         assertEquals(CropRect.MIN, CropRect.FULL.dragCorner(true, true, 0f, 0f, null, 100, 100).width, 0.0001f)
         assertNear(CropRect(0.5f, 0.5f, 1f, 1f), CropRect(0.2f, 0.2f, 0.7f, 0.7f).moved(0.9f, 0.3f))
     }
+
+    @Test fun fixedRatioCropCanResizeAtAnEdgeAfterShrinking() {
+        val square = CropRect.FULL.dragCorner(true, true, 0f, 0f, 1f, 4000, 3000)
+        assertTrue(square.width >= CropRect.MIN - 0.0001f)
+        assertTrue(square.height >= CropRect.MIN - 0.0001f)
+        val atEdge = square.moved(1f, 1f)
+        val resized = atEdge.dragCorner(true, true, 1f, 1f, 1f, 4000, 3000)
+        assertEquals(1f, resized.width * 4000 / (resized.height * 3000), 0.001f)
+        assertNear(atEdge, resized)
+
+        // A panoramic photo may not have room for MIN on both axes at this shape.
+        val narrow = CropRect.centred(9f / 16, 12000, 1000).moved(1f, 0f)
+        val narrowResized = narrow.dragCorner(true, true, 1f, 1f, 9f / 16, 12000, 1000)
+        assertTrue(narrowResized.width > 0f && narrowResized.height > 0f)
+        assertEquals(9f / 16, narrowResized.width * 12000 / (narrowResized.height * 1000), 0.001f)
+        assertTrue(narrowResized.right <= 1f && narrowResized.bottom <= 1f)
+    }
 }

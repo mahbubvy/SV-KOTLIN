@@ -49,21 +49,22 @@ data class CropRect(val left: Float = 0f, val top: Float = 0f, val right: Float 
     /**
      * The crop with one corner ([right], [bottom] say which) dragged to [x], [y], the opposite corner staying put. With
      * a [ratio] (width / height in pixels of a [frameW]×[frameH] frame) it keeps that shape, as big as fits under the
-     * finger and inside the frame. Never smaller than [MIN].
+     * finger and inside the frame. Keeps [MIN] on both axes when the shape and available space allow it.
      */
     fun dragCorner(right: Boolean, bottom: Boolean, x: Float, y: Float, ratio: Float?, frameW: Int, frameH: Int): CropRect {
         val ax = if (right) left else this.right
         val ay = if (bottom) top else this.bottom
         val maxW = if (right) 1 - ax else ax
         val maxH = if (bottom) 1 - ay else ay
-        var w = abs(x - ax).coerceIn(MIN, maxW)
-        var h = abs(y - ay).coerceIn(MIN, maxH)
+        var w = abs(x - ax).coerceIn(min(MIN, maxW), maxW)
+        var h = abs(y - ay).coerceIn(min(MIN, maxH), maxH)
         if (ratio != null) {
             // Fractions of a frame that isn't square: w·frameW / (h·frameH) = ratio.
             val k = frameW / (ratio * frameH)
-            if (w * k <= h) h = w * k else w = h / k
-            if (h > maxH) { h = maxH; w = h / k }
-            if (w > maxW) { w = maxW; h = w * k }
+            val largest = min(maxW, maxH / k)
+            val smallest = min(largest, max(MIN, MIN / k))
+            w = min(w, h / k).coerceIn(smallest, largest)
+            h = w * k
         }
         return CropRect(if (right) ax else ax - w, if (bottom) ay else ay - h, if (right) ax + w else ax, if (bottom) ay + h else ay)
     }
@@ -127,9 +128,9 @@ data class PhotoEdit(
     val changesColour: Boolean get() = !adjustments.isNone || (filter != null && filterStrength > 0f)
 
     /** A quarter turn clockwise, with the crop and drawing kept on the same part of the photo. */
-    fun turned() = copy(quarterTurns = (quarterTurns + 1) % 4, crop = crop.turned())
-    fun flippedH() = copy(flipH = !flipH, crop = crop.flippedH())
-    fun flippedV() = copy(flipV = !flipV, crop = crop.flippedV())
+    fun turned() = copy(quarterTurns = (quarterTurns + 1) % 4, flipH = flipV, flipV = flipH, crop = crop.turned())
+    fun flippedH() = copy(flipH = !flipH, straighten = -straighten, crop = crop.flippedH())
+    fun flippedV() = copy(flipV = !flipV, straighten = -straighten, crop = crop.flippedV())
 
     /** The colour of [r], [g], [b] (0..1) after the filter and adjustments, as 0xFFRRGGBB. */
     fun colour(r: Float, g: Float, b: Float): Int {
