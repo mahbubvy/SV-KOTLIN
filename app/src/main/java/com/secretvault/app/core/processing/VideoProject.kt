@@ -329,6 +329,21 @@ data class Sticker(
         }
     }
 
+    /**
+     * This region shown as the image [source] (its height / width is [aspect]) instead: at every key, scaled up until
+     * it covers the region's box without being squashed, so a face stays hidden.
+     */
+    fun asImage(source: StickerSource, aspect: Float): Sticker {
+        fun cover(p: Placement) = p.copy(widthFraction = maxOf(p.widthFraction, p.widthFraction * p.stretch / aspect), stretch = 1f).fitted()
+        return copy(source = source, placement = cover(placement), keys = keys.map { it.copy(placement = cover(it.placement)) })
+    }
+
+    /** This image region (height / width [aspect]) as an oval blur over the same box, at every key. */
+    fun asBlur(aspect: Float): Sticker {
+        fun box(p: Placement) = p.copy(stretch = p.stretch * aspect).fitted()
+        return copy(source = StickerSource.Blur(), placement = box(placement), keys = keys.map { it.copy(placement = box(it.placement)) })
+    }
+
     /** The same sticker [byMs] later; its keys, relative to the start, move with it. */
     fun shifted(byMs: Long): Sticker = copy(startMs = startMs + byMs, endMs = endMs + byMs)
 

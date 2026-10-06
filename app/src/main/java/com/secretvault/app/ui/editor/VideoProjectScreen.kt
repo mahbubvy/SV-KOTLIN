@@ -157,6 +157,9 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     var scanProgress by remember { mutableStateOf<Float?>(null) }
     var scanJob by remember { mutableStateOf<Job?>(null) }
     var found by remember { mutableStateOf<Pair<String, List<FoundFace>>?>(null) }
+    // The sticker picker can also be choosing a sticker for a region (its id) or for the faces a scan found.
+    var pickForRegion by remember { mutableStateOf<String?>(null) }
+    var pickForFaces by remember { mutableStateOf<Pair<String, List<FoundFace>>?>(null) }
     val latestProject by rememberUpdatedState(project)
     val clip = project.clips.getOrNull(selected)
     // The selected sticker or blur region (stickerId covers both), in output time; blurLook is set for a blur region.
@@ -222,8 +225,8 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     // Sticker pictures, once per emoji, photo or pack sticker; null when a photo can't be decoded.
     // ponytail: two stickers of the same GIF share one picture, so they animate in step in the preview (not the export).
     val stickerImages = remember { mutableStateMapOf<String, StickerImage?>() }
-    LaunchedEffect(project.stickers.mapTo(HashSet()) { it.source.key }) {
-        latestProject.stickers.map { it.source }.distinctBy { it.key }.filter { it.key !in stickerImages }.forEach { source ->
+    LaunchedEffect(project.layers.mapTo(HashSet()) { it.source.key }) {
+        latestProject.layers.map { it.source }.filter { it !is StickerSource.Blur }.distinctBy { it.key }.filter { it.key !in stickerImages }.forEach { source ->
             stickerImages[source.key] = withContext(Dispatchers.IO) { StickerImage.load(app, app.cryptoEngine, source) }
         }
     }
@@ -340,7 +343,8 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                         } ?: project.shownAt(positionMs, clipSizes, size.width.toFloat(), size.height.toFloat())?.let { on ->
                             val point = toPicture(tap, size.width.toFloat(), size.height.toFloat(), on)
                             project.layers.lastOrNull { b ->
-                                (positionMs in b.startMs until b.endMs || b.id == stickerId) && project.regionClipOf(b.id) == on.index && b.covers(point, on, positionMs)
+                                (positionMs in b.startMs until b.endMs || b.id == stickerId) && project.regionClipOf(b.id) == on.index &&
+                                    b.covers(point, on, positionMs, stickerImages[b.source.key]?.let { it.height.toFloat() / it.width })
                             }
                         }
                         when {
@@ -403,6 +407,23 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     frameLike()
                     renderEffect = effect?.asComposeRenderEffect()
                 })
+                // Stickers that follow a face sit on their clip's picture, so they turn and zoom with the clip.
+                if (shown != null) Box(Modifier.fillMaxSize().graphicsLayer { frameLike() }) {
+                    val density = LocalDensity.current
+                    val pic = shown.picture
+                    shown.clip.regions.forEach { r ->
+                        val img = stickerImages[r.source.key] ?: return@forEach
+                        if (shown.sourceMs !in r.startMs until r.endMs && r.id != stickerId) return@forEach
+                        val p = r.placementAt(shown.sourceMs)
+                        val w = p.widthFraction * pic.width
+                        val h = w * img.height / img.width * p.stretch
+                        with(density) {
+                            Image(img.frameAt(shown.sourceMs - r.startMs).asImageBitmap(), null,
+                                Modifier.offset((pic.left + p.centerX * pic.width - w / 2).toDp(), (pic.top + p.centerY * pic.height - h / 2).toDp())
+                                    .size(w.toDp(), h.toDp()).graphicsLayer { rotationZ = p.angle })
+                        }
+                    }
+                }
                 project.stickers.forEach { s ->
                     val img = stickerImages[s.source.key] ?: return@forEach
                     if (positionMs !in s.startMs until s.endMs && s.id != stickerId) return@forEach
@@ -425,10 +446,13 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                         onDelete = { project = project.deleteLayer(selection.id); stickerId = null },
                         free = free, inside = inside)
                 val img = sticker?.let { stickerImages[it.source.key] }
-                if (sticker != null && img != null && !saving) handles(sticker, img.height.toFloat() / img.width, free = false)
-                // A blur region's box sits on its clip's picture, so it turns and zooms with the clip.
-                if (sticker != null && blurLook != null && shown != null && project.regionClipOf(sticker.id) == shown.index && !saving) {
-                    Box(Modifier.fillMaxSize().graphicsLayer { frameLike() }) { handles(sticker, 1f, free = true, inside = shown.picture) }
+                val regionClip = sticker?.let { project.regionClipOf(it.id) } ?: -1
+                if (sticker != null && regionClip < 0 && img != null && !saving) handles(sticker, img.height.toFloat() / img.width, free = false)
+                // A region's box sits on its clip's picture too. A blur region's shape is free; a sticker keeps its own.
+                if (sticker != null && regionClip >= 0 && shown?.index == regionClip && (blurLook != null || img != null) && !saving) {
+                    Box(Modifier.fillMaxSize().graphicsLayer { frameLike() }) {
+                        handles(sticker, img?.let { it.height.toFloat() / it.width } ?: 1f, free = blurLook != null, inside = shown.picture)
+                    }
                 }
             }
             if (project.clips.isEmpty()) Button(onClick = { showPicker = true },
@@ -480,9 +504,12 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     setLook(blurLook.copy(strength = it))
                 }
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (blurLook == null) Tool(Icons.Default.EmojiEmotions, "Sticker", !saving && project.stickers.size < VideoProject.MAX_STICKERS) {
+                    // A region on a clip (blur or face sticker) swaps between the two; a sticker over the video adds another.
+                    val isRegion = project.regionClipOf(sticker.id) >= 0
+                    if (!isRegion) Tool(Icons.Default.EmojiEmotions, "Sticker", !saving && project.stickers.size < VideoProject.MAX_STICKERS) {
                         showStickerPicker = true
-                    } else {
+                    }
+                    if (blurLook != null) {
                         val pixelate = blurLook.style == BlurStyle.PIXELATE
                         Tool(if (pixelate) Icons.Default.GridOn else Icons.Default.BlurOn, if (pixelate) "Pixelate" else "Blur", !saving) {
                             setLook(blurLook.copy(style = if (pixelate) BlurStyle.BLUR else BlurStyle.PIXELATE))
@@ -490,6 +517,11 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                         Tool(if (blurLook.oval) Icons.Outlined.Circle else Icons.Outlined.CropSquare, if (blurLook.oval) "Oval" else "Rectangle", !saving) {
                             setLook(blurLook.copy(oval = !blurLook.oval))
                         }
+                    }
+                    if (isRegion) Tool(Icons.Default.EmojiEmotions, if (blurLook != null) "Sticker" else "Change", !saving) { pickForRegion = sticker.id }
+                    if (isRegion && blurLook == null) Tool(Icons.Default.BlurOn, "Blur", !saving) {
+                        val image = stickerImages[sticker.source.key] ?: return@Tool
+                        project = project.updateLayer(sticker.id) { it.asBlur(image.height.toFloat() / image.width) }
                     }
                     Tool(Icons.Default.Diamond, if (onKey) "Remove key" else "Add key",
                         !saving && positionMs in sticker.startMs..sticker.endMs) {
@@ -579,11 +611,33 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
         }
     }
 
-    if (showStickerPicker) StickerPicker(app, onDismiss = { showStickerPicker = false }) { source ->
-        showStickerPicker = false
-        val before = project.stickers.size
-        project = project.addSticker(source, positionMs)
-        if (project.stickers.size > before) { player.pause(); stickerId = project.stickers.last().id }
+    // Faces from a scan, or a sticker in place of a region, go on the clip; the rest that don't fit are left out.
+    fun addFaces(clipId: String, regions: List<Sticker>) {
+        val index = project.clips.indexOfFirst { it.id == clipId }
+        val room = VideoProject.MAX_REGIONS - (project.clips.getOrNull(index)?.regions?.size ?: return)
+        project = project.addRegions(index, regions)
+        if (regions.size > room) Toast.makeText(context, "Only ${VideoProject.MAX_REGIONS} regions fit on one clip", Toast.LENGTH_SHORT).show()
+    }
+
+    if (showStickerPicker || pickForRegion != null || pickForFaces != null) StickerPicker(app, onDismiss = {
+        showStickerPicker = false; pickForRegion = null; pickForFaces = null
+    }) { source ->
+        val region = pickForRegion
+        val faces = pickForFaces
+        showStickerPicker = false; pickForRegion = null; pickForFaces = null
+        if (region == null && faces == null) {
+            val before = project.stickers.size
+            project = project.addSticker(source, positionMs)
+            if (project.stickers.size > before) { player.pause(); stickerId = project.stickers.last().id }
+        } else scope.launch {
+            // Its shape decides how big it must be to cover a face.
+            val image = stickerImages[source.key]
+                ?: withContext(Dispatchers.IO) { StickerImage.load(app, app.cryptoEngine, source) }?.also { stickerImages[source.key] = it }
+            if (image == null) { Toast.makeText(context, "Couldn't open that picture", Toast.LENGTH_SHORT).show(); return@launch }
+            val aspect = image.height.toFloat() / image.width
+            if (region != null) project = project.updateLayer(region) { it.asImage(source, aspect) }
+            else faces?.let { (clipId, chosen) -> addFaces(clipId, chosen.map { it.blur.asImage(source, aspect) }) }
+        }
     }
 
     scanProgress?.let { progress ->
@@ -600,13 +654,9 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     }
 
     found?.let { (clipId, faces) ->
-        FoundFacesDialog(faces, onDismiss = { found = null }) { chosen ->
-            found = null
-            val index = project.clips.indexOfFirst { it.id == clipId }
-            val room = VideoProject.MAX_REGIONS - (project.clips.getOrNull(index)?.regions?.size ?: return@FoundFacesDialog)
-            project = project.addRegions(index, chosen.map { it.blur })
-            if (chosen.size > room) Toast.makeText(context, "Only ${VideoProject.MAX_REGIONS} blur regions fit on one clip", Toast.LENGTH_SHORT).show()
-        }
+        FoundFacesDialog(faces, onDismiss = { found = null },
+            onSticker = { chosen -> found = null; pickForFaces = clipId to chosen },
+            onBlur = { chosen -> found = null; addFaces(clipId, chosen.map { it.blur }) })
     }
 
     if (confirmDiscard) AlertDialog(onDismissRequest = { confirmDiscard = false }, containerColor = VaultSurface,
@@ -1055,19 +1105,23 @@ private fun toPicture(point: Offset, frameW: Float, frameH: Float, shown: Shown)
     return Offset((v.x - shown.picture.left) / shown.picture.width, (v.y - shown.picture.top) / shown.picture.height)
 }
 
-/** Whether this blur region (in output time) covers [point], in fractions of [shown]'s picture, at [outputMs]. */
-private fun Sticker.covers(point: Offset, shown: Shown, outputMs: Long): Boolean {
-    val look = source as? StickerSource.Blur ?: return false
+/**
+ * Whether this region (in output time) covers [point], in fractions of [shown]'s picture, at [outputMs]. [aspect] is a
+ * sticker's height / width; a blur region doesn't need it.
+ */
+private fun Sticker.covers(point: Offset, shown: Shown, outputMs: Long, aspect: Float?): Boolean {
+    val look = source as? StickerSource.Blur
+    val ratio = if (look != null) 1f else aspect ?: return false
     val p = placementAt(outputMs)
     val d = Offset((point.x - p.centerX) * shown.picture.width, (point.y - p.centerY) * shown.picture.height).turned(-p.angle)
     val halfW = p.widthFraction * shown.picture.width / 2
-    val halfH = halfW * p.stretch
-    return if (look.oval) (d.x / halfW).let { it * it } + (d.y / halfH).let { it * it } <= 1f else abs(d.x) <= halfW && abs(d.y) <= halfH
+    val halfH = halfW * ratio * p.stretch
+    return if (look?.oval == true) (d.x / halfW).let { it * it } + (d.y / halfH).let { it * it } <= 1f else abs(d.x) <= halfW && abs(d.y) <= halfH
 }
 
-/** The faces a scan found, all ticked: untick any that should stay visible, then blur the rest. */
+/** The faces a scan found, all ticked: untick any that should stay visible, then blur the rest or cover them with a sticker. */
 @Composable
-private fun FoundFacesDialog(faces: List<FoundFace>, onDismiss: () -> Unit, onBlur: (List<FoundFace>) -> Unit) {
+private fun FoundFacesDialog(faces: List<FoundFace>, onDismiss: () -> Unit, onSticker: (List<FoundFace>) -> Unit, onBlur: (List<FoundFace>) -> Unit) {
     var keep by remember(faces) { mutableStateOf(emptySet<FoundFace>()) }
     val chosen = faces.filter { it !in keep }
     AlertDialog(onDismissRequest = onDismiss, containerColor = VaultSurface,
@@ -1090,8 +1144,14 @@ private fun FoundFacesDialog(faces: List<FoundFace>, onDismiss: () -> Unit, onBl
             }
         },
         confirmButton = {
-            TextButton(onClick = { onBlur(chosen) }, enabled = chosen.isNotEmpty()) {
-                Text(if (chosen.size == 1) "Blur 1 face" else "Blur ${chosen.size} faces", color = if (chosen.isNotEmpty()) VaultAccent else TextMuted)
+            Row {
+                // Cover them with a sticker instead: the picker comes next.
+                TextButton(onClick = { onSticker(chosen) }, enabled = chosen.isNotEmpty()) {
+                    Text("Sticker", color = if (chosen.isNotEmpty()) VaultAccent else TextMuted)
+                }
+                TextButton(onClick = { onBlur(chosen) }, enabled = chosen.isNotEmpty()) {
+                    Text(if (chosen.size == 1) "Blur 1 face" else "Blur ${chosen.size} faces", color = if (chosen.isNotEmpty()) VaultAccent else TextMuted)
+                }
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = TextSecondary) } })

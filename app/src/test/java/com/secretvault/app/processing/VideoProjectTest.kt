@@ -193,4 +193,19 @@ class VideoProjectTest {
         // Steady motion stays steady.
         assertEquals(0.35f, sticker(at(0, 0.2f), at(1_000, 0.5f), at(2_000, 0.8f)).placementAt(500).centerX, 0.0001f)
     }
+
+    @Test fun aFaceStickerCoversTheRegionAndKeepsItsShape() {
+        // A tall face region: 0.2 of the width, 1.5 times as tall as wide; a square sticker must be 0.3 wide to cover it.
+        val face = Sticker(StickerSource.Blur(), 0, 2_000, Placement(widthFraction = 0.2f, stretch = 1.5f))
+            .placeAt(1_000) { it.copy(centerX = 0.7f) }
+        val smile = face.asImage(StickerSource.Emoji("😀"), aspect = 1f)
+        assertEquals(0.3f, smile.placementAt(0).widthFraction, 0.0001f)
+        assertEquals(1f, smile.placementAt(0).stretch)
+        assertEquals(0.7f, smile.placementAt(1_000).centerX, 0.0001f) // keeps the face's path
+        assertEquals(0, blurUniforms(listOf(smile), 500, 0f, 0f, 100f, 100f).count) // drawn as a sticker, not blurred
+        // And back: an oval over the sticker's box.
+        val back = smile.asBlur(aspect = 1f)
+        assertEquals(StickerSource.Blur(), back.source)
+        assertEquals(0.3f to 1f, back.placementAt(0).let { it.widthFraction to it.stretch })
+    }
 }
