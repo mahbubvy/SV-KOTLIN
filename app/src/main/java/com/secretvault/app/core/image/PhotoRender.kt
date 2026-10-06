@@ -44,9 +44,10 @@ fun photoMatrix(srcW: Int, srcH: Int, edit: PhotoEdit, cropped: Boolean, scale: 
 /**
  * [source] with [edit] applied, no bigger than [maxSide] on its long side. The same steps make the preview (from a
  * smaller copy) and the saved photo (full size), so they match. [cropped] false shows the whole straightened frame,
- * for the crop tool. [keepGoing] is asked every row, so a render that's no longer wanted can stop early (returns null).
+ * for the crop tool. Without [colour], the filter, adjustments, grain and painted strokes are left out, for a preview
+ * that adds them on the GPU. [keepGoing] is asked every row, so a render no longer wanted can stop early (returns null).
  */
-fun renderPhoto(source: Bitmap, edit: PhotoEdit, cropped: Boolean = true, maxSide: Int = Int.MAX_VALUE,
+fun renderPhoto(source: Bitmap, edit: PhotoEdit, cropped: Boolean = true, maxSide: Int = Int.MAX_VALUE, colour: Boolean = true,
                 keepGoing: () -> Boolean = { true }): Bitmap? {
     val (w, h) = frameSize(source.width, source.height, edit)
     val fullW = if (cropped) edit.crop.width * w else w.toFloat()
@@ -57,8 +58,8 @@ fun renderPhoto(source: Bitmap, edit: PhotoEdit, cropped: Boolean = true, maxSid
     canvas.drawColor(Color.BLACK)
     val matrix = photoMatrix(source.width, source.height, edit, cropped, scale)
     canvas.drawBitmap(source, matrix, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
-    if (!colourAndGrain(out, edit, max(fullW, fullH), keepGoing)) { out.recycle(); return null }
-    drawStrokes(canvas, out, matrix, source.width, source.height, edit.strokes)
+    if (colour && !colourAndGrain(out, edit, max(fullW, fullH), keepGoing)) { out.recycle(); return null }
+    drawStrokes(canvas, out, matrix, source.width, source.height, edit.strokes) { colour || it.blur }
     return out
 }
 
@@ -119,13 +120,17 @@ private fun lookUp(table: IntArray, c: Int): Int {
     return (c and 0xFF000000.toInt()) or (outR.roundToInt() shl 16) or (outG.roundToInt() shl 8) or outB.roundToInt()
 }
 
-// Strokes in order, mapped by the same [matrix] as the photo. A blur stroke shows a blurred copy of the picture as it
-// is when the stroke is drawn, so it also blurs earlier colour strokes under it.
-private fun drawStrokes(canvas: Canvas, picture: Bitmap, matrix: Matrix, srcW: Int, srcH: Int, strokes: List<BrushStroke>) {
-    if (strokes.isEmpty()) return
+// Strokes in order, mapped by the same [matrix] as the photo. A blur or mosaic stroke shows a small copy of the picture
+// as it is when the stroke is drawn, scaled back up (smoothly for blur, in blocks for mosaic), so it also hides earlier
+// colour strokes under it. Only the strokes [which] picks are drawn.
+private fun drawStrokes(canvas: Canvas, picture: Bitmap?, matrix: Matrix, srcW: Int, srcH: Int, strokes: List<BrushStroke>,
+                        which: (BrushStroke) -> Boolean = { true }) {
     val scale = matrix.mapRadius(1f)
-    var blurred: Bitmap? = null
+    // The last small copy and what it was made for; a colour stroke makes it stale.
+    var copy: Bitmap? = null
+    var madeFor: Pair<Boolean, Float>? = null
     for (s in strokes) {
+        if (!which(s)) continue
         val width = s.width * min(srcW, srcH) * scale
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -134,18 +139,27 @@ private fun drawStrokes(canvas: Canvas, picture: Bitmap, matrix: Matrix, srcW: I
             strokeWidth = width
             if (s.softness > 0f) maskFilter = BlurMaskFilter(s.softness * width / 2, BlurMaskFilter.Blur.NORMAL)
         }
-        if (s.blur) {
-            val copy = blurred ?: blurredCopy(picture).also { blurred = it }
-            paint.shader = BitmapShader(copy, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
-                setLocalMatrix(Matrix().apply { setScale(picture.width / copy.width.toFloat(), picture.height / copy.height.toFloat()) })
+        if (s.blur && picture != null) {
+            val kind = s.mosaic to s.strength
+            val small = copy.takeIf { madeFor == kind } ?: hidingCopy(picture, s.mosaic, s.strength).also { copy = it; madeFor = kind }
+            paint.shader = BitmapShader(small, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+                setLocalMatrix(Matrix().apply { setScale(picture.width / small.width.toFloat(), picture.height / small.height.toFloat()) })
             }
+            paint.isFilterBitmap = !s.mosaic
         } else {
             paint.color = s.color
-            blurred = null // the picture changed; the next blur stroke blurs this stroke too
+            madeFor = null
         }
         canvas.drawPath(strokePath(s, matrix, srcW.toFloat(), srcH.toFloat()), paint)
     }
 }
+
+/**
+ * The painted (colour) strokes only, onto [canvas] through [matrix] (from the photo's pixels): drawn over the GPU
+ * preview, whose colour must not touch them.
+ */
+fun drawPaintStrokes(canvas: Canvas, matrix: Matrix, srcW: Int, srcH: Int, strokes: List<BrushStroke>) =
+    drawStrokes(canvas, null, matrix, srcW, srcH, strokes) { !it.blur }
 
 /** [s]'s points (fractions of a [srcW]×[srcH] photo) through [matrix], smoothed into curves through the midpoints; a single point is a dot. */
 fun strokePath(s: BrushStroke, matrix: Matrix, srcW: Float, srcH: Float): Path {
@@ -162,17 +176,20 @@ fun strokePath(s: BrushStroke, matrix: Matrix, srcW: Float, srcH: Float): Path {
     }
 }
 
-// A heavily blurred copy, about 40 px on its short side: halved step by step so every pixel is averaged in.
-private fun blurredCopy(picture: Bitmap): Bitmap {
+/**
+ * A small copy of [picture] to stretch back over it: a few dozen pixels across its short side, fewer the stronger the
+ * [strength], so the blur or the blocks look the same at any picture size.
+ */
+private fun hidingCopy(picture: Bitmap, mosaic: Boolean, strength: Float): Bitmap {
+    val across = if (mosaic) 60f - 48f * strength else 64f - 52f * strength
+    // Halved step by step first, so every pixel is averaged in.
     var b = picture
-    while (min(b.width, b.height) > 80) {
+    while (min(b.width, b.height) > across * 2) {
         val next = Bitmap.createScaledBitmap(b, (b.width / 2).coerceAtLeast(1), (b.height / 2).coerceAtLeast(1), true)
         if (b !== picture) b.recycle()
         b = next
     }
-    val small = min(b.width, b.height)
-    if (small <= 40) return if (b === picture) b.copy(Bitmap.Config.ARGB_8888, false) else b
-    val f = 40f / small
+    val f = across / min(b.width, b.height)
     return Bitmap.createScaledBitmap(b, (b.width * f).roundToInt().coerceAtLeast(1), (b.height * f).roundToInt().coerceAtLeast(1), true)
-        .also { if (b !== picture) b.recycle() }
+        .also { if (b !== picture && it !== b) b.recycle() }
 }

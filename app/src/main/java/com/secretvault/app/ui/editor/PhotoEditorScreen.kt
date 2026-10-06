@@ -1,9 +1,12 @@
 package com.secretvault.app.ui.editor
 
 import android.graphics.Bitmap
+import android.graphics.BlurMaskFilter
+import android.os.Build
 import android.graphics.Matrix
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -35,6 +38,10 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -47,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.secretvault.app.SecretVaultApp
 import com.secretvault.app.core.image.decodeEncryptedImage
+import com.secretvault.app.core.image.drawPaintStrokes
 import com.secretvault.app.core.image.frameSize
 import com.secretvault.app.core.image.photoMatrix
 import com.secretvault.app.core.image.renderPhoto
@@ -67,6 +75,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -76,6 +85,8 @@ private const val PREVIEW_SIDE = 1600
 private const val QUICK_SIDE = 900
 /** Bigger photos are saved scaled down to this long side, to stay within memory. */
 private const val SAVE_SIDE = 6000
+/** The GPU preview's colour table: smaller than the save's, so it's quick to rebuild as a slider moves. */
+private const val GPU_TABLE = 17
 
 private enum class PhotoTab(val label: String) { ADJUST("Adjust"), CROP("Crop"), FILTERS("Filters"), DRAW("Draw") }
 
@@ -99,6 +110,8 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
     var cropShape by remember { mutableIntStateOf(0) }
     // Brush settings, kept while switching tabs.
     var brush by remember { mutableStateOf(BrushSettings()) }
+    // The Size or Softness slider is moving: the brush circle shows.
+    var sizing by remember { mutableStateOf(false) }
 
     // A smaller copy for the preview; null while loading, and a failed decode shows an error.
     var failed by remember { mutableStateOf(false) }
@@ -106,13 +119,22 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
         value = withContext(Dispatchers.IO) { runCatching { decodeEncryptedImage(app.cryptoEngine, File(item.encryptedPath), PREVIEW_SIDE) }.getOrNull() }
         if (value == null) failed = true
     }
-    // The edited preview, redrawn whenever the edit changes; a newer edit stops an older render part-way.
+    // On Android 13+ colour, filters and grain are a GPU shader over the preview and painted strokes are drawn on top,
+    // so those change instantly; the CPU only redraws the shape (turn, crop, straighten) and blur strokes.
+    val photoLook = remember { if (Build.VERSION.SDK_INT >= 33) PhotoLook() else null }
+    val gpu = photoLook != null
+
+    // The edited preview, redrawn whenever what it shows changes; a newer edit stops an older render part-way.
     var preview by remember { mutableStateOf<Rendered?>(null) }
     LaunchedEffect(source) {
         val src = source ?: return@LaunchedEffect
-        snapshotFlow { Triple(edit, tab == PhotoTab.CROP, moving) }.collectLatest { (e, wholeFrame, quick) ->
+        snapshotFlow {
+            val shape = if (gpu) edit.copy(filter = null, filterStrength = 1f, adjustments = Adjustments(), grain = 0,
+                strokes = edit.strokes.filter { it.blur }) else edit
+            Triple(shape, tab == PhotoTab.CROP, moving)
+        }.collectLatest { (e, wholeFrame, quick) ->
             withContext(Dispatchers.Default) {
-                renderPhoto(src, e, cropped = !wholeFrame, maxSide = if (quick) QUICK_SIDE else PREVIEW_SIDE) { isActive }
+                renderPhoto(src, e, cropped = !wholeFrame, maxSide = if (quick) QUICK_SIDE else PREVIEW_SIDE, colour = !gpu) { isActive }
             }?.let { preview = Rendered(it, e, wholeFrame) }
         }
     }
@@ -159,25 +181,45 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
 
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
             val shown = preview
-            val cropRatio = source?.let { s -> frameSize(s.width, s.height, edit).let { (w, h) -> shapeRatio(cropShape, w, h) } }
+            val src = source
+            val cropRatio = src?.let { s -> frameSize(s.width, s.height, edit).let { (w, h) -> shapeRatio(cropShape, w, h) } }
             when {
                 failed -> Text("This photo couldn't be opened.", color = TextSecondary)
-                shown == null -> CircularProgressIndicator(color = VaultAccent)
+                shown == null || src == null -> CircularProgressIndicator(color = VaultAccent)
                 else -> {
-                    Image(shown.bitmap.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-                    // Where the picture sits in this box, for the tools drawn over it.
+                    // Where the picture sits in this box, and where the photo's pixels land in it, for what's drawn over it.
                     val boxW = constraints.maxWidth.toFloat()
                     val boxH = constraints.maxHeight.toFloat()
                     val fit = min(boxW / shown.bitmap.width, boxH / shown.bitmap.height)
                     val picture = Rect(Offset((boxW - shown.bitmap.width * fit) / 2, (boxH - shown.bitmap.height * fit) / 2),
                         Size(shown.bitmap.width * fit, shown.bitmap.height * fit))
-                    val src = source
-                    if (tab == PhotoTab.CROP && shown.wholeFrame && src != null && !saving) {
+                    val toScreen = remember(shown, picture, src) { previewToScreen(shown, picture, src.width, src.height) }
+
+                    // Colour and grain on the GPU. A grain is as big on screen as it'll be in the saved photo.
+                    val savedLong = max(max(item.width, item.height).takeIf { it > 0 } ?: max(src.width, src.height), 1).coerceAtMost(SAVE_SIDE)
+                    val grainCell = 2.5f * toScreen.mapRadius(1f) * max(src.width, src.height) / savedLong
+                    val colourKey = Triple(edit.filter to edit.filterStrength, edit.adjustments, edit.grain)
+                    val look by produceState<android.graphics.RenderEffect?>(null, colourKey, (grainCell * 10).roundToInt()) {
+                        value = photoLook?.let { gpuLook ->
+                            withContext(Dispatchers.Default) {
+                                gpuLook.effect(if (edit.changesColour) edit.colourTable(GPU_TABLE) else null, GPU_TABLE, edit.grain, grainCell)
+                            }
+                        }
+                    }
+                    Image(shown.bitmap.asImageBitmap(), null, Modifier.fillMaxSize().graphicsLayer { renderEffect = look?.asComposeRenderEffect() },
+                        contentScale = ContentScale.Fit)
+                    // Painted strokes over the GPU preview, untouched by its colour (the CPU draws them otherwise).
+                    if (gpu && edit.strokes.any { !it.blur }) Canvas(Modifier.fillMaxSize()) {
+                        drawIntoCanvas { drawPaintStrokes(it.nativeCanvas, toScreen, src.width, src.height, edit.strokes) }
+                    }
+
+                    if (tab == PhotoTab.CROP && shown.wholeFrame && !saving) {
                         val (fw, fh) = frameSize(src.width, src.height, edit)
                         CropOverlay(edit.crop, picture, cropRatio, fw, fh, onMoving = { moving = it }) { edit = edit.copy(crop = it) }
                     }
-                    if (tab == PhotoTab.DRAW && !shown.wholeFrame && src != null && !saving) {
-                        DrawOverlay(shown, picture, src.width, src.height, brush) { edit = edit.copy(strokes = edit.strokes + it) }
+                    if (tab == PhotoTab.DRAW && !shown.wholeFrame && !saving) {
+                        DrawOverlay(toScreen, src.width, src.height, brush) { edit = edit.copy(strokes = edit.strokes + it) }
+                        BrushSizeCircle(brush, sizing, picture.center, brush.width * min(src.width, src.height) * toScreen.mapRadius(1f))
                     }
                 }
             }
@@ -186,13 +228,13 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val ready = source != null && !saving
             when (tab) {
-                PhotoTab.ADJUST -> PhotoAdjustPanel(edit, ready, onMoving = { moving = it }) { edit = it }
+                PhotoTab.ADJUST -> PhotoAdjustPanel(edit, ready, onMoving = { if (!gpu) moving = it }) { edit = it }
                 PhotoTab.CROP -> source?.let { src ->
                     CropPanel(edit, src.width, src.height, cropShape, ready, onMoving = { moving = it },
                         onShape = { shape -> cropShape = shape }) { edit = it }
                 }
-                PhotoTab.FILTERS -> source?.let { src -> FiltersPanel(edit, src, ready, onMoving = { moving = it }) { edit = it } }
-                PhotoTab.DRAW -> DrawPanel(brush, edit, ready, onBrush = { brush = it }) { edit = it }
+                PhotoTab.FILTERS -> source?.let { src -> FiltersPanel(edit, src, ready, onMoving = { if (!gpu) moving = it }) { edit = it } }
+                PhotoTab.DRAW -> DrawPanel(brush, edit, ready, onSizing = { sizing = it }, onBrush = { brush = it }) { edit = it }
                 else -> Unit
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -400,29 +442,43 @@ private fun FiltersPanel(edit: PhotoEdit, source: Bitmap, enabled: Boolean, onMo
     }
 }
 
-/** The brush as set in the Draw panel: [size] 1..100, [softness] 0..1. */
-private data class BrushSettings(val blur: Boolean = false, val size: Float = 20f, val softness: Float = 0f, val color: Int = 0xFFFFFFFF.toInt()) {
+private enum class BrushMode(val label: String) { PAINT("Brush"), BLUR("Blur"), MOSAIC("Mosaic") }
+
+/** The brush as set in the Draw panel: [size] 1..100, [softness] and [strength] (blur or mosaic) 0..1. */
+private data class BrushSettings(
+    val mode: BrushMode = BrushMode.PAINT,
+    val size: Float = 20f,
+    val softness: Float = 0f,
+    val strength: Float = 0.5f,
+    val color: Int = 0xFFFFFFFF.toInt()
+) {
     /** Stroke width as a fraction of the photo's short side. */
     val width: Float get() = 0.004f + size / 100f * 0.08f
+    val hides: Boolean get() = mode != BrushMode.PAINT
+
+    fun stroke(points: List<Pair<Float, Float>>) =
+        BrushStroke(points, width, softness, color, blur = hides, mosaic = mode == BrushMode.MOSAIC, strength = strength)
 }
 
 private val BRUSH_COLOURS = listOf(0xFFFFFFFF, 0xFF000000, 0xFFE53935, 0xFFFF9800, 0xFFFFEB3B, 0xFF43A047, 0xFF1E88E5, 0xFF8E24AA, 0xFFF06292)
     .map { it.toInt() }
+
+/** From the original photo's ([srcW]×[srcH]) pixels to the screen: as [shown] was drawn, then fitted into [picture]. */
+private fun previewToScreen(shown: Rendered, picture: Rect, srcW: Int, srcH: Int): Matrix {
+    val (fw, _) = frameSize(srcW, srcH, shown.edit)
+    val cropW = if (shown.wholeFrame) 1f else shown.edit.crop.width
+    return photoMatrix(srcW, srcH, shown.edit, cropped = !shown.wholeFrame, scale = shown.bitmap.width / (cropW * fw)).apply {
+        postScale(picture.width / shown.bitmap.width, picture.height / shown.bitmap.height)
+        postTranslate(picture.left, picture.top)
+    }
+}
 
 /**
  * Draws on the cropped preview: a finger's path shows straight away and becomes a stroke when lifted, stored in
  * fractions of the original photo ([srcW]×[srcH]) so later crops and turns keep it in place.
  */
 @Composable
-private fun DrawOverlay(shown: Rendered, picture: Rect, srcW: Int, srcH: Int, brush: BrushSettings, onStroke: (BrushStroke) -> Unit) {
-    // From the original photo's pixels to this box: as the preview was drawn, then fitted into [picture].
-    val toScreen = remember(shown, picture, srcW, srcH) {
-        val (fw, _) = frameSize(srcW, srcH, shown.edit)
-        photoMatrix(srcW, srcH, shown.edit, cropped = true, scale = shown.bitmap.width / (shown.edit.crop.width * fw)).apply {
-            postScale(picture.width / shown.bitmap.width, picture.height / shown.bitmap.height)
-            postTranslate(picture.left, picture.top)
-        }
-    }
+private fun DrawOverlay(toScreen: Matrix, srcW: Int, srcH: Int, brush: BrushSettings, onStroke: (BrushStroke) -> Unit) {
     val toPhoto = remember(toScreen) { Matrix().also { toScreen.invert(it) } }
     val settings by rememberUpdatedState(brush)
     val add by rememberUpdatedState(onStroke)
@@ -441,8 +497,7 @@ private fun DrawOverlay(shown: Rendered, picture: Rect, srcW: Int, srcH: Int, br
             }
             val xy = FloatArray(points.size * 2).also { a -> points.forEachIndexed { i, p -> a[i * 2] = p.x; a[i * 2 + 1] = p.y } }
             toPhoto.mapPoints(xy)
-            val b = settings
-            add(BrushStroke(points.indices.map { xy[it * 2] / srcW to xy[it * 2 + 1] / srcH }, b.width, b.softness, b.color, b.blur))
+            add(settings.stroke(points.indices.map { xy[it * 2] / srcW to xy[it * 2 + 1] / srcH }))
             live = emptyList()
         }
     }) {
@@ -454,26 +509,59 @@ private fun DrawOverlay(shown: Rendered, picture: Rect, srcW: Int, srcH: Int, br
             if (live.size == 1) lineTo(live[0].x + 0.1f, live[0].y)
         }
         val width = b.width * min(srcW, srcH) * toScreen.mapRadius(1f)
-        drawPath(path, if (b.blur) Color.White.copy(alpha = 0.4f) else Color(b.color),
+        drawPath(path, if (b.hides) Color.White.copy(alpha = 0.4f) else Color(b.color),
             style = Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 
-/** Brush or blur brush, size, softness and colour; undo and clear. */
+/**
+ * The brush at its real size ([diameter] screen pixels), softness and colour, in the middle of the photo while
+ * [visible] (a Size or Softness slider is moving); it fades out after.
+ */
 @Composable
-private fun DrawPanel(brush: BrushSettings, edit: PhotoEdit, enabled: Boolean, onBrush: (BrushSettings) -> Unit, onChange: (PhotoEdit) -> Unit) {
+private fun BrushSizeCircle(brush: BrushSettings, visible: Boolean, centre: Offset, diameter: Float) {
+    val alpha by animateFloatAsState(if (visible) 1f else 0f, label = "brush size")
+    if (alpha == 0f) return
+    Canvas(Modifier.fillMaxSize()) {
+        drawIntoCanvas { canvas ->
+            val radius = diameter / 2
+            val fill = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = if (brush.hides) android.graphics.Color.WHITE else brush.color
+                this.alpha = ((if (brush.hides) 0.35f else 1f) * alpha * 255).roundToInt()
+                if (brush.softness > 0f) maskFilter = BlurMaskFilter(brush.softness * radius, BlurMaskFilter.Blur.NORMAL)
+            }
+            canvas.nativeCanvas.drawCircle(centre.x, centre.y, radius, fill)
+        }
+        // An outline, so a black or white brush shows on any photo.
+        drawCircle(Color.White.copy(alpha = 0.8f * alpha), diameter / 2, centre, style = Stroke(1.dp.toPx()))
+        drawCircle(Color.Black.copy(alpha = 0.5f * alpha), diameter / 2 + 1.dp.toPx(), centre, style = Stroke(1.dp.toPx()))
+    }
+}
+
+/** Brush, blur or mosaic; size, softness, strength (blur and mosaic) and colour (brush); undo and clear. */
+@Composable
+private fun DrawPanel(brush: BrushSettings, edit: PhotoEdit, enabled: Boolean, onSizing: (Boolean) -> Unit, onBrush: (BrushSettings) -> Unit,
+                      onChange: (PhotoEdit) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        listOf(false to "Brush", true to "Blur").forEach { (blur, name) ->
-            FilterChip(selected = brush.blur == blur, enabled = enabled, onClick = { onBrush(brush.copy(blur = blur)) }, label = { Text(name) },
+        BrushMode.entries.forEach { mode ->
+            FilterChip(selected = brush.mode == mode, enabled = enabled, onClick = { onBrush(brush.copy(mode = mode)) }, label = { Text(mode.label) },
                 colors = FilterChipDefaults.filterChipColors(labelColor = TextSecondary, selectedLabelColor = VaultDarkBg, selectedContainerColor = VaultAccent))
         }
         Spacer(Modifier.weight(1f))
         PanelButton("Undo", enabled && edit.strokes.isNotEmpty()) { onChange(edit.copy(strokes = edit.strokes.dropLast(1))) }
         PanelButton("Clear", enabled && edit.strokes.isNotEmpty()) { onChange(edit.copy(strokes = emptyList())) }
     }
-    LabeledSlider("Size", brush.size.roundToInt().toString(), brush.size, 1f..100f, enabled) { onBrush(brush.copy(size = it)) }
-    LabeledSlider("Softness", "${(brush.softness * 100).roundToInt()}%", brush.softness, 0f..1f, enabled) { onBrush(brush.copy(softness = it)) }
-    if (!brush.blur) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    LabeledSlider("Size", brush.size.roundToInt().toString(), brush.size, 1f..100f, enabled, onDone = { onSizing(false) }) {
+        onSizing(true)
+        onBrush(brush.copy(size = it))
+    }
+    LabeledSlider("Softness", "${(brush.softness * 100).roundToInt()}%", brush.softness, 0f..1f, enabled, onDone = { onSizing(false) }) {
+        onSizing(true)
+        onBrush(brush.copy(softness = it))
+    }
+    if (brush.hides) LabeledSlider("Strength", "${(brush.strength * 100).roundToInt()}%", brush.strength, 0f..1f, enabled) {
+        onBrush(brush.copy(strength = it))
+    } else Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         BRUSH_COLOURS.forEach { c ->
             val picked = brush.color == c
             Box(Modifier.size(30.dp).clip(CircleShape).background(Color(c))

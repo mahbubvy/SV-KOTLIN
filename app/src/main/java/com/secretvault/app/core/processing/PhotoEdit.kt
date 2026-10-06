@@ -91,9 +91,18 @@ data class CropRect(val left: Float = 0f, val top: Float = 0f, val right: Float 
 /**
  * One brush stroke, in fractions of the original photo (upright, before any turn, flip, straighten or crop), so
  * changing those later keeps it on the same spot. [width] is a fraction of the photo's short side; [softness] 0..1
- * feathers its edge; a [blur] stroke blurs what's under it instead of painting [color].
+ * feathers its edge; a [blur] stroke hides what's under it instead of painting [color]: blurred, or in blocks when
+ * [mosaic], [strength] 0..1 setting how much.
  */
-data class BrushStroke(val points: List<Pair<Float, Float>>, val width: Float, val softness: Float, val color: Int, val blur: Boolean)
+data class BrushStroke(
+    val points: List<Pair<Float, Float>>,
+    val width: Float,
+    val softness: Float,
+    val color: Int,
+    val blur: Boolean,
+    val mosaic: Boolean = false,
+    val strength: Float = 0.5f
+)
 
 /**
  * Everything done to a photo, applied in this order when it's drawn: turn ([quarterTurns] clockwise), flip, straighten
