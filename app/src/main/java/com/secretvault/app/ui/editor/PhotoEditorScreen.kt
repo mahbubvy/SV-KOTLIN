@@ -87,7 +87,9 @@ private enum class PhotoTab(val label: String) { ADJUST("Adjust"), CROP("Crop"),
 fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var edit by remember { mutableStateOf(PhotoEdit()) }
+    // A draft means the vault locked mid-edit: carry on where it stopped.
+    var edit by remember { mutableStateOf(app.videoEditManager.photoDraft?.takeIf { it.first == item.id }?.second ?: PhotoEdit()) }
+    var leaving by remember { mutableStateOf(false) }
     var tab by remember { mutableStateOf(PhotoTab.ADJUST) }
     // A slider or handle is moving: the preview renders smaller to keep up.
     var moving by remember { mutableStateOf(false) }
@@ -115,7 +117,11 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
         }
     }
 
-    fun leave() { if (edit == PhotoEdit()) onBack() else confirmDiscard = true }
+    // Kept up to date so a lock (which drops this screen without warning) loses nothing; cleared only on purpose.
+    SideEffect { if (!leaving) app.videoEditManager.photoDraft = if (edit == PhotoEdit()) null else item.id to edit }
+    fun close() { leaving = true; app.videoEditManager.photoDraft = null; onBack() }
+
+    fun leave() { if (edit == PhotoEdit()) close() else confirmDiscard = true }
     BackHandler(enabled = !saving) { leave() }
 
     fun save() {
@@ -128,12 +134,14 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
                     val edited = renderPhoto(full, edit).also { full.recycle() } ?: return@runCatching null
                     val names = app.mediaRepository.getMedia().first().mapTo(HashSet()) { it.filename }
                     app.mediaSaveQueue.savePhoto(edited, item.albumId, VideoEditPlan.editedFileName(item.filename, names))
+                        // Saved: nothing left to come back to, even if a lock dropped this screen meanwhile.
+                        .also { app.videoEditManager.photoDraft = null }
                 }.getOrNull()
             }
             saving = false
             if (saved != null) {
                 Toast.makeText(context, "Saved as a new photo", Toast.LENGTH_SHORT).show()
-                onBack()
+                close()
             } else Toast.makeText(context, "Couldn't save the edited photo", Toast.LENGTH_SHORT).show()
         }
     }
@@ -209,7 +217,7 @@ fun PhotoEditorScreen(app: SecretVaultApp, item: MediaItem, onBack: () -> Unit) 
     if (confirmDiscard) AlertDialog(onDismissRequest = { confirmDiscard = false }, containerColor = VaultSurface,
         title = { Text("Discard changes?", color = TextPrimary) },
         text = { Text("Your edit hasn't been saved. The original photo is not affected.", color = TextSecondary) },
-        confirmButton = { TextButton(onClick = { confirmDiscard = false; onBack() }) { Text("Discard", color = VaultError) } },
+        confirmButton = { TextButton(onClick = { confirmDiscard = false; close() }) { Text("Discard", color = VaultError) } },
         dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("Keep editing", color = VaultAccent) } })
 }
 

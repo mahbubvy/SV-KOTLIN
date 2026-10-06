@@ -1,6 +1,6 @@
 # Spec: Photo editor
 
-Status: **Planned**. Work happens on branch `photo-editor` (from `main`). Tick the boxes in [Phases](#phases) as you
+Status: **Built, on-device testing pending**. Work happens on branch `photo-editor` (from `main`). Tick the boxes in [Phases](#phases) as you
 go, and add a dated note under [Progress log](#progress-log).
 
 ## Goal
@@ -32,19 +32,23 @@ Edits are kept as data and applied in a fixed order, so every step stays changea
 4. **Grain** (noise, seeded so it doesn't flicker or change between preview and save).
 5. **Drawing**: strokes recorded in photo coordinates, so crop and rotation changes keep them in place.
 
-- **Preview**: a copy of the photo about 1600 px on its long side. Colour and grain use GPU shaders on Android 13+
-  (like the video editor); older phones update the preview when a slider is let go.
+- **Preview**: a copy of the photo about 1600 px on its long side (900 px while a slider or handle moves), drawn by
+  the same renderer as the save, so it matches exactly on every Android version.
 - **Save**: once, at full resolution, on a background thread; JPEG quality 95, encrypted through the existing save
   path. No plaintext file is written.
 
 ## Phases
 
-- [ ] 1. Editor screen, Edit button for photos, Adjust tab (with Grain), save as a new copy.
-- [ ] 2. Crop tab: crop box, shapes, straighten, rotate 90°, flips.
-- [ ] 3. Filters tab: presets, thumbnails, strength.
-- [ ] 4. Draw tab: brush, softness, colour, blur brush, undo.
-- [ ] 5. Lock handling, docs, tests, PR.
+- [x] 1. Editor screen, Edit button for photos, Adjust tab (with Grain), save as a new copy.
+- [x] 2. Crop tab: crop box, shapes, straighten, rotate 90°, flips.
+- [x] 3. Filters tab: presets, thumbnails, strength.
+- [x] 4. Draw tab: brush, softness, colour, blur brush, undo.
+- [ ] 5. Lock handling, docs, tests (done); PR (waiting for on-device testing).
 
 ## Progress log
 
 - 2026-10-06: Plan agreed.
+- 2026-10-06: Phases 1–4 built, plus lock handling, docs and unit tests (`PhotoEditTest`). Rendering ended up on the
+  CPU for both preview and save rather than GPU shaders: one renderer keeps the preview exactly like the saved photo
+  on every Android version, and drawing in the preview at 900 px while a slider moves keeps it responsive. Photos
+  larger than 6000 px on the long side are saved at 6000 px. Not yet tried on a phone.

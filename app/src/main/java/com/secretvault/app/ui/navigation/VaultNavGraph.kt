@@ -35,7 +35,7 @@ fun VaultNavGraph(
     LaunchedEffect(cameraEntryRequest) {
         // An edit in progress wins over the camera shortcut: stay in the editor.
         if (cameraEntryRequest > 0 && app.sessionManager.keepUnlocked.value && app.sessionManager.isUnlocked.value &&
-            app.videoEditManager.draft == null) {
+            app.videoEditManager.draft == null && app.videoEditManager.photoDraft == null) {
             navController.navigate(Screen.VaultHome.route) {
                 popUpTo(navController.graph.id)
                 launchSingleTop = true
@@ -98,7 +98,9 @@ fun VaultNavGraph(
             }
             // The vault locked mid-edit: go back to the editor, which picks up its draft.
             LaunchedEffect(Unit) {
+                val photo = app.videoEditManager.photoDraft
                 if (app.videoEditManager.draft != null) navController.navigate(Screen.VideoProject.route) { launchSingleTop = true }
+                else if (photo != null) navController.navigate(Screen.PhotoEditor.createRoute(photo.first)) { launchSingleTop = true }
             }
             val galleryViewModel = viewModel<com.secretvault.app.ui.gallery.GalleryViewModel>(
                 factory = viewModelFactory {

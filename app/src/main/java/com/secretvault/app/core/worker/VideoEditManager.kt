@@ -116,6 +116,12 @@ class VideoEditManager(
     var draftPositionMs = 0L
         private set
 
+    /**
+     * The photo editor's unsaved edit, with its photo's id, kept like [draft] so a vault lock doesn't lose it. Memory only;
+     * it holds the edit steps, never the photo.
+     */
+    var photoDraft: Pair<String, com.secretvault.app.core.processing.PhotoEdit>? = null
+
     fun keepDraft(project: VideoProject, positionMs: Long) {
         draft = project.takeIf { it.clips.isNotEmpty() }
         draftPositionMs = positionMs

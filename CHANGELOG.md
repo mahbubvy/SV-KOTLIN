@@ -6,6 +6,7 @@
 - Pause and resume local or remotely controlled video recordings, excluding paused time from the saved recording duration.
 - Direct photo/video sharing between SV devices on the same Wi-Fi, with per-transfer Accept/Decline, optional streaming-PIN pairing and delivery to Imports.
 - Multi-clip video editor from a new Home button: join vault videos, trim, split, mute and reorder clips on a scrolling, zoomable timeline; rotate, zoom and colour-adjust each clip; and add up to 10 emoji or vault-photo stickers that can move over time with keyframes. Saves one new video in the first clip's shape; the per-video Edit button is unchanged.
+- Photo editor from the photo viewer's Edit button: adjustments with grain, crop and straighten with rotate and flip, filters with strength, and drawing with a brush or blur brush. Saves a new copy beside the original.
 
 ### Fixed
 - Preserve required file-sharing PIN mode when its saved PIN is unavailable.

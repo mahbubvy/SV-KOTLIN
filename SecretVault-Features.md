@@ -64,6 +64,16 @@ SecretVault (shown as **Weather Today**) is an offline Android photo and video v
 - Editing reads the encrypted files directly; the only plaintext is the export's temporary file in app cache, deleted when the save finishes. Sticker photos are decoded in memory only.
 - One editing session, no saved drafts; leaving with changes asks before discarding. Locking the vault mid-edit keeps the edit in memory and unlocking returns to it, paused.
 
+## Photo editing
+
+- **Edit** in the photo viewer opens the photo editor. Saving makes a new copy, `<name>_edited`, in the same album; the original is never changed.
+- Adjust: brightness, exposure, contrast, saturation, vibrance, shadows, highlights, warmth, tint and fade, as in the video editor, plus grain.
+- Crop: a crop box with Free, Original, 1:1, 4:5, 3:4, 16:9 and 9:16 shapes; straighten from −30° to +30° (zoomed in just enough to leave no empty corners); rotate 90°; flip horizontally or vertically.
+- Filters: Vivid, Warm, Cool, Mono, Noir, Sepia, Vintage, Fade and Dramatic, each with a strength slider; adjustments apply on top.
+- Draw: a brush with size, softness and colour, or a blur brush that blurs what it paints over; undo and clear. Strokes stay on the same part of the photo if the crop or rotation changes later.
+- Every step stays changeable until Save. The photo is decrypted, edited and encrypted in memory only; very large photos are saved at up to 6000 px on the long side.
+- Locking the vault mid-edit keeps the edit in memory, and unlocking returns to it.
+
 ## Import, move, delete, and share
 
 - Import photos and videos into the vault from the Android picker.
