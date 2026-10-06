@@ -22,6 +22,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.RotateRight
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.BlurOn
+import androidx.compose.material.icons.filled.Crop169
+import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.CropOriginal
+import androidx.compose.material.icons.filled.CropPortrait
+import androidx.compose.material.icons.filled.CropSquare
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Grain
+import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Flip
@@ -325,8 +335,7 @@ private fun PhotoAdjustPanel(edit: PhotoEdit, enabled: Boolean, onMoving: (Boole
             val value = if (a == null) edit.grain else edit.adjustments[a]
             FilterChip(selected = current == a, onClick = { current = a },
                 label = { Text((a?.label ?: "Grain") + if (value != 0) " •" else "") },
-                colors = FilterChipDefaults.filterChipColors(labelColor = TextSecondary, selectedLabelColor = VaultDarkBg,
-                    selectedContainerColor = VaultAccent))
+                leadingIcon = { ChipIcon(a?.icon ?: Icons.Default.Grain) }, colors = editorChipColors())
         }
     }
     val a = current
@@ -350,6 +359,9 @@ private class Rendered(val bitmap: Bitmap, val edit: PhotoEdit, val wholeFrame: 
 
 /** Crop shapes: a name and width / height, null for free; Original is the photo's own shape (as turned). */
 private val CROP_SHAPES = listOf("Free" to null, "Original" to 0f, "1:1" to 1f, "4:5" to 4f / 5, "3:4" to 3f / 4, "16:9" to 16f / 9, "9:16" to 9f / 16)
+// An icon for each of CROP_SHAPES, with a turn (9:16 is the 16:9 icon stood up).
+private val CROP_SHAPE_ICONS = listOf(Icons.Default.CropFree to 0f, Icons.Default.CropOriginal to 0f, Icons.Default.CropSquare to 0f,
+    Icons.Default.CropPortrait to 0f, Icons.Default.CropPortrait to 0f, Icons.Default.Crop169 to 0f, Icons.Default.Crop169 to 90f)
 
 private fun shapeRatio(shape: Int, frameW: Int, frameH: Int): Float? =
     CROP_SHAPES[shape].second?.let { if (it == 0f) frameW.toFloat() / frameH else it }
@@ -428,11 +440,11 @@ private fun CropPanel(edit: PhotoEdit, srcW: Int, srcH: Int, shape: Int, enabled
     val (fw, fh) = frameSize(srcW, srcH, edit)
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         CROP_SHAPES.forEachIndexed { i, (name, _) ->
+            val (icon, turn) = CROP_SHAPE_ICONS[i]
             FilterChip(selected = shape == i, enabled = enabled, onClick = {
                 onShape(i)
                 shapeRatio(i, fw, fh)?.let { onChange(edit.copy(crop = CropRect.centred(it, fw, fh))) }
-            }, label = { Text(name) }, colors = FilterChipDefaults.filterChipColors(labelColor = TextSecondary,
-                selectedLabelColor = VaultDarkBg, selectedContainerColor = VaultAccent))
+            }, label = { Text(name) }, leadingIcon = { ChipIcon(icon, turn) }, colors = editorChipColors())
         }
     }
     LabeledSlider("Straighten", "${edit.straighten.roundToInt()}°", edit.straighten, -30f..30f, enabled, onDone = { onMoving(false) }) {
@@ -484,7 +496,9 @@ private fun FiltersPanel(edit: PhotoEdit, source: Bitmap, enabled: Boolean, onMo
     }
 }
 
-private enum class BrushMode(val label: String) { PAINT("Brush"), BLUR("Blur"), MOSAIC("Mosaic") }
+private enum class BrushMode(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    PAINT("Brush", Icons.Default.Brush), BLUR("Blur", Icons.Default.BlurOn), MOSAIC("Mosaic", Icons.Default.GridOn)
+}
 
 /** The brush as set in the Draw panel: [size] 1..100, [softness] and [strength] (blur or mosaic) 0..1. */
 private data class BrushSettings(
@@ -591,11 +605,16 @@ private fun DrawPanel(brush: BrushSettings, edit: PhotoEdit, enabled: Boolean, o
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         BrushMode.entries.forEach { mode ->
             FilterChip(selected = brush.mode == mode, enabled = enabled, onClick = { onBrush(brush.copy(mode = mode)) }, label = { Text(mode.label) },
-                colors = FilterChipDefaults.filterChipColors(labelColor = TextSecondary, selectedLabelColor = VaultDarkBg, selectedContainerColor = VaultAccent))
+                leadingIcon = { ChipIcon(mode.icon) }, colors = editorChipColors())
         }
         Spacer(Modifier.weight(1f))
-        PanelButton("Undo", enabled && edit.strokes.isNotEmpty()) { onChange(edit.copy(strokes = edit.strokes.dropLast(1))) }
-        PanelButton("Clear", enabled && edit.strokes.isNotEmpty()) { onChange(edit.copy(strokes = emptyList())) }
+        val any = enabled && edit.strokes.isNotEmpty()
+        IconButton(onClick = { onChange(edit.copy(strokes = edit.strokes.dropLast(1))) }, enabled = any) {
+            Icon(Icons.AutoMirrored.Filled.Undo, "Undo", tint = if (any) TextPrimary else TextMuted)
+        }
+        IconButton(onClick = { onChange(edit.copy(strokes = emptyList())) }, enabled = any) {
+            Icon(Icons.Default.DeleteSweep, "Clear", tint = if (any) TextPrimary else TextMuted)
+        }
     }
     LabeledSlider("Size", brush.size.roundToInt().toString(), brush.size, 1f..100f, enabled, onDone = { onSizing(false) }) {
         onSizing(true)

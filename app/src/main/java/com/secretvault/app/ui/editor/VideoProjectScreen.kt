@@ -732,8 +732,7 @@ private fun AdjustPanel(adjustments: Adjustments, enabled: Boolean, onChange: (A
             Adjustment.entries.forEach { a ->
                 FilterChip(selected = a == current, onClick = { current = a },
                     label = { Text(if (adjustments[a] != 0) "${a.label} •" else a.label, fontSize = 12.sp) },
-                    colors = FilterChipDefaults.filterChipColors(labelColor = TextSecondary, selectedContainerColor = VaultAccent,
-                        selectedLabelColor = VaultDarkBg))
+                    leadingIcon = { ChipIcon(a.icon) }, colors = editorChipColors())
             }
         }
         val value = adjustments[current]
