@@ -5,7 +5,10 @@ import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** One piece of a project: [media] played from [startMs] to [endMs] of its own timeline. */
+/**
+ * One piece of a project: [media] played from [startMs] to [endMs] of its own timeline. [blurs] are kept in the
+ * source's own time and frame, so trimming, splitting and framing the clip keep them on what they cover.
+ */
 data class Clip(
     val media: MediaItem,
     val sourceDurationMs: Long,
@@ -14,6 +17,7 @@ data class Clip(
     val muted: Boolean = false,
     val framing: Framing = Framing(),
     val adjustments: Adjustments = Adjustments(),
+    val blurs: List<Sticker> = emptyList(),
     val id: String = UUID.randomUUID().toString()
 ) {
     val durationMs: Long get() = endMs - startMs
@@ -47,7 +51,9 @@ data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<
         val clip = clips[index]
         if (offset < MIN_CLIP_MS || clip.durationMs - offset < MIN_CLIP_MS) return this
         val cut = clip.startMs + offset
-        return replace(index, listOf(clip.copy(endMs = cut), clip.copy(startMs = cut, id = UUID.randomUUID().toString())))
+        // The second half gets its own blur ids, so every layer id in the project is unique.
+        return replace(index, listOf(clip.copy(endMs = cut),
+            clip.copy(startMs = cut, id = UUID.randomUUID().toString(), blurs = clip.blurs.map { it.copy(id = UUID.randomUUID().toString()) })))
     }
 
     /** Sets clip [index] to play [startMs]..[endMs] of its source, kept inside the source and at least [MIN_CLIP_MS]. */
@@ -109,9 +115,55 @@ data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<
     fun duplicateSticker(id: String): VideoProject {
         val s = stickers.firstOrNull { it.id == id } ?: return this
         if (stickers.size >= MAX_STICKERS) return this
-        fun nudge(p: Placement) = p.copy(centerX = p.centerX + 0.05f, centerY = p.centerY + 0.05f).fitted()
-        return copy(stickers = stickers + s.copy(placement = nudge(s.placement), keys = s.keys.map { it.copy(placement = nudge(it.placement)) },
-            id = UUID.randomUUID().toString()))
+        return copy(stickers = stickers + s.nudged())
+    }
+
+    /**
+     * Every sticker and blur region in output time, as the timeline and preview show them. A blur region is its clip's
+     * copy moved by the clip's place in the output (keys are relative to the start, so they move with it); it can
+     * reach past its clip's trimmed ends, where it isn't shown.
+     */
+    val layers: List<Sticker>
+        get() = stickers + clips.flatMapIndexed { i, c -> c.blurs.map { it.shifted(outputStartOf(i) - c.startMs) } }
+
+    /** The clip holding blur region [id], or -1 for a sticker or an unknown id. */
+    fun blurClipOf(id: String): Int = clips.indexOfFirst { c -> c.blurs.any { it.id == id } }
+
+    /** Adds a blur region to the clip at [atOutputMs], from there to the clip's end; ignored at [MAX_BLURS]. */
+    fun addBlur(atOutputMs: Long): VideoProject {
+        val (index, offset) = clipAt(atOutputMs) ?: return this
+        val clip = clips[index]
+        if (clip.blurs.size >= MAX_BLURS) return this
+        val start = minOf(clip.startMs + offset, clip.endMs - MIN_CLIP_MS)
+        val blur = Sticker(StickerSource.Blur(), start, clip.endMs, Placement(widthFraction = 0.3f, stretch = 1.3f))
+        return replace(index, listOf(clip.copy(blurs = clip.blurs + blur)))
+    }
+
+    /** Changes sticker or blur region [id] as seen in output time (see [layers]); blur regions are kept in their source. */
+    fun updateLayer(id: String, change: (Sticker) -> Sticker): VideoProject {
+        val index = blurClipOf(id)
+        if (index < 0) return updateSticker(id, change)
+        val clip = clips[index]
+        val shift = outputStartOf(index) - clip.startMs
+        return replace(index, listOf(clip.copy(blurs = clip.blurs.map { if (it.id == id) fitBlur(change(it.shifted(shift)).shifted(-shift), clip) else it })))
+    }
+
+    fun deleteLayer(id: String): VideoProject =
+        copy(stickers = stickers.filter { it.id != id }, clips = clips.map { c -> if (c.blurs.any { it.id == id }) c.copy(blurs = c.blurs.filter { it.id != id }) else c })
+
+    fun canDuplicate(id: String): Boolean {
+        val index = blurClipOf(id)
+        return if (index < 0) stickers.size < MAX_STICKERS else clips[index].blurs.size < MAX_BLURS
+    }
+
+    /** Adds a copy of sticker or blur region [id] a little down and right of it, keys and all. */
+    fun duplicateLayer(id: String): VideoProject {
+        val index = blurClipOf(id)
+        if (index < 0) return duplicateSticker(id)
+        val clip = clips[index]
+        if (!canDuplicate(id)) return this
+        val copy = clip.blurs.first { it.id == id }.nudged()
+        return replace(index, listOf(clip.copy(blurs = clip.blurs + copy)))
     }
 
     // Stickers follow the video's length; with no video left there is nothing to put them on.
@@ -126,9 +178,17 @@ data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<
         return sticker.copy(startMs = start, endMs = sticker.endMs.coerceIn(start + MIN_CLIP_MS, durationMs))
     }
 
+    // A blur region stays inside its source; it may reach past the clip's trimmed ends.
+    private fun fitBlur(blur: Sticker, clip: Clip): Sticker {
+        val start = blur.startMs.coerceIn(0L, clip.sourceDurationMs - MIN_CLIP_MS)
+        return blur.copy(startMs = start, endMs = blur.endMs.coerceIn(start + MIN_CLIP_MS, clip.sourceDurationMs))
+    }
+
     companion object {
         const val MIN_CLIP_MS = 500L
         const val MAX_STICKERS = 10
+        /** Per clip; the export shader has room for this many. */
+        const val MAX_BLURS = 16
         const val DEFAULT_STICKER_MS = 3_000L
     }
 }
@@ -156,29 +216,36 @@ sealed interface StickerSource {
     data class Photo(val media: MediaItem) : StickerSource
     /** A bundled sticker, by its path in the app's assets. */
     data class Pack(val asset: String) : StickerSource
+    /** A blur region over part of a clip: pixelate or blur, an oval or a rectangle, [strength] 0..1. */
+    data class Blur(val style: BlurStyle = BlurStyle.PIXELATE, val oval: Boolean = true, val strength: Float = 0.5f) : StickerSource
 }
 
+enum class BlurStyle { PIXELATE, BLUR }
+
 /**
- * Where a sticker sits, in fractions of the frame: [centerX]/[centerY] from the top-left, [widthFraction] of the
- * frame's width (height follows the image's shape), turned [rotation] degrees clockwise (shown as [angle]).
+ * Where a sticker or blur region sits, in fractions of its frame: [centerX]/[centerY] from the top-left,
+ * [widthFraction] of the frame's width, turned [rotation] degrees clockwise (shown as [angle]). Its height is the
+ * width times the image's shape (1 for a blur region) times [stretch], which only blur regions change.
  */
 data class Placement(
     val centerX: Float = 0.5f,
     val centerY: Float = 0.5f,
     val widthFraction: Float = 0.3f,
-    val rotation: Float = 0f
+    val rotation: Float = 0f,
+    val stretch: Float = 1f
 ) {
     val angle: Float get() = snapAngle(rotation)
-    fun fitted() = copy(centerX = centerX.coerceIn(0f, 1f), centerY = centerY.coerceIn(0f, 1f), widthFraction = widthFraction.coerceIn(0.05f, 1f))
+    fun fitted() = copy(centerX = centerX.coerceIn(0f, 1f), centerY = centerY.coerceIn(0f, 1f),
+        widthFraction = widthFraction.coerceIn(0.05f, 1f), stretch = stretch.coerceIn(0.1f, 10f))
 }
 
 /** The sticker's [placement] [atMs] after the sticker appears, so keyframes move with the sticker. */
 data class Keyframe(val atMs: Long, val placement: Placement)
 
 /**
- * An image over the video from [startMs] to [endMs] of the output. Without [keys] it stays at [placement], last set
- * [placedAtMs] after it appears; with keys it glides in straight lines from one to the next, holding the first before
- * it and the last after it.
+ * An image or blur region over the video from [startMs] to [endMs]: output time for a sticker, its clip's source time
+ * for a blur region. Without [keys] it stays at [placement], last set [placedAtMs] after it appears; with keys it
+ * glides in straight lines from one to the next, holding the first before it and the last after it.
  */
 data class Sticker(
     val source: StickerSource,
@@ -200,7 +267,8 @@ data class Sticker(
         val f = (at - a.atMs).toFloat() / (b.atMs - a.atMs)
         fun mix(x: Float, y: Float) = x + (y - x) * f
         return Placement(mix(a.placement.centerX, b.placement.centerX), mix(a.placement.centerY, b.placement.centerY),
-            mix(a.placement.widthFraction, b.placement.widthFraction), mix(a.placement.rotation, b.placement.rotation))
+            mix(a.placement.widthFraction, b.placement.widthFraction), mix(a.placement.rotation, b.placement.rotation),
+            mix(a.placement.stretch, b.placement.stretch))
     }
 
     /** The keyframe the playhead at [outputMs] is on, allowing for a playhead that lands a little off it. */
@@ -232,6 +300,15 @@ data class Sticker(
             existing != null -> copy(keys = keys - existing)
             else -> copy(keys = (keys + Keyframe((outputMs - startMs).coerceIn(0L, endMs - startMs), placementAt(outputMs))).sortedBy { it.atMs })
         }
+    }
+
+    /** The same sticker [byMs] later; its keys, relative to the start, move with it. */
+    fun shifted(byMs: Long): Sticker = copy(startMs = startMs + byMs, endMs = endMs + byMs)
+
+    /** A copy with a new id, a little down and right. */
+    fun nudged(): Sticker {
+        fun nudge(p: Placement) = p.copy(centerX = p.centerX + 0.05f, centerY = p.centerY + 0.05f).fitted()
+        return copy(placement = nudge(placement), keys = keys.map { it.copy(placement = nudge(it.placement)) }, id = UUID.randomUUID().toString())
     }
 
     companion object {

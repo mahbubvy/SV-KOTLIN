@@ -8,6 +8,7 @@ import com.secretvault.app.core.processing.Sticker
 import com.secretvault.app.core.processing.StickerSource
 import com.secretvault.app.core.processing.VideoProject
 import com.secretvault.app.core.processing.snapAngle
+import com.secretvault.app.core.processing.blurUniforms
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -139,5 +140,43 @@ class VideoProjectTest {
         assertTrue(bright.clips[1].adjustments.isNone)
         assertEquals(bright.clips[0].adjustments, bright.split(3_000).clips[1].adjustments) // halves keep it
         assertEquals(bright.clips[0].adjustments, bright.adjustAllLike(0).clips[1].adjustments)
+    }
+
+    @Test fun blurRegionsLiveInTheirClipsSource() {
+        // Clip b, trimmed to start 1 s into its source, plays from 10 s in the output; a blur added at 11 s starts 2 s into b.
+        val trimmed = project.trim(1, 1_000, 4_000)
+        val withBlur = trimmed.addBlur(11_000)
+        val blur = withBlur.clips[1].blurs.single()
+        assertEquals(2_000L to 4_000L, blur.startMs to blur.endMs)
+        val layer = withBlur.layers.single()
+        assertEquals(11_000L to 13_000L, layer.startMs to layer.endMs)
+        assertEquals(1, withBlur.blurClipOf(blur.id))
+
+        // Changes made in output time land in source time; trimming the clip moves the region with the picture.
+        val moved = withBlur.updateLayer(blur.id) { it.copy(startMs = 10_500).placeAt(12_000) { p -> p.copy(stretch = 2f) } }
+        assertEquals(1_500L, moved.clips[1].blurs.single().startMs)
+        assertEquals(2f, moved.layers.single().placementAt(12_000).stretch)
+        assertEquals(11_500L, moved.trim(1, 0, 4_000).layers.single().startMs) // 1.5 s into b now plays at 11.5 s
+
+        // Halves of a split clip each keep the region, under different ids.
+        val split = withBlur.split(12_500)
+        assertEquals(2, split.layers.map { it.id }.distinct().size)
+
+        val twice = withBlur.duplicateLayer(blur.id)
+        assertEquals(2, twice.clips[1].blurs.size)
+        assertTrue(twice.deleteLayer(blur.id).clips[1].blurs.single().id != blur.id)
+        val full = (1..VideoProject.MAX_BLURS).fold(project) { p, _ -> p.addBlur(0) }
+        assertSame(full, full.addBlur(0))
+        assertTrue(!full.canDuplicate(full.clips[0].blurs[0].id))
+    }
+
+    @Test fun blurUniformsPlaceRegionsInPixels() {
+        val blur = Sticker(StickerSource.Blur(oval = false), 1_000, 3_000, Placement(0.25f, 0.5f, 0.5f, stretch = 2f))
+        val u = blurUniforms(listOf(blur), 2_000, 10f, 0f, 200f, 100f)
+        assertEquals(1, u.count)
+        assertEquals(listOf(60f, 50f, 50f, 100f), u.areas.take(4)) // centre, half width, half height
+        assertEquals(1f, u.looks[0]) // cos 0°
+        assertEquals(0f, u.looks[2]) // rectangle, pixelate
+        assertEquals(0, blurUniforms(listOf(blur), 3_000, 0f, 0f, 200f, 100f).count) // ended
     }
 }

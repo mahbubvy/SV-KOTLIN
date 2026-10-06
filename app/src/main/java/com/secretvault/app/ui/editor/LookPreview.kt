@@ -7,6 +7,8 @@ import android.graphics.RuntimeShader
 import android.graphics.Shader
 import androidx.annotation.RequiresApi
 import com.secretvault.app.core.processing.Adjustments
+import com.secretvault.app.core.processing.BlurUniforms
+import com.secretvault.app.core.processing.VideoProject
 
 private const val LUT_SIZE = 33
 
@@ -45,4 +47,49 @@ internal fun lookEffect(adjustments: Adjustments): RenderEffect {
         setFloatUniform("size", LUT_SIZE.toFloat())
     }
     return RenderEffect.createRuntimeShaderEffect(shader, "content")
+}
+
+// The export's blur (BlurRegionsEffect.kt) in AGSL: the same regions, in the view's pixels.
+private val BLUR_SHADER = """
+uniform shader content;
+uniform int count;
+uniform float4 areas[${VideoProject.MAX_BLURS}];
+uniform float4 looks[${VideoProject.MAX_BLURS}];
+
+half4 main(float2 p) {
+    half4 color = content.eval(p);
+    for (int i = 0; i < ${VideoProject.MAX_BLURS}; i++) {
+        if (i >= count) break;
+        float4 a = areas[i];
+        float4 l = looks[i];
+        float2 d = p - a.xy;
+        float2 q = float2(d.x * l.x + d.y * l.y, d.y * l.x - d.x * l.y) / a.zw;
+        bool inside = mod(l.z, 2.0) > 0.5 ? dot(q, q) <= 1.0 : abs(q.x) <= 1.0 && abs(q.y) <= 1.0;
+        if (!inside) continue;
+        if (l.z > 1.5) {
+            half4 sum = half4(0.0);
+            for (int x = -4; x <= 4; x++) {
+                for (int y = -4; y <= 4; y++) sum += content.eval(p + float2(float(x), float(y)) * (l.w / 4.0));
+            }
+            color = sum / 81.0;
+        } else {
+            color = content.eval((floor(p / l.w) + 0.5) * l.w);
+        }
+    }
+    return color;
+}
+"""
+
+/** The preview's blur regions, with one compiled shader reused for every frame. */
+@RequiresApi(33)
+internal class BlurPreview {
+    private val shader = RuntimeShader(BLUR_SHADER)
+
+    fun effect(u: BlurUniforms): RenderEffect? {
+        if (u.count == 0) return null
+        shader.setIntUniform("count", u.count)
+        shader.setFloatUniform("areas", u.areas)
+        shader.setFloatUniform("looks", u.looks)
+        return RenderEffect.createRuntimeShaderEffect(shader, "content")
+    }
 }
