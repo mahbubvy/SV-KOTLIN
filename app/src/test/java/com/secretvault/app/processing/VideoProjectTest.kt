@@ -146,15 +146,15 @@ class VideoProjectTest {
         // Clip b, trimmed to start 1 s into its source, plays from 10 s in the output; a blur added at 11 s starts 2 s into b.
         val trimmed = project.trim(1, 1_000, 4_000)
         val withBlur = trimmed.addBlur(11_000)
-        val blur = withBlur.clips[1].blurs.single()
+        val blur = withBlur.clips[1].regions.single()
         assertEquals(2_000L to 4_000L, blur.startMs to blur.endMs)
         val layer = withBlur.layers.single()
         assertEquals(11_000L to 13_000L, layer.startMs to layer.endMs)
-        assertEquals(1, withBlur.blurClipOf(blur.id))
+        assertEquals(1, withBlur.regionClipOf(blur.id))
 
         // Changes made in output time land in source time; trimming the clip moves the region with the picture.
         val moved = withBlur.updateLayer(blur.id) { it.copy(startMs = 10_500).placeAt(12_000) { p -> p.copy(stretch = 2f) } }
-        assertEquals(1_500L, moved.clips[1].blurs.single().startMs)
+        assertEquals(1_500L, moved.clips[1].regions.single().startMs)
         assertEquals(2f, moved.layers.single().placementAt(12_000).stretch)
         assertEquals(11_500L, moved.trim(1, 0, 4_000).layers.single().startMs) // 1.5 s into b now plays at 11.5 s
 
@@ -163,11 +163,11 @@ class VideoProjectTest {
         assertEquals(2, split.layers.map { it.id }.distinct().size)
 
         val twice = withBlur.duplicateLayer(blur.id)
-        assertEquals(2, twice.clips[1].blurs.size)
-        assertTrue(twice.deleteLayer(blur.id).clips[1].blurs.single().id != blur.id)
-        val full = (1..VideoProject.MAX_BLURS).fold(project) { p, _ -> p.addBlur(0) }
+        assertEquals(2, twice.clips[1].regions.size)
+        assertTrue(twice.deleteLayer(blur.id).clips[1].regions.single().id != blur.id)
+        val full = (1..VideoProject.MAX_REGIONS).fold(project) { p, _ -> p.addBlur(0) }
         assertSame(full, full.addBlur(0))
-        assertTrue(!full.canDuplicate(full.clips[0].blurs[0].id))
+        assertTrue(!full.canDuplicate(full.clips[0].regions[0].id))
     }
 
     @Test fun blurUniformsPlaceRegionsInPixels() {
@@ -178,5 +178,19 @@ class VideoProjectTest {
         assertEquals(1f, u.looks[0]) // cos 0°
         assertEquals(0f, u.looks[2]) // rectangle, pixelate
         assertEquals(0, blurUniforms(listOf(blur), 3_000, 0f, 0f, 200f, 100f).count) // ended
+    }
+
+    @Test fun keyframesCurveWithoutOvershooting() {
+        fun at(ms: Long, x: Float) = com.secretvault.app.core.processing.Keyframe(ms, Placement(centerX = x))
+        fun sticker(vararg keys: com.secretvault.app.core.processing.Keyframe) = Sticker(StickerSource.Emoji("x"), 0, 4_000, keys = keys.toList())
+        // Held still, then off: it doesn't drift before the move starts.
+        val hold = sticker(at(0, 0.2f), at(1_000, 0.2f), at(2_000, 0.8f))
+        assertEquals(0.2f, hold.placementAt(500).centerX, 0.0001f)
+        // Out and back: the curve rounds the turn but stays between the keys.
+        val bounce = sticker(at(0, 0.2f), at(1_000, 0.8f), at(2_000, 0.2f))
+        assertTrue((0..2_000 step 50).all { bounce.placementAt(it.toLong()).centerX in 0.2f..0.8f })
+        assertTrue(bounce.placementAt(500).centerX > 0.5f) // eases into the turn rather than a straight line's 0.5
+        // Steady motion stays steady.
+        assertEquals(0.35f, sticker(at(0, 0.2f), at(1_000, 0.5f), at(2_000, 0.8f)).placementAt(500).centerX, 0.0001f)
     }
 }

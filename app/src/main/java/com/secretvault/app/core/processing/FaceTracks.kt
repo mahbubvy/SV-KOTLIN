@@ -4,8 +4,8 @@ import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 
-/** A face the detector found, in fractions of the upright picture. */
-data class FaceBox(val left: Float, val top: Float, val right: Float, val bottom: Float) {
+/** A face the detector found, in fractions of the upright picture, leaning [roll] degrees clockwise. */
+data class FaceBox(val left: Float, val top: Float, val right: Float, val bottom: Float, val roll: Float = 0f) {
     val centerX get() = (left + right) / 2
     val centerY get() = (top + bottom) / 2
     val width get() = right - left
@@ -62,6 +62,15 @@ fun faceTracks(samples: List<FaceSample>, maxGapMs: Long = 1_000): List<FaceTrac
     return (done + open).map(::FaceTrack)
 }
 
+/** Whether one of [regions] (source time) already sits on this face for at least half the samples it was seen in. */
+fun FaceTrack.coveredBy(regions: List<Sticker>): Boolean = regions.any { r ->
+    points.count { (at, face) ->
+        at in r.startMs until r.endMs && r.placementAt(at).let { p ->
+            abs(p.centerX - face.centerX) <= face.width && abs(p.centerY - face.centerY) <= face.height
+        }
+    } * 2 >= points.size
+}
+
 /**
  * A track as a keyframed blur region in source time, covering the face with room for hair and chin. Only the
  * keyframes needed to stay within [tolerance] (fraction of the picture) of every detection are kept; between them the
@@ -73,7 +82,7 @@ fun FaceTrack.toBlur(sourceDurationMs: Long, aspect: Float, sampleMs: Long, tole
         val w = face.width * 1.5f
         val h = face.height * 1.7f
         // Height in the picture's pixels over width in them, as Placement measures it.
-        return Placement(face.centerX, face.centerY - face.height * 0.1f, w, stretch = h / w / aspect).fitted()
+        return Placement(face.centerX, face.centerY - face.height * 0.1f, w, face.roll, h / w / aspect).fitted()
     }
     val placed = points.map { (at, face) -> at to placement(face) }
     val start = (points.first().first - sampleMs / 2).coerceAtLeast(0L)
@@ -97,14 +106,18 @@ private fun simplify(points: List<Pair<Long, Placement>>, tolerance: Float): Lis
         val (t, p) = points[i]
         val f = if (t1 == t0) 0f else (t - t0).toFloat() / (t1 - t0)
         fun mix(x: Float, y: Float) = x + (y - x) * f
-        val d = off(Placement(mix(a.centerX, b.centerX), mix(a.centerY, b.centerY), mix(a.widthFraction, b.widthFraction),
-            stretch = mix(a.stretch, b.stretch)), p)
+        val d = off(Placement(mix(a.centerX, b.centerX), mix(a.centerY, b.centerY), mix(a.widthFraction, b.widthFraction), mix(a.rotation, b.rotation),
+            mix(a.stretch, b.stretch)), p)
         if (d > worstOff) { worstOff = d; worst = i }
     }
     if (worstOff <= tolerance) return listOf(points.first(), points.last())
     return simplify(points.subList(0, worst + 1), tolerance).dropLast(1) + simplify(points.subList(worst, points.size), tolerance)
 }
 
-// How far apart two placements are: the biggest difference in centre, width or height, as a fraction of the picture.
+// How far apart two placements are: the biggest difference in centre, width, height or turn, as a fraction of the picture.
 private fun off(a: Placement, b: Placement) = maxOf(abs(a.centerX - b.centerX), abs(a.centerY - b.centerY),
-    abs(a.widthFraction - b.widthFraction), abs(a.widthFraction * a.stretch - b.widthFraction * b.stretch))
+    abs(a.widthFraction - b.widthFraction), abs(a.widthFraction * a.stretch - b.widthFraction * b.stretch),
+    abs(a.rotation - b.rotation) * DEGREE)
+
+// A turn as a distance for [off]: 5° counts like the default tolerance, 2% of the picture.
+private const val DEGREE = 0.004f

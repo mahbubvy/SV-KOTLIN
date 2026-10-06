@@ -340,7 +340,7 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                         } ?: project.shownAt(positionMs, clipSizes, size.width.toFloat(), size.height.toFloat())?.let { on ->
                             val point = toPicture(tap, size.width.toFloat(), size.height.toFloat(), on)
                             project.layers.lastOrNull { b ->
-                                (positionMs in b.startMs until b.endMs || b.id == stickerId) && project.blurClipOf(b.id) == on.index && b.covers(point, on, positionMs)
+                                (positionMs in b.startMs until b.endMs || b.id == stickerId) && project.regionClipOf(b.id) == on.index && b.covers(point, on, positionMs)
                             }
                         }
                         when {
@@ -358,7 +358,7 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                         var dy = pan.y / size.height
                         player.pause()
                         val id = stickerId
-                        val blurClip = id?.let(project::blurClipOf) ?: -1
+                        val blurClip = id?.let(project::regionClipOf) ?: -1
                         if (blurClip >= 0) {
                             // A blur region moves on its clip's picture: undo the clip's turn and zoom.
                             val on = project.shownAt(positionMs, clipSizes, size.width.toFloat(), size.height.toFloat())
@@ -390,7 +390,7 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     translationY = framing.offsetY * size.height
                 }
                 // Blur regions (on the clip's own picture) then colour, as in the export. Android 13+, like the colour.
-                val blur = if (shown != null) blurPreview?.effect(blurUniforms(shown.clip.blurs, shown.sourceMs,
+                val blur = if (shown != null) blurPreview?.effect(blurUniforms(shown.clip.regions, shown.sourceMs,
                     shown.picture.left, shown.picture.top, shown.picture.width, shown.picture.height)) else null
                 val colour = look
                 val effect = if (Build.VERSION.SDK_INT >= 33 && colour != null && blur != null) android.graphics.RenderEffect.createChainEffect(colour, blur)
@@ -427,7 +427,7 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                 val img = sticker?.let { stickerImages[it.source.key] }
                 if (sticker != null && img != null && !saving) handles(sticker, img.height.toFloat() / img.width, free = false)
                 // A blur region's box sits on its clip's picture, so it turns and zooms with the clip.
-                if (sticker != null && blurLook != null && shown != null && project.blurClipOf(sticker.id) == shown.index && !saving) {
+                if (sticker != null && blurLook != null && shown != null && project.regionClipOf(sticker.id) == shown.index && !saving) {
                     Box(Modifier.fillMaxSize().graphicsLayer { frameLike() }) { handles(sticker, 1f, free = true, inside = shown.picture) }
                 }
             }
@@ -537,10 +537,10 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                 }
                 // On the clip at the playhead, from there to the clip's end.
                 val onScreen = project.clipAt(positionMs)?.first
-                Tool(Icons.Default.BlurOn, "Blur", ready && onScreen != null && project.clips[onScreen].blurs.size < VideoProject.MAX_BLURS) {
+                Tool(Icons.Default.BlurOn, "Blur", ready && onScreen != null && project.clips[onScreen].regions.size < VideoProject.MAX_REGIONS) {
                     player.pause()
                     project = project.addBlur(positionMs)
-                    stickerId = onScreen?.let { project.clips[it].blurs.lastOrNull()?.id }
+                    stickerId = onScreen?.let { project.clips[it].regions.lastOrNull()?.id }
                 }
                 // Scans the clip at the playhead (its trimmed part) and offers a blur region per face found.
                 Tool(Icons.Default.Face, "Faces", ready && onScreen != null && scanProgress == null) {
@@ -549,9 +549,12 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     scanProgress = 0f
                     scanJob = scope.launch {
                         try {
-                            val faces = scanFaces(app.cryptoEngine, target) { p -> scope.launch { scanProgress = p } }
-                            if (faces.isEmpty()) Toast.makeText(context, "No faces found in this clip", Toast.LENGTH_SHORT).show()
-                            else found = target.id to faces
+                            val result = scanFaces(app.cryptoEngine, target) { p -> scope.launch { scanProgress = p } }
+                            when {
+                                result.faces.isNotEmpty() -> found = target.id to result.faces
+                                result.alreadyCovered > 0 -> Toast.makeText(context, "Every face found already has a region", Toast.LENGTH_SHORT).show()
+                                else -> Toast.makeText(context, "No faces found in this clip", Toast.LENGTH_SHORT).show()
+                            }
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
@@ -600,9 +603,9 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
         FoundFacesDialog(faces, onDismiss = { found = null }) { chosen ->
             found = null
             val index = project.clips.indexOfFirst { it.id == clipId }
-            val room = VideoProject.MAX_BLURS - (project.clips.getOrNull(index)?.blurs?.size ?: return@FoundFacesDialog)
-            project = project.addBlurs(index, chosen.map { it.blur })
-            if (chosen.size > room) Toast.makeText(context, "Only ${VideoProject.MAX_BLURS} blur regions fit on one clip", Toast.LENGTH_SHORT).show()
+            val room = VideoProject.MAX_REGIONS - (project.clips.getOrNull(index)?.regions?.size ?: return@FoundFacesDialog)
+            project = project.addRegions(index, chosen.map { it.blur })
+            if (chosen.size > room) Toast.makeText(context, "Only ${VideoProject.MAX_REGIONS} blur regions fit on one clip", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -641,7 +644,7 @@ private fun Timeline(
     val layers = remember(project) { project.layers }
     // Where each blur region's clip plays in the output: its bar is only shown, and stacked, there.
     val windows = remember(project) {
-        project.clips.flatMapIndexed { i, c -> val s = project.outputStartOf(i); c.blurs.map { it.id to (s to s + c.durationMs) } }.toMap()
+        project.clips.flatMapIndexed { i, c -> val s = project.outputStartOf(i); c.regions.map { it.id to (s to s + c.durationMs) } }.toMap()
     }
     fun shownPart(s: Sticker) = windows[s.id]?.let { (a, b) -> s.copy(startMs = max(s.startMs, a), endMs = min(s.endMs, b)) } ?: s
     val lanes = remember(layers) { stickerLanes(layers.map(::shownPart)) }

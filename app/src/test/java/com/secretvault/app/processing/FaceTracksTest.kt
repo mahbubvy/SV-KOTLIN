@@ -4,6 +4,7 @@ import com.secretvault.app.core.processing.FaceBox
 import com.secretvault.app.core.processing.FaceSample
 import com.secretvault.app.core.processing.faceTracks
 import com.secretvault.app.core.processing.toBlur
+import com.secretvault.app.core.processing.coveredBy
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -31,5 +32,18 @@ class FaceTracksTest {
 
         // A face that never moves is one placement without keys.
         assertEquals(0, tracks.first { it.points.size == 11 }.toBlur(10_000, 1f, 200).keys.size)
+    }
+
+    @Test fun aFaceWithARegionOnItIsCovered() {
+        val still = faceTracks((0..10).map { FaceSample(it * 200L, listOf(box(0.5f, 0.5f))) }).single()
+        val onIt = still.toBlur(10_000, 1f, 200)
+        assertEquals(true, still.coveredBy(listOf(onIt)))
+        assertEquals(false, still.coveredBy(listOf(onIt.copy(placement = onIt.placement.copy(centerX = 0.9f))))) // elsewhere
+        assertEquals(false, still.coveredBy(listOf(onIt.copy(startMs = 1_800, endMs = 4_000)))) // there for under half the time
+    }
+
+    @Test fun regionsLeanWithTheHead() {
+        val tilted = faceTracks(listOf(FaceSample(0, listOf(box(0.5f, 0.5f).copy(roll = 20f))))).single()
+        assertEquals(20f, tilted.toBlur(10_000, 1f, 200).placement.rotation)
     }
 }

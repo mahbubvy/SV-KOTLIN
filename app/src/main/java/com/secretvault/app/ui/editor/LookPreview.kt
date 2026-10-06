@@ -53,12 +53,12 @@ internal fun lookEffect(adjustments: Adjustments): RenderEffect {
 private val BLUR_SHADER = """
 uniform shader content;
 uniform int count;
-uniform float4 areas[${VideoProject.MAX_BLURS}];
-uniform float4 looks[${VideoProject.MAX_BLURS}];
+uniform float4 areas[${VideoProject.MAX_REGIONS}];
+uniform float4 looks[${VideoProject.MAX_REGIONS}];
 
 half4 main(float2 p) {
     half4 color = content.eval(p);
-    for (int i = 0; i < ${VideoProject.MAX_BLURS}; i++) {
+    for (int i = 0; i < ${VideoProject.MAX_REGIONS}; i++) {
         if (i >= count) break;
         float4 a = areas[i];
         float4 l = looks[i];

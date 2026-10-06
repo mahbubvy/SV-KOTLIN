@@ -31,8 +31,8 @@ precision highp float;
 uniform sampler2D uTexSampler;
 uniform vec2 uSize;
 uniform int uCount;
-uniform vec4 uAreas[${VideoProject.MAX_BLURS}];
-uniform vec4 uLooks[${VideoProject.MAX_BLURS}];
+uniform vec4 uAreas[${VideoProject.MAX_REGIONS}];
+uniform vec4 uLooks[${VideoProject.MAX_REGIONS}];
 varying vec2 vTexSamplingCoord;
 
 vec4 at(vec2 p) { return texture2D(uTexSampler, vec2(p.x / uSize.x, 1.0 - p.y / uSize.y)); }
@@ -40,7 +40,7 @@ vec4 at(vec2 p) { return texture2D(uTexSampler, vec2(p.x / uSize.x, 1.0 - p.y / 
 void main() {
     vec2 p = vec2(vTexSamplingCoord.x, 1.0 - vTexSamplingCoord.y) * uSize;
     vec4 color = texture2D(uTexSampler, vTexSamplingCoord);
-    for (int i = 0; i < ${VideoProject.MAX_BLURS}; i++) {
+    for (int i = 0; i < ${VideoProject.MAX_REGIONS}; i++) {
         if (i >= uCount) break;
         vec4 a = uAreas[i];
         vec4 l = uLooks[i];
@@ -68,10 +68,10 @@ void main() {
  * is the clip's start.
  */
 @OptIn(UnstableApi::class)
-internal class BlurRegionsEffect(private val blurs: List<Sticker>, private val clipStartMs: Long) : GlEffect {
-    override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram = Program(blurs, clipStartMs)
+internal class BlurRegionsEffect(private val regions: List<Sticker>, private val clipStartMs: Long) : GlEffect {
+    override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram = Program(regions, clipStartMs)
 
-    private class Program(private val blurs: List<Sticker>, private val clipStartMs: Long) : BaseGlShaderProgram(false, 1) {
+    private class Program(private val regions: List<Sticker>, private val clipStartMs: Long) : BaseGlShaderProgram(false, 1) {
         private val program = GlProgram(VERTEX, FRAGMENT).apply {
             setBufferAttribute("aFramePosition", GlUtil.getNormalizedCoordinateBounds(), GlUtil.HOMOGENEOUS_COORDINATE_VECTOR_SIZE)
         }
@@ -87,7 +87,7 @@ internal class BlurRegionsEffect(private val blurs: List<Sticker>, private val c
 
         override fun drawFrame(inputTexId: Int, presentationTimeUs: Long) {
             if (firstUs == C.TIME_UNSET) firstUs = presentationTimeUs
-            val u = blurUniforms(blurs, clipStartMs + (presentationTimeUs - firstUs) / 1_000, 0f, 0f, width.toFloat(), height.toFloat())
+            val u = blurUniforms(regions, clipStartMs + (presentationTimeUs - firstUs) / 1_000, 0f, 0f, width.toFloat(), height.toFloat())
             try {
                 program.use()
                 program.setSamplerTexIdUniform("uTexSampler", inputTexId, 0)
@@ -95,8 +95,8 @@ internal class BlurRegionsEffect(private val blurs: List<Sticker>, private val c
                 program.setIntUniform("uCount", u.count)
                 program.bindAttributesAndUniforms()
                 // Arrays go straight to GL; GlProgram sets one element at a time.
-                GLES20.glUniform4fv(program.getUniformLocation("uAreas"), VideoProject.MAX_BLURS, u.areas, 0)
-                GLES20.glUniform4fv(program.getUniformLocation("uLooks"), VideoProject.MAX_BLURS, u.looks, 0)
+                GLES20.glUniform4fv(program.getUniformLocation("uAreas"), VideoProject.MAX_REGIONS, u.areas, 0)
+                GLES20.glUniform4fv(program.getUniformLocation("uLooks"), VideoProject.MAX_REGIONS, u.looks, 0)
                 GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
             } catch (e: GlUtil.GlException) {
                 throw VideoFrameProcessingException(e, presentationTimeUs)

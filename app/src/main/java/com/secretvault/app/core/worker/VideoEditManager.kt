@@ -201,10 +201,10 @@ class VideoEditManager(
                     )
                     .build()
             ).apply {
-                if (frame != null || clip.muted || clip.blurs.isNotEmpty()) setEffects(Effects(
+                if (frame != null || clip.muted || clip.regions.isNotEmpty()) setEffects(Effects(
                     if (clip.muted) listOf(MuteAudioProcessor(listOf(VideoSegment(0L, Long.MAX_VALUE / 2_000)))) else emptyList(),
                     // Blur first, on the clip's own frame, so it stays on what it covers however the clip is fitted.
-                    listOfNotNull(clip.blurs.takeIf { it.isNotEmpty() }?.let { BlurRegionsEffect(it, clip.startMs) }) +
+                    listOfNotNull(clip.regions.takeIf { it.isNotEmpty() }?.let { BlurRegionsEffect(it, clip.startMs) }) +
                     (frame?.let { (width, height) ->
                         listOfNotNull(
                             Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT),

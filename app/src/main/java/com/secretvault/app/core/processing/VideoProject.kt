@@ -6,8 +6,9 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * One piece of a project: [media] played from [startMs] to [endMs] of its own timeline. [blurs] are kept in the
- * source's own time and frame, so trimming, splitting and framing the clip keep them on what they cover.
+ * One piece of a project: [media] played from [startMs] to [endMs] of its own timeline. [regions] (blur regions and
+ * stickers that follow a face) are kept in the source's own time and frame, so trimming, splitting and framing the clip
+ * keep them on what they cover.
  */
 data class Clip(
     val media: MediaItem,
@@ -17,7 +18,7 @@ data class Clip(
     val muted: Boolean = false,
     val framing: Framing = Framing(),
     val adjustments: Adjustments = Adjustments(),
-    val blurs: List<Sticker> = emptyList(),
+    val regions: List<Sticker> = emptyList(),
     val id: String = UUID.randomUUID().toString()
 ) {
     val durationMs: Long get() = endMs - startMs
@@ -53,7 +54,7 @@ data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<
         val cut = clip.startMs + offset
         // The second half gets its own blur ids, so every layer id in the project is unique.
         return replace(index, listOf(clip.copy(endMs = cut),
-            clip.copy(startMs = cut, id = UUID.randomUUID().toString(), blurs = clip.blurs.map { it.copy(id = UUID.randomUUID().toString()) })))
+            clip.copy(startMs = cut, id = UUID.randomUUID().toString(), regions = clip.regions.map { it.copy(id = UUID.randomUUID().toString()) })))
     }
 
     /** Sets clip [index] to play [startMs]..[endMs] of its source, kept inside the source and at least [MIN_CLIP_MS]. */
@@ -124,53 +125,53 @@ data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<
      * reach past its clip's trimmed ends, where it isn't shown.
      */
     val layers: List<Sticker>
-        get() = stickers + clips.flatMapIndexed { i, c -> c.blurs.map { it.shifted(outputStartOf(i) - c.startMs) } }
+        get() = stickers + clips.flatMapIndexed { i, c -> c.regions.map { it.shifted(outputStartOf(i) - c.startMs) } }
 
     /** The clip holding blur region [id], or -1 for a sticker or an unknown id. */
-    fun blurClipOf(id: String): Int = clips.indexOfFirst { c -> c.blurs.any { it.id == id } }
+    fun regionClipOf(id: String): Int = clips.indexOfFirst { c -> c.regions.any { it.id == id } }
 
-    /** Adds a blur region to the clip at [atOutputMs], from there to the clip's end; ignored at [MAX_BLURS]. */
+    /** Adds a blur region to the clip at [atOutputMs], from there to the clip's end; ignored at [MAX_REGIONS]. */
     fun addBlur(atOutputMs: Long): VideoProject {
         val (index, offset) = clipAt(atOutputMs) ?: return this
         val clip = clips[index]
-        if (clip.blurs.size >= MAX_BLURS) return this
+        if (clip.regions.size >= MAX_REGIONS) return this
         val start = minOf(clip.startMs + offset, clip.endMs - MIN_CLIP_MS)
         val blur = Sticker(StickerSource.Blur(), start, clip.endMs, Placement(widthFraction = 0.3f, stretch = 1.3f))
-        return replace(index, listOf(clip.copy(blurs = clip.blurs + blur)))
+        return replace(index, listOf(clip.copy(regions = clip.regions + blur)))
     }
 
-    /** Adds [blurs] (in source time) to clip [index], as many as fit under [MAX_BLURS]. */
-    fun addBlurs(index: Int, blurs: List<Sticker>): VideoProject {
+    /** Adds [regions] (in source time) to clip [index], as many as fit under [MAX_REGIONS]. */
+    fun addRegions(index: Int, regions: List<Sticker>): VideoProject {
         val clip = clips.getOrNull(index) ?: return this
-        val room = (MAX_BLURS - clip.blurs.size).coerceAtLeast(0)
-        return replace(index, listOf(clip.copy(blurs = clip.blurs + blurs.take(room).map { fitBlur(it, clip) })))
+        val room = (MAX_REGIONS - clip.regions.size).coerceAtLeast(0)
+        return replace(index, listOf(clip.copy(regions = clip.regions + regions.take(room).map { fitRegion(it, clip) })))
     }
 
     /** Changes sticker or blur region [id] as seen in output time (see [layers]); blur regions are kept in their source. */
     fun updateLayer(id: String, change: (Sticker) -> Sticker): VideoProject {
-        val index = blurClipOf(id)
+        val index = regionClipOf(id)
         if (index < 0) return updateSticker(id, change)
         val clip = clips[index]
         val shift = outputStartOf(index) - clip.startMs
-        return replace(index, listOf(clip.copy(blurs = clip.blurs.map { if (it.id == id) fitBlur(change(it.shifted(shift)).shifted(-shift), clip) else it })))
+        return replace(index, listOf(clip.copy(regions = clip.regions.map { if (it.id == id) fitRegion(change(it.shifted(shift)).shifted(-shift), clip) else it })))
     }
 
     fun deleteLayer(id: String): VideoProject =
-        copy(stickers = stickers.filter { it.id != id }, clips = clips.map { c -> if (c.blurs.any { it.id == id }) c.copy(blurs = c.blurs.filter { it.id != id }) else c })
+        copy(stickers = stickers.filter { it.id != id }, clips = clips.map { c -> if (c.regions.any { it.id == id }) c.copy(regions = c.regions.filter { it.id != id }) else c })
 
     fun canDuplicate(id: String): Boolean {
-        val index = blurClipOf(id)
-        return if (index < 0) stickers.size < MAX_STICKERS else clips[index].blurs.size < MAX_BLURS
+        val index = regionClipOf(id)
+        return if (index < 0) stickers.size < MAX_STICKERS else clips[index].regions.size < MAX_REGIONS
     }
 
     /** Adds a copy of sticker or blur region [id] a little down and right of it, keys and all. */
     fun duplicateLayer(id: String): VideoProject {
-        val index = blurClipOf(id)
+        val index = regionClipOf(id)
         if (index < 0) return duplicateSticker(id)
         val clip = clips[index]
         if (!canDuplicate(id)) return this
-        val copy = clip.blurs.first { it.id == id }.nudged()
-        return replace(index, listOf(clip.copy(blurs = clip.blurs + copy)))
+        val copy = clip.regions.first { it.id == id }.nudged()
+        return replace(index, listOf(clip.copy(regions = clip.regions + copy)))
     }
 
     // Stickers follow the video's length; with no video left there is nothing to put them on.
@@ -186,7 +187,7 @@ data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<
     }
 
     // A blur region stays inside its source; it may reach past the clip's trimmed ends.
-    private fun fitBlur(blur: Sticker, clip: Clip): Sticker {
+    private fun fitRegion(blur: Sticker, clip: Clip): Sticker {
         val start = blur.startMs.coerceIn(0L, clip.sourceDurationMs - MIN_CLIP_MS)
         return blur.copy(startMs = start, endMs = blur.endMs.coerceIn(start + MIN_CLIP_MS, clip.sourceDurationMs))
     }
@@ -195,7 +196,7 @@ data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<
         const val MIN_CLIP_MS = 500L
         const val MAX_STICKERS = 10
         /** Per clip; the export shader has room for this many. */
-        const val MAX_BLURS = 16
+        const val MAX_REGIONS = 16
         const val DEFAULT_STICKER_MS = 3_000L
     }
 }
@@ -252,7 +253,7 @@ data class Keyframe(val atMs: Long, val placement: Placement)
 /**
  * An image or blur region over the video from [startMs] to [endMs]: output time for a sticker, its clip's source time
  * for a blur region. Without [keys] it stays at [placement], last set [placedAtMs] after it appears; with keys it
- * glides in straight lines from one to the next, holding the first before it and the last after it.
+ * glides smoothly from one to the next, holding the first before it and the last after it.
  */
 data class Sticker(
     val source: StickerSource,
@@ -271,11 +272,30 @@ data class Sticker(
         if (next < 0) return keys.last().placement
         val a = keys[next - 1]
         val b = keys[next]
-        val f = (at - a.atMs).toFloat() / (b.atMs - a.atMs)
-        fun mix(x: Float, y: Float) = x + (y - x) * f
-        return Placement(mix(a.placement.centerX, b.placement.centerX), mix(a.placement.centerY, b.placement.centerY),
-            mix(a.placement.widthFraction, b.placement.widthFraction), mix(a.placement.rotation, b.placement.rotation),
-            mix(a.placement.stretch, b.placement.stretch))
+        val before = keys.getOrNull(next - 2)
+        val after = keys.getOrNull(next + 1)
+        val span = (b.atMs - a.atMs).coerceAtLeast(1L).toFloat()
+        val f = (at - a.atMs) / span
+        // A smooth curve through the keys (cubic Hermite) whose slope at each key never overshoots its neighbours, so
+        // a sticker held still between two keys stays still; with only two keys it's a straight line.
+        fun curve(value: (Placement) -> Float): Float {
+            val f2 = f * f
+            val f3 = f2 * f
+            return (2 * f3 - 3 * f2 + 1) * value(a.placement) + (f3 - 2 * f2 + f) * span * slope(before, a, b, value) +
+                (-2 * f3 + 3 * f2) * value(b.placement) + (f3 - f2) * span * slope(a, b, after, value)
+        }
+        return Placement(curve { it.centerX }, curve { it.centerY }, curve { it.widthFraction }, curve { it.rotation }, curve { it.stretch })
+    }
+
+    // How fast [value] changes per ms at [key]: the average of the straight slopes either side, flattened where they
+    // disagree in direction and capped so the curve can't swing past a neighbouring key (Fritsch–Carlson).
+    private fun slope(prev: Keyframe?, key: Keyframe, next: Keyframe?, value: (Placement) -> Float): Float {
+        val d0 = prev?.let { (value(key.placement) - value(it.placement)) / (key.atMs - it.atMs).coerceAtLeast(1L) }
+        val d1 = next?.let { (value(it.placement) - value(key.placement)) / (it.atMs - key.atMs).coerceAtLeast(1L) }
+        if (d0 == null || d1 == null) return d0 ?: d1 ?: 0f
+        if (d0 * d1 <= 0f) return 0f
+        val m = (d0 + d1) / 2
+        return m.coerceIn(-3 * minOf(abs(d0), abs(d1)), 3 * minOf(abs(d0), abs(d1)))
     }
 
     /** The keyframe the playhead at [outputMs] is on, allowing for a playhead that lands a little off it. */

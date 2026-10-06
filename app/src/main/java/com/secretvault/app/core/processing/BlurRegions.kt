@@ -12,17 +12,17 @@ import kotlin.math.sin
 class BlurUniforms(val count: Int, val areas: FloatArray, val looks: FloatArray)
 
 /**
- * [blurs] (in source time) at [sourceMs], over a picture [width]×[height] pixels whose top-left is at [left],[top].
+ * [regions] (in source time) at [sourceMs], over a picture [width]×[height] pixels whose top-left is at [left],[top].
  * Strength is measured against the picture's short side, so a smaller preview looks like the full-size export.
  */
-fun blurUniforms(blurs: List<Sticker>, sourceMs: Long, left: Float, top: Float, width: Float, height: Float): BlurUniforms {
-    val areas = FloatArray(VideoProject.MAX_BLURS * 4)
-    val looks = FloatArray(VideoProject.MAX_BLURS * 4)
+fun blurUniforms(regions: List<Sticker>, sourceMs: Long, left: Float, top: Float, width: Float, height: Float): BlurUniforms {
+    val areas = FloatArray(VideoProject.MAX_REGIONS * 4)
+    val looks = FloatArray(VideoProject.MAX_REGIONS * 4)
     val short = min(width, height)
     var n = 0
-    for (b in blurs) {
+    for (b in regions) {
         val look = b.source as? StickerSource.Blur ?: continue
-        if (sourceMs !in b.startMs until b.endMs || n == VideoProject.MAX_BLURS) continue
+        if (sourceMs !in b.startMs until b.endMs || n == VideoProject.MAX_REGIONS) continue
         val p = b.placementAt(sourceMs)
         val halfW = p.widthFraction * width / 2
         val a = Math.toRadians(p.angle.toDouble())
