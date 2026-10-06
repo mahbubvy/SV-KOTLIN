@@ -139,6 +139,13 @@ data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<
         return replace(index, listOf(clip.copy(blurs = clip.blurs + blur)))
     }
 
+    /** Adds [blurs] (in source time) to clip [index], as many as fit under [MAX_BLURS]. */
+    fun addBlurs(index: Int, blurs: List<Sticker>): VideoProject {
+        val clip = clips.getOrNull(index) ?: return this
+        val room = (MAX_BLURS - clip.blurs.size).coerceAtLeast(0)
+        return replace(index, listOf(clip.copy(blurs = clip.blurs + blurs.take(room).map { fitBlur(it, clip) })))
+    }
+
     /** Changes sticker or blur region [id] as seen in output time (see [layers]); blur regions are kept in their source. */
     fun updateLayer(id: String, change: (Sticker) -> Sticker): VideoProject {
         val index = blurClipOf(id)

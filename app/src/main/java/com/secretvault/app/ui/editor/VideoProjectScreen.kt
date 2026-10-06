@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.Diamond
 import androidx.compose.material.icons.filled.EmojiEmotions
+import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
@@ -70,6 +71,7 @@ import androidx.media3.exoplayer.SeekParameters
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -105,6 +107,8 @@ import com.secretvault.app.core.processing.BlurStyle
 import com.secretvault.app.core.processing.Clip
 import com.secretvault.app.core.processing.blurUniforms
 import com.secretvault.app.core.processing.Framing
+import com.secretvault.app.core.processing.FoundFace
+import com.secretvault.app.core.processing.scanFaces
 import com.secretvault.app.core.processing.Sticker
 import com.secretvault.app.core.processing.StickerSource
 import com.secretvault.app.core.processing.VideoProject
@@ -112,7 +116,9 @@ import com.secretvault.app.core.processing.snapAngle
 import com.secretvault.app.core.worker.VideoEditState
 import com.secretvault.app.ui.gallery.components.StableEncryptedThumbnail
 import com.secretvault.app.ui.theme.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -147,6 +153,10 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     var stickerId by remember { mutableStateOf<String?>(null) }
     var showStickerPicker by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf<Panel?>(null) }
+    // Face scan: progress while it runs, then the faces found on that clip (by id) to choose from.
+    var scanProgress by remember { mutableStateOf<Float?>(null) }
+    var scanJob by remember { mutableStateOf<Job?>(null) }
+    var found by remember { mutableStateOf<Pair<String, List<FoundFace>>?>(null) }
     val latestProject by rememberUpdatedState(project)
     val clip = project.clips.getOrNull(selected)
     // The selected sticker or blur region (stickerId covers both), in output time; blurLook is set for a blur region.
@@ -532,6 +542,25 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     project = project.addBlur(positionMs)
                     stickerId = onScreen?.let { project.clips[it].blurs.lastOrNull()?.id }
                 }
+                // Scans the clip at the playhead (its trimmed part) and offers a blur region per face found.
+                Tool(Icons.Default.Face, "Faces", ready && onScreen != null && scanProgress == null) {
+                    val target = project.clips[onScreen ?: return@Tool]
+                    player.pause()
+                    scanProgress = 0f
+                    scanJob = scope.launch {
+                        try {
+                            val faces = scanFaces(app.cryptoEngine, target) { p -> scope.launch { scanProgress = p } }
+                            if (faces.isEmpty()) Toast.makeText(context, "No faces found in this clip", Toast.LENGTH_SHORT).show()
+                            else found = target.id to faces
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Couldn't scan this clip for faces", Toast.LENGTH_SHORT).show()
+                        } finally {
+                            scanProgress = null
+                        }
+                    }
+                }
             }
         }
     }
@@ -552,6 +581,29 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
         val before = project.stickers.size
         project = project.addSticker(source, positionMs)
         if (project.stickers.size > before) { player.pause(); stickerId = project.stickers.last().id }
+    }
+
+    scanProgress?.let { progress ->
+        AlertDialog(onDismissRequest = {}, containerColor = VaultSurface,
+            title = { Text("Finding faces", color = TextPrimary) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LinearProgressIndicator(progress = { progress }, color = VaultAccent, modifier = Modifier.fillMaxWidth())
+                    Text("${(progress * 100).roundToInt()}%", color = TextSecondary, fontSize = 13.sp)
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { scanJob?.cancel() }) { Text("Cancel", color = VaultAccent) } })
+    }
+
+    found?.let { (clipId, faces) ->
+        FoundFacesDialog(faces, onDismiss = { found = null }) { chosen ->
+            found = null
+            val index = project.clips.indexOfFirst { it.id == clipId }
+            val room = VideoProject.MAX_BLURS - (project.clips.getOrNull(index)?.blurs?.size ?: return@FoundFacesDialog)
+            project = project.addBlurs(index, chosen.map { it.blur })
+            if (chosen.size > room) Toast.makeText(context, "Only ${VideoProject.MAX_BLURS} blur regions fit on one clip", Toast.LENGTH_SHORT).show()
+        }
     }
 
     if (confirmDiscard) AlertDialog(onDismissRequest = { confirmDiscard = false }, containerColor = VaultSurface,
@@ -1008,4 +1060,36 @@ private fun Sticker.covers(point: Offset, shown: Shown, outputMs: Long): Boolean
     val halfW = p.widthFraction * shown.picture.width / 2
     val halfH = halfW * p.stretch
     return if (look.oval) (d.x / halfW).let { it * it } + (d.y / halfH).let { it * it } <= 1f else abs(d.x) <= halfW && abs(d.y) <= halfH
+}
+
+/** The faces a scan found, all ticked: untick any that should stay visible, then blur the rest. */
+@Composable
+private fun FoundFacesDialog(faces: List<FoundFace>, onDismiss: () -> Unit, onBlur: (List<FoundFace>) -> Unit) {
+    var keep by remember(faces) { mutableStateOf(emptySet<FoundFace>()) }
+    val chosen = faces.filter { it !in keep }
+    AlertDialog(onDismissRequest = onDismiss, containerColor = VaultSurface,
+        title = { Text(if (faces.size == 1) "1 face found" else "${faces.size} faces found", color = TextPrimary) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Untick any face that should stay visible.", color = TextSecondary, fontSize = 13.sp)
+                LazyVerticalGrid(GridCells.Adaptive(88.dp), Modifier.heightIn(max = 320.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(faces) { face ->
+                        val ticked = face !in keep
+                        Box(Modifier.aspectRatio(1f).clip(RoundedCornerShape(8.dp)).background(VaultDarkBg)
+                            .clickable { keep = if (ticked) keep + face else keep - face }) {
+                            face.preview?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                            Checkbox(ticked, onCheckedChange = null, modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+                                colors = CheckboxDefaults.colors(checkedColor = VaultAccent, uncheckedColor = Color.White))
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onBlur(chosen) }, enabled = chosen.isNotEmpty()) {
+                Text(if (chosen.size == 1) "Blur 1 face" else "Blur ${chosen.size} faces", color = if (chosen.isNotEmpty()) VaultAccent else TextMuted)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = TextSecondary) } })
 }
