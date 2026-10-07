@@ -53,6 +53,21 @@ class VideoProjectTest {
         assertNull(VideoProject().clipAt(0))
     }
 
+    @Test fun previewKeepsBlurOnHeldLastFrameWithoutExtendingItsTimeWindow() {
+        val trimmed = VideoProject().add(a, 10_000).trim(0, 2_000, 8_000).addBlur(5_500)
+        fun count(at: Long) = requireNotNull(trimmed.previewClipAt(at)).let { (index, offset) ->
+            val clip = trimmed.clips[index]
+            blurUniforms(clip.regions, clip.startMs + offset, 0f, 0f, 640f, 360f).count
+        }
+        assertEquals(0, count(5_499))
+        assertEquals(1, count(5_500))
+        assertEquals(1, count(trimmed.durationMs))
+        assertEquals(0 to 5_999L, trimmed.previewClipAt(trimmed.durationMs))
+        assertEquals(0, blurUniforms(trimmed.clips[0].regions, 8_000, 0f, 0f, 640f, 360f).count)
+        assertEquals(1 to 0L, trimmed.add(b, 4_000).previewClipAt(6_000))
+        assertNull(VideoProject().previewClipAt(0))
+    }
+
     @Test fun splitCutsTheClipUnderThePlayhead() {
         val split = project.split(3_000)
         assertEquals(listOf(a to (0L to 3_000L), a to (3_000L to 10_000L), b to (0L to 4_000L)),

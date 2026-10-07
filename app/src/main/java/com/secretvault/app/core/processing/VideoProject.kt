@@ -79,6 +79,11 @@ data class VideoProject(val clips: List<Clip> = emptyList(), val stickers: List<
         return null
     }
 
+    /** The preview holds the last frame at the exclusive timeline end; seek and effects must use the same time. */
+    fun previewClipAt(outputMs: Long): Pair<Int, Long>? = clipAt(outputMs)?.let { (index, offset) ->
+        index to offset.coerceAtMost(clips[index].durationMs - 1)
+    }
+
     fun add(media: MediaItem, sourceDurationMs: Long): VideoProject =
         if (sourceDurationMs < MIN_CLIP_MS) this else withClips(clips + Clip(media, sourceDurationMs))
 

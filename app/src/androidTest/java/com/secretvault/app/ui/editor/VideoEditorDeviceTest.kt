@@ -51,6 +51,17 @@ class VideoEditorDeviceTest {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
         val pin = requireNotNull(InstrumentationRegistry.getArguments().getString("vaultPin")) { "Pass the locally authorized vault PIN as a test argument" }
+        // A process crash can skip finally; recover only this test's uniquely named cache fixtures.
+        val stale = app.mediaRepository.getMedia().first().filter {
+            it.id.startsWith("project-layout-") && it.originalName == it.id &&
+                File(it.encryptedPath).parentFile == File(app.cacheDir, it.id)
+        }
+        app.mediaRepository.deleteMedia(stale)
+        stale.forEach { item ->
+            val owned = File(app.cacheDir, item.id)
+            owned.listFiles().orEmpty().forEach { it.delete() }
+            owned.delete()
+        }
         val directory = File(app.cacheDir, "project-layout-${UUID.randomUUID()}").apply { mkdirs() }
         val input = File(directory, "input.mp4")
         val encrypted = File(directory, "source.enc")
@@ -58,8 +69,6 @@ class VideoEditorDeviceTest {
         val previousDraft = manager.draft
         val previousPosition = manager.draftPositionMs
         val previousHistory = manager.draftHistory
-        val biometric = app.pinManager.isBiometricEnabled()
-        val keepOpen = app.sessionManager.keepUnlocked.value
         val wasUnlocked = app.sessionManager.isUnlocked.value
         try {
             instrumentation.context.assets.open("video-edit-fixture.mp4").use { source -> input.outputStream().use { source.copyTo(it) } }
@@ -69,24 +78,16 @@ class VideoEditorDeviceTest {
             val project = VideoProject().add(item, 12_000).trim(0, 0, 6_000).add(item, 12_000).trim(1, 6_000, 12_000)
                 .addSticker(StickerSource.Emoji("😀"), 2_000).addSticker(StickerSource.Emoji("❤️"), 3_000)
             instrumentation.runOnMainSync {
-                app.pinManager.setBiometricEnabled(false)
-                app.sessionManager.setKeepUnlocked(false)
                 manager.keepDraft(project, 0)
             }
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                assertTrue("Decoy unavailable: window=${instrumentation.uiAutomation.rootInActiveWindow?.packageName}, " +
-                    "locked=${app.getSystemService(KeyguardManager::class.java).isDeviceLocked}, " +
-                    "interactive=${app.getSystemService(android.os.PowerManager::class.java).isInteractive}", waitForText("San Francisco"))
-                repeat(8) {
-                    if (findNode("Visibility") == null) {
-                        val metrics = app.resources.displayMetrics
-                        swipe(metrics.widthPixels / 2f, metrics.heightPixels * 0.8f, metrics.widthPixels / 2f, metrics.heightPixels * 0.3f)
-                        SystemClock.sleep(200)
+                assertTrue("Authorized vault PIN was rejected", app.pinManager.verifyPin(pin))
+                scenario.onActivity { activity ->
+                    app.sessionManager.unlock()
+                    activity.setContent(parent = null) {
+                        SecretVaultTheme { VideoProjectScreen(app, onBack = {}) }
                     }
                 }
-                clickNode("Visibility")
-                assertTrue(waitForText("Enter PIN"))
-                pin.forEach { clickNode(it.toString()); SystemClock.sleep(120) }
                 assertTrue(waitForText("Export"))
                 assertNotNull(findNode("Video timeline"))
                 fun waitForProject(message: String, check: (VideoProject) -> Boolean) {
@@ -95,16 +96,36 @@ class VideoEditorDeviceTest {
                     assertTrue(message, manager.draft?.let(check) == true)
                 }
                 fun bounds(label: String) = Rect().also { requireNotNull(findNode(label)).getBoundsInScreen(it) }
+                fun screenshot(name: String, requireVideo: Boolean = false) {
+                    scenario.onActivity { it.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+                    try {
+                        SystemClock.sleep(500)
+                        val image = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+                        try {
+                            File(app.getExternalFilesDir(null), name).outputStream().use { image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                            if (requireVideo) {
+                                val pixel = image.getPixel(image.width / 4, image.height * 3 / 10)
+                                val rgb = listOf(android.graphics.Color.red(pixel), android.graphics.Color.green(pixel), android.graphics.Color.blue(pixel))
+                                assertTrue("Final-frame preview is blank: $name, pixel=$pixel", rgb.max() - rgb.min() > 80 && rgb.max() > 160)
+                            }
+                        }
+                        finally { image.recycle() }
+                    } finally { scenario.onActivity { it.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE) } }
+                }
+                val toolsY = bounds("Split").exactCenterY()
+                fun clickTool(label: String) {
+                    val width = app.resources.displayMetrics.widthPixels
+                    if (findNode(label) == null) swipe(width * 0.2f, toolsY, width * 0.85f, toolsY)
+                    repeat(4) { if (findNode(label) == null) swipe(width * 0.85f, toolsY, width * 0.2f, toolsY) }
+                    clickNode(label)
+                }
                 val addBefore = bounds("Add videos")
-                val muteBefore = bounds("Mute clip 1")
-                clickNode("Mute clip 1")
-                waitForProject("Mute did not affect its clip") { it.clips[0].muted }
-                clickNode("Undo")
-                waitForProject("Undo did not restore sound") { !it.clips[0].muted }
-                clickNode("Redo")
-                waitForProject("Redo did not restore mute") { it.clips[0].muted }
-                clickNode("Undo")
-                waitForProject("Undo did not restore sound") { !it.clips[0].muted }
+                assertNull(findNode("Mute clip 1"))
+                assertNull(findNode("Left"))
+                assertNull(findNode("Right"))
+                assertTrue(bounds("Split").left < bounds("Blur").left)
+                assertTrue(bounds("Blur").left < bounds("Faces").left)
+                assertTrue(bounds("Faces").left < bounds("Sticker").left)
                 SystemClock.sleep(500)
                 fun seek(ms: Float) {
                     assertTrue(requireNotNull(findNode("Video timeline")).performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id,
@@ -113,30 +134,26 @@ class VideoEditorDeviceTest {
                     assertEquals("Preview did not seek", ms.toDouble(), manager.draftPositionMs.toDouble(), 50.0)
                 }
                 seek(500f)
-                val muteScrolled = bounds("Mute clip 1")
-                assertTrue("Mute stayed fixed instead of following its clip", muteScrolled.left < muteBefore.left)
                 assertEquals("Add moved with the timeline", addBefore, bounds("Add videos"))
                 val timeline = bounds("Video timeline")
                 val dp = app.resources.displayMetrics.density
                 val y = timeline.top + 96 * dp
                 val center = timeline.centerX().toFloat()
+                swipe(center + 60 * dp, y, center + 24 * dp, y)
+                SystemClock.sleep(500)
+                val beforeZoomDelta = manager.draftPositionMs - 500
+                seek(500f)
                 pinch(center, y, 24 * dp, 48 * dp)
                 SystemClock.sleep(500)
-                assertTrue("Timeline pinch did not change scale", bounds("Mute clip 1").left < muteScrolled.left - (8 * dp).toInt())
+                swipe(center + 60 * dp, y, center + 24 * dp, y)
+                SystemClock.sleep(500)
+                val afterZoomDelta = manager.draftPositionMs - 500
+                assertTrue("Pinch did not reduce scrub distance in time", afterZoomDelta > 0 && afterZoomDelta < beforeZoomDelta * 0.75)
                 assertEquals("Pinching the ruler edited the project", project, manager.draft)
                 seek(0f)
-                scenario.onActivity { it.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
-                try {
-                    SystemClock.sleep(500)
-                    fun screenshot(name: String) {
-                        val image = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
-                        try { File(app.getExternalFilesDir(null), name).outputStream().use { image.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } }
-                        finally { image.recycle() }
-                    }
-                    screenshot("video-editor-layout.png")
-                    seek(3_000f)
-                    screenshot("video-editor-scrolled.png")
-                } finally { scenario.onActivity { it.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE) } }
+                screenshot("video-editor-layout.png")
+                seek(3_000f)
+                screenshot("video-editor-scrolled.png")
                 val start = manager.draftPositionMs
                 swipe(center + 60 * dp, y, center + 24 * dp, y)
                 SystemClock.sleep(500)
@@ -155,6 +172,18 @@ class VideoEditorDeviceTest {
                 waitForProject("Sticker track did not move") { it.stickers[0].startMs > 2_000 }
                 clickNode("Undo")
                 waitForProject("One undo did not restore the whole sticker gesture") { it.stickers[0].startMs == 2_000L }
+                seek(4_500f)
+                val selectSticker = requireNotNull(findNode("Video timeline"))
+                assertTrue(selectSticker.performAction(selectSticker.actionList.first { it.label?.toString() == "Select sticker 1" }.id))
+                SystemClock.sleep(150)
+                val timelineScale = 36 * dp / afterZoomDelta
+                val endX = center + 500 * timelineScale
+                swipe(endX, y, endX + 36 * dp, y)
+                waitForProject("Sticker end handle did not extend its duration") { it.stickers[0].endMs > 5_000 }
+                assertEquals("Extending a sticker scrolled the timeline", 4_500L, manager.draftPositionMs)
+                assertEquals(2_000L, manager.draft!!.stickers[0].startMs)
+                clickNode("Undo")
+                waitForProject("One undo did not restore the sticker duration") { it.stickers[0].endMs == 5_000L }
                 seek(3_000f)
                 clickNode("Split")
                 waitForProject("Split did not create a clip") { it.clips.size == 3 }
@@ -170,10 +199,6 @@ class VideoEditorDeviceTest {
                     SystemClock.sleep(150)
                 }
                 selectFirst()
-                clickNode("Right")
-                waitForProject("Right did not reorder clips") { it.clips[1].id == project.clips[0].id }
-                clickNode("Left")
-                waitForProject("Left did not restore clip order") { it.clips[0].id == project.clips[0].id }
                 clickNode("Delete")
                 waitForProject("Delete did not remove the clip") { it.clips.size == 1 }
                 clickNode("Delete")
@@ -187,10 +212,32 @@ class VideoEditorDeviceTest {
                 clickNode(item.originalName)
                 clickNode("Add (1)")
                 waitForProject("Add did not append the selected video") { it.clips.size == 3 }
+                seek(7_000f)
+                clickTool("Size")
+                assertEquals("Size jumped from the middle clip", 7_000L, manager.draftPositionMs)
+                val middleZoom = bounds("Zoom")
+                swipe(middleZoom.left + middleZoom.width() * 0.3f, middleZoom.exactCenterY(),
+                    middleZoom.left + middleZoom.width() * 0.6f, middleZoom.exactCenterY())
+                waitForProject("Size changed the wrong clip") {
+                    it.clips[1].framing.zoom > 1.2f && it.clips[0].framing.zoom == 1f && it.clips[2].framing.zoom == 1f
+                }
+                clickNode("Undo")
+                waitForProject("Undo did not restore the middle clip size") { it.clips[1].framing.zoom == 1f }
+                clickNode("Play")
+                assertTrue(waitForText("Pause"))
+                val preview = bounds("Video preview")
+                swipe(preview.exactCenterX(), preview.exactCenterY(), preview.exactCenterX(), preview.exactCenterY())
+                assertTrue("Touching Size preview did not pause", waitForText("Play"))
+                val pausedAt = manager.draftPositionMs
+                SystemClock.sleep(250)
+                swipe(preview.exactCenterX(), preview.exactCenterY(), preview.exactCenterX(), preview.exactCenterY())
+                SystemClock.sleep(250)
+                assertEquals("Touching Size preview resumed playback", pausedAt, manager.draftPositionMs)
+                clickNode("Done")
                 clickNode("Undo")
                 waitForProject("Undo did not remove the added clip") { it.clips.size == 2 }
                 selectFirst()
-                clickNode("Size")
+                clickTool("Size")
                 val zoom = bounds("Zoom")
                 swipe(zoom.left + zoom.width() * 0.3f, zoom.exactCenterY(), zoom.left + zoom.width() * 0.6f, zoom.exactCenterY())
                 waitForProject("Zoom slider did not change framing; bounds=$zoom") { it.clips[0].framing.zoom > 1.2f }
@@ -213,7 +260,7 @@ class VideoEditorDeviceTest {
                 clickNode("Undo")
                 waitForProject("Undo did not restore framing") { it.clips[0].framing.angle == 90f }
                 clickNode("Size"); clickNode("Reset"); clickNode("Done")
-                clickNode("Adjust")
+                clickTool("Adjust")
                 val brightness = bounds("Brightness")
                 swipe(brightness.left + brightness.width() * 0.5f, brightness.exactCenterY(), brightness.left + brightness.width() * 0.7f, brightness.exactCenterY())
                 waitForProject("Adjustment slider did not change the clip") { !it.clips[0].adjustments.isNone }
@@ -238,7 +285,6 @@ class VideoEditorDeviceTest {
                     clickNode(adjustment.label)
                 }
                 clickNode("Done")
-                val toolsY = bounds("Split").exactCenterY()
                 swipe(app.resources.displayMetrics.widthPixels * 0.85f, toolsY, app.resources.displayMetrics.widthPixels * 0.2f, toolsY)
                 clickNode("Sticker")
                 assertTrue(waitForText("Add sticker"))
@@ -268,25 +314,51 @@ class VideoEditorDeviceTest {
                 clickNode("Undo")
                 waitForProject("Undo did not restore the sticker") { it.stickers.size == 3 }
                 selectFirst()
-                repeat(4) {
-                    if (findNode("Blur") == null) swipe(app.resources.displayMetrics.widthPixels * 0.85f, toolsY,
-                        app.resources.displayMetrics.widthPixels * 0.2f, toolsY)
-                }
-                clickNode("Blur")
-                waitForProject("Blur did not add a region") { it.clips[0].regions.size == 1 }
+                seek(11_900f)
+                screenshot("video-editor-tail-before.png")
+                seek(12_000f)
+                screenshot("video-editor-end-before.png", requireVideo = true)
+                clickTool("Blur")
+                waitForProject("Blur at the final frame did not add a region") { it.clips[1].regions.size == 1 }
+                val originalBlurId = manager.draft!!.clips[1].regions.single().id
+                clickTool("Done")
+                clickTool("Blur")
+                assertTrue(waitForText("Strength"))
+                assertEquals("Opening existing blur added another region", originalBlurId, manager.draft!!.clips[1].regions.single().id)
+                clickTool("Add blur")
+                waitForProject("Explicit Add blur did not create another region") { it.clips[1].regions.size == 2 }
+                clickNode("Undo")
+                waitForProject("Undo did not remove only the added blur") { it.clips[1].regions.size == 1 }
+                clickTool("Blur")
                 val strength = bounds("Strength")
+                assertTrue("Strength slider is outside the screen", strength.left >= 0 && strength.right <= app.resources.displayMetrics.widthPixels)
+                screenshot("video-editor-strength.png", requireVideo = true)
+                seek(11_700f)
+                val blurTimeline = bounds("Video timeline")
+                val blurStartX = blurTimeline.centerX() - 200 * timelineScale
+                val blurY = blurTimeline.top + 96 * dp
+                swipe(blurStartX, blurY, blurStartX - 36 * dp, blurY)
+                waitForProject("Blur start handle did not extend its duration") { it.clips[1].regions.single().startMs < 11_500 }
+                assertEquals("Extending blur scrolled the timeline", 11_700L, manager.draftPositionMs)
+                assertEquals(12_000L, manager.draft!!.clips[1].regions.single().endMs)
+                clickNode("Undo")
+                waitForProject("One undo did not restore blur duration") { it.clips[1].regions.single().startMs == 11_500L }
+                clickTool("Blur")
+                seek(11_900f)
+                screenshot("video-editor-tail-after.png")
                 swipe(strength.left + strength.width() * 0.5f, strength.exactCenterY(), strength.left + strength.width() * 0.8f, strength.exactCenterY())
-                val changedStrength = (manager.draft!!.clips[0].regions.single().source as StickerSource.Blur).strength
+                val changedStrength = (manager.draft!!.clips[1].regions.single().source as StickerSource.Blur).strength
                 clickNode("Undo")
                 waitForProject("Strength undo did not restore the region") {
-                    (it.clips[0].regions.single().source as StickerSource.Blur).strength != changedStrength
+                    (it.clips[1].regions.single().source as StickerSource.Blur).strength != changedStrength
                 }
                 clickNode("Undo")
-                waitForProject("Undo did not remove the blur region") { it.clips[0].regions.isEmpty() }
+                waitForProject("Undo did not remove the blur region") { it.clips[1].regions.isEmpty() }
                 clickNode("Back")
                 assertTrue(waitForText("Discard changes?"))
                 clickNode("Keep editing")
                 assertTrue(waitForText("Export"))
+                seek(3_000f)
                 clickNode("Play")
                 assertTrue(waitForText("Pause"))
                 clickNode("Pause")
@@ -295,14 +367,12 @@ class VideoEditorDeviceTest {
                 assertTrue(waitForText("Cutting video"))
                 clickNode("Cancel")
                 assertTrue(waitForText("Export"))
-                instrumentation.sendStatus(0, Bundle().apply { putString("editorLayoutResult", "Fixed Add; scrolling Mute; timeline seek/swipe/pinch; split, mute, framing and sticker undo/redo; discard recovery; generated-media screenshots") })
+                instrumentation.sendStatus(0, Bundle().apply { putString("editorLayoutResult", "Fixed Add; no Mute/Left/Right; Split/Blur/Faces/Sticker order; timeline seek/swipe/pinch; split, framing and sticker undo/redo; Strength in bounds; discard recovery; generated-media screenshots") })
             }
         } finally {
             instrumentation.runOnMainSync {
                 manager.keepDraft(previousDraft ?: VideoProject(), previousPosition, previousHistory)
-                app.pinManager.setBiometricEnabled(biometric)
                 app.sessionManager.unlock()
-                app.sessionManager.setKeepUnlocked(keepOpen)
                 if (!wasUnlocked) app.sessionManager.lock()
             }
             app.mediaRepository.getMedia().first().firstOrNull { it.id == directory.name }?.let {

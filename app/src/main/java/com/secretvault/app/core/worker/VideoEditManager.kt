@@ -19,7 +19,8 @@ import androidx.media3.transformer.Effects
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.MatrixTransformation
 import androidx.media3.effect.OverlayEffect
-import androidx.media3.effect.OverlaySettings
+import androidx.media3.common.OverlaySettings
+import androidx.media3.effect.StaticOverlaySettings
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.SingleColorLut
 import androidx.media3.transformer.ExportException
@@ -322,7 +323,7 @@ class VideoEditManager(
 @OptIn(UnstableApi::class)
 private class StickerOverlay(private val image: StickerImage, private val sticker: Sticker, private val frameWidth: Int) : BitmapOverlay() {
     private var firstUs = C.TIME_UNSET
-    private val hidden = OverlaySettings.Builder().setAlphaScale(0f).build()
+    private val hidden = StaticOverlaySettings.Builder().setAlphaScale(0f).build()
     private var last: Pair<Placement, OverlaySettings>? = null
 
     /** Milliseconds into the joined video, counted from the first frame the overlay sees. */
@@ -339,7 +340,7 @@ private class StickerOverlay(private val image: StickerImage, private val sticke
         val placement = sticker.placementAt(ms)
         last?.let { (p, settings) -> if (p == placement) return settings }
         val scale = placement.widthFraction * frameWidth / image.width
-        return OverlaySettings.Builder()
+        return StaticOverlaySettings.Builder()
             // The overlay starts at its own pixel size; scale it to its share of the frame's width.
             .setScale(scale, scale * placement.stretch)
             // Anchors are -1..1 with y pointing up; the model's fractions run from the top-left.

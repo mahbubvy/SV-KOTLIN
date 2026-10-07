@@ -26,8 +26,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.filled.Add
@@ -169,19 +167,27 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
     val player = remember {
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(EncryptedMediaDataSource.Factory(app.cryptoEngine)))
+            .experimentalSetDynamicSchedulingEnabled(true)
             .build()
     }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_ENDED) positionMs = latestProject.durationMs
+            }
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener); player.release() }
     }
     fun seekTo(outputMs: Long) {
-        history.current.clipAt(outputMs)?.let { (index, offset) -> player.seekTo(index, offset) }
+        history.current.previewClipAt(outputMs)?.let { (index, offset) ->
+            player.seekTo(index, offset)
+            selected = index
+        }
         positionMs = outputMs
     }
+
     fun restoreEdit(next: VideoProjectHistory) {
         player.pause()
         history = next
@@ -213,7 +219,10 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
             val current = latestProject
             val index = player.currentMediaItemIndex
             if (index in current.clips.indices) {
-                if (!touching) positionMs = current.outputStartOf(index) + player.currentPosition
+                if (!touching && player.isPlaying) {
+                    positionMs = current.outputStartOf(index) + player.currentPosition
+                    selected = index
+                }
                 player.volume = if (current.clips[index].muted) 0f else 1f
             }
         }
@@ -253,7 +262,8 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
 
     // The clip on screen's colour, drawn over the player as a shader built from the same table the export uses.
     // Android 13+ only (RuntimeShader); older phones still get it in the saved video.
-    val onScreenLook = project.clipAt(positionMs)?.let { (index, _) -> project.clips[index].adjustments } ?: Adjustments()
+    val previewPositionMs = project.previewClipAt(positionMs)?.let { (index, offset) -> project.outputStartOf(index) + offset } ?: positionMs
+    val onScreenLook = project.clipAt(previewPositionMs)?.let { (index, _) -> project.clips[index].adjustments } ?: Adjustments()
     val look by produceState<android.graphics.RenderEffect?>(null, onScreenLook) {
         value = if (onScreenLook.isNone || Build.VERSION.SDK_INT < 33) null else withContext(Dispatchers.Default) { lookEffect(onScreenLook) }
     }
@@ -341,32 +351,38 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
             val frameWPx = with(LocalDensity.current) { frameW.toPx() }
             val frameHPx = with(LocalDensity.current) { frameH.toPx() }
             val shown = project.shownAt(positionMs, clipSizes, frameWPx, frameHPx)
-            Box(Modifier.size(frameW, frameH).clipToBounds()
+            Box(Modifier.size(frameW, frameH).clipToBounds().semantics { contentDescription = "Video preview" }
                 // Tap: pick the sticker under the finger, or let go of the selected one, or play/pause.
                 .pointerInput(saving) {
                     if (saving) return@pointerInput
-                    detectTapGestures { tap ->
+                    detectTapGestures(onPress = {
+                        if (panel == Panel.SIZE) player.pause()
+                    }, onTap = { tap ->
                         if (history.current.clips.isEmpty()) return@detectTapGestures
+                        val atMs = history.current.previewClipAt(positionMs)?.let { (index, offset) ->
+                            history.current.outputStartOf(index) + offset
+                        } ?: positionMs
                         val hit = history.current.stickers.lastOrNull { s ->
                             val img = stickerImages[s.source.key] ?: return@lastOrNull false
-                            val p = s.placementAt(positionMs)
+                            val p = s.placementAt(atMs)
                             val w = p.widthFraction * size.width
                             val h = w * img.height / img.width
-                            (positionMs in s.startMs until s.endMs || s.id == stickerId) &&
+                            (atMs in s.startMs until s.endMs || s.id == stickerId) &&
                                 abs(tap.x - p.centerX * size.width) <= w / 2 && abs(tap.y - p.centerY * size.height) <= h / 2
-                        } ?: history.current.shownAt(positionMs, clipSizes, size.width.toFloat(), size.height.toFloat())?.let { on ->
+                        } ?: history.current.shownAt(atMs, clipSizes, size.width.toFloat(), size.height.toFloat())?.let { on ->
                             val point = toPicture(tap, size.width.toFloat(), size.height.toFloat(), on)
                             history.current.layers.lastOrNull { b ->
-                                (positionMs in b.startMs until b.endMs || b.id == stickerId) && history.current.regionClipOf(b.id) == on.index &&
-                                    b.covers(point, on, positionMs, stickerImages[b.source.key]?.let { it.height.toFloat() / it.width })
+                                (atMs in b.startMs until b.endMs || b.id == stickerId) && history.current.regionClipOf(b.id) == on.index &&
+                                    b.covers(point, on, atMs, stickerImages[b.source.key]?.let { it.height.toFloat() / it.width })
                             }
                         }
                         when {
-                            hit != null -> stickerId = hit.id
+                            hit != null -> { player.pause(); stickerId = hit.id }
                             stickerId != null -> stickerId = null
+                            panel == Panel.SIZE -> player.pause()
                             else -> togglePlay()
                         }
-                    }
+                    })
                 }
                 // Selected sticker: drag moves, pinch resizes, twist turns it (with keyframes, at the playhead's moment).
                 // Otherwise the same gestures frame the clip on screen, which becomes the selected clip.
@@ -454,11 +470,11 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                 }
                 project.stickers.forEach { s ->
                     val img = stickerImages[s.source.key] ?: return@forEach
-                    if (positionMs !in s.startMs until s.endMs && s.id != stickerId) return@forEach
-                    val p = s.placementAt(positionMs)
+                    if (previewPositionMs !in s.startMs until s.endMs && s.id != stickerId) return@forEach
+                    val p = s.placementAt(previewPositionMs)
                     val w = frameW * p.widthFraction
                     val h = w * img.height / img.width
-                    Image(img.frameAt(positionMs - s.startMs).asImageBitmap(), null, Modifier.offset(frameW * p.centerX - w / 2, frameH * p.centerY - h / 2).size(w, h)
+                    Image(img.frameAt(previewPositionMs - s.startMs).asImageBitmap(), null, Modifier.offset(frameW * p.centerX - w / 2, frameH * p.centerY - h / 2).size(w, h)
                         .graphicsLayer { rotationZ = p.angle })
                 }
                 fun duplicate(id: String) {
@@ -517,15 +533,13 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
             Text("${formatTime(positionMs)} / ${formatTime(project.durationMs)}", color = TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp))
             Box(Modifier.fillMaxWidth().background(Color.Black)) {
             Timeline(project, selected, sticker?.id, positionMs, frames, stickerImages, enabled = !saving,
-                onAdd = { showPicker = true }, onMute = { index -> edit(history.current.toggleMute(index)) },
-                onSelectSticker = { stickerId = it },
+                onAdd = { showPicker = true },
+                onSelectSticker = { player.pause(); stickerId = it },
                 // With a panel open, show the clip it now edits.
-                onSelect = { selected = it; stickerId = null; if (panel != null) seekTo(project.outputStartOf(it)) },
-                onStickerTime = { startMs, endMs, atEnd ->
+                onSelect = { player.pause(); selected = it; stickerId = null; if (panel != null) seekTo(project.outputStartOf(it)) },
+                onStickerTime = { startMs, endMs ->
                     val id = stickerId ?: return@Timeline
                     edit(history.current.updateLayer(id) { it.copy(startMs = startMs, endMs = endMs) })
-                    // Show the frame where it appears (or, dragging its end, disappears).
-                    history.current.layers.firstOrNull { it.id == id }?.let { seekTo(if (atEnd) it.endMs - 1 else it.startMs) }
                 },
                 onTouch = { down ->
                     touching = down
@@ -550,8 +564,10 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     else -> "${sticker.keys.size} keys. Drag or pinch here to add one."
                 }, color = TextMuted, fontSize = 12.sp, maxLines = 1)
                 fun setLook(look: StickerSource.Blur) { edit(history.current.updateLayer(sticker.id) { it.copy(source = look) }) }
-                if (blurLook != null) LabeledSlider("Strength", "${(blurLook.strength * 100).roundToInt()}%", blurLook.strength, 0f..1f, !saving, ::editGesture) {
-                    setLook(blurLook.copy(strength = it))
+                if (blurLook != null) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    LabeledSlider("Strength", "${(blurLook.strength * 100).roundToInt()}%", blurLook.strength, 0f..1f, !saving, ::editGesture) {
+                        setLook(blurLook.copy(strength = it))
+                    }
                 }
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     // A region on a clip (blur or face sticker) swaps between the two; a sticker over the video adds another.
@@ -566,6 +582,13 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                         }
                         Tool(if (blurLook.oval) Icons.Outlined.Circle else Icons.Outlined.CropSquare, if (blurLook.oval) "Oval" else "Rectangle", !saving) {
                             setLook(blurLook.copy(oval = !blurLook.oval))
+                        }
+                        Tool(Icons.Default.Add, "Add blur", !saving && project.clipAt(positionMs)?.first?.let {
+                            project.clips[it].regions.size < VideoProject.MAX_REGIONS
+                        } == true) {
+                            player.pause()
+                            edit(history.current.addBlur(positionMs))
+                            stickerId = history.current.clipAt(positionMs)?.first?.let { history.current.clips[it].regions.lastOrNull()?.id }
                         }
                     }
                     if (isRegion) Tool(Icons.Default.EmojiEmotions, if (blurLook != null) "Sticker" else "Change", !saving) { pickForRegion = sticker.id }
@@ -602,24 +625,18 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                     edit(project.split(positionMs))
                     if (history.current.clips.size == before) Toast.makeText(context, "Move the playhead away from the clip's edge to split", Toast.LENGTH_SHORT).show()
                 }
-                Tool(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Left", ready && selected > 0) {
-                    edit(project.move(selected, -1)); selected--
-                }
-                Tool(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Right", ready && selected < project.clips.lastIndex) {
-                    edit(project.move(selected, 1)); selected++
-                }
-                Tool(Icons.Default.Delete, "Delete", ready && clip != null) { edit(project.delete(selected)) }
-                Tool(Icons.Default.ZoomIn, "Size", ready && clip != null) { openPanel(Panel.SIZE) }
-                Tool(Icons.Default.Tune, "Adjust", ready && clip != null) { openPanel(Panel.ADJUST) }
-                Tool(Icons.Default.EmojiEmotions, "Sticker", ready && clip != null && project.stickers.size < VideoProject.MAX_STICKERS) {
-                    showStickerPicker = true
-                }
                 // On the clip at the playhead, from there to the clip's end.
                 val onScreen = project.clipAt(positionMs)?.first
-                Tool(Icons.Default.BlurOn, "Blur", ready && onScreen != null && project.clips[onScreen].regions.size < VideoProject.MAX_REGIONS) {
+                val existingBlur = project.layers.lastOrNull {
+                    it.source is StickerSource.Blur && project.regionClipOf(it.id) == onScreen && previewPositionMs in it.startMs until it.endMs
+                }
+                Tool(Icons.Default.BlurOn, "Blur", ready && onScreen != null &&
+                    (existingBlur != null || project.clips[onScreen].regions.size < VideoProject.MAX_REGIONS)) {
                     player.pause()
-                    edit(history.current.addBlur(positionMs))
-                    stickerId = onScreen?.let { history.current.clips[it].regions.lastOrNull()?.id }
+                    if (existingBlur != null) stickerId = existingBlur.id else {
+                        edit(history.current.addBlur(positionMs))
+                        stickerId = onScreen?.let { history.current.clips[it].regions.lastOrNull()?.id }
+                    }
                 }
                 // Scans the clip at the playhead (its trimmed part) and offers a blur region per face found.
                 Tool(Icons.Default.Face, "Faces", ready && onScreen != null && scanProgress == null) {
@@ -645,6 +662,12 @@ fun VideoProjectScreen(app: SecretVaultApp, onBack: () -> Unit) {
                         }
                     }
                 }
+                Tool(Icons.Default.EmojiEmotions, "Sticker", ready && clip != null && project.stickers.size < VideoProject.MAX_STICKERS) {
+                    showStickerPicker = true
+                }
+                Tool(Icons.Default.Delete, "Delete", ready && clip != null) { edit(project.delete(selected)) }
+                Tool(Icons.Default.ZoomIn, "Size", ready && clip != null) { openPanel(Panel.SIZE) }
+                Tool(Icons.Default.Tune, "Adjust", ready && clip != null) { openPanel(Panel.ADJUST) }
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -924,7 +947,7 @@ private class Shown(val index: Int, val clip: Clip, val sourceMs: Long, val pict
 
 /** In a [frameW]×[frameH] pixel frame, before the clip's framing; null until the clip's size is known. */
 private fun VideoProject.shownAt(outputMs: Long, sizes: Map<String, Pair<Int, Int>>, frameW: Float, frameH: Float): Shown? {
-    val (index, offset) = clipAt(outputMs) ?: return null
+    val (index, offset) = previewClipAt(outputMs) ?: return null
     val clip = clips[index]
     val (w, h) = sizes[clip.media.id] ?: return null
     val scale = min(frameW / w, frameH / h)

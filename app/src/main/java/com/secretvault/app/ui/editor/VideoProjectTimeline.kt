@@ -12,8 +12,6 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.VolumeOff
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material3.Icon
@@ -52,10 +50,10 @@ import kotlin.math.*
 @Composable
 internal fun Timeline(
     project: VideoProject, selected: Int, stickerId: String?, positionMs: Long, frames: Map<String, List<ImageBitmap>>,
-    stickerImages: Map<String, StickerImage?>, enabled: Boolean, onAdd: () -> Unit, onMute: (Int) -> Unit,
+    stickerImages: Map<String, StickerImage?>, enabled: Boolean, onAdd: () -> Unit,
     onSelect: (Int) -> Unit, onSelectSticker: (String?) -> Unit, onTouch: (Boolean) -> Unit, onScrub: (Long) -> Unit,
     onTrim: (start: Boolean, startMs: Long, endMs: Long) -> Unit,
-    onStickerTime: (startMs: Long, endMs: Long, atEnd: Boolean) -> Unit
+    onStickerTime: (startMs: Long, endMs: Long) -> Unit
 ) {
     var dpPerSecond by remember { mutableFloatStateOf(60f) }
     val pxPerMs = with(LocalDensity.current) { dpPerSecond.dp.toPx() } / 1000f
@@ -80,7 +78,6 @@ internal fun Timeline(
         onSelect, onSelectSticker, onTouch, onScrub, onTrim, onStickerTime))
 
     BoxWithConstraints(Modifier.fillMaxWidth().clipToBounds()) {
-        val viewportWidth = maxWidth
         val centrePx = with(density) { maxWidth.toPx() / 2f }
         val gutter = 64.dp
         val rulerHeight = maxOf(32.dp, with(density) { 16.sp.toDp() } + 8.dp)
@@ -128,8 +125,7 @@ internal fun Timeline(
                             setProgress { value -> onTouch(true); onScrub(value.toLong().coerceIn(0L, project.durationMs)); onTouch(false); true }
                             customActions = listOf(
                                 CustomAccessibilityAction("Zoom timeline in") { dpPerSecond = (dpPerSecond * 2).coerceAtMost(400f); true },
-                                CustomAccessibilityAction("Zoom timeline out") { dpPerSecond = (dpPerSecond / 2).coerceAtLeast(10f); true },
-                                CustomAccessibilityAction("Mute or unmute selected clip") { onMute(selected); true }
+                                CustomAccessibilityAction("Zoom timeline out") { dpPerSecond = (dpPerSecond / 2).coerceAtLeast(10f); true }
                             ) + project.clips.indices.map { index ->
                                 CustomAccessibilityAction("Select clip ${index + 1}") { onSelect(index); true }
                             } + layers.mapIndexed { index, sticker ->
@@ -204,12 +200,12 @@ internal fun Timeline(
                                         Drag.SCRUB -> now.onScrub((begin.positionMs - byMs).coerceIn(0L, begin.project.durationMs))
                                         Drag.CLIP_START -> now.onTrim(true, clip!!.startMs + byMs, clip.endMs)
                                         Drag.CLIP_END -> now.onTrim(false, clip!!.startMs, clip.endMs + byMs)
-                                        Drag.STICKER_START -> now.onStickerTime(sticker!!.startMs + byMs, sticker.endMs, false)
-                                        Drag.STICKER_END -> now.onStickerTime(sticker!!.startMs, sticker.endMs + byMs, true)
+                                        Drag.STICKER_START -> now.onStickerTime(sticker!!.startMs + byMs, sticker.endMs)
+                                        Drag.STICKER_END -> now.onStickerTime(sticker!!.startMs, sticker.endMs + byMs)
                                         Drag.STICKER_MOVE -> {
                                             val length = sticker!!.endMs - sticker.startMs
                                             val start = (sticker.startMs + byMs).coerceIn(0L, (begin.project.durationMs - length).coerceAtLeast(0L))
-                                            now.onStickerTime(start, start + length, false)
+                                            now.onStickerTime(start, start + length)
                                         }
                                     }
                                 }
@@ -300,16 +296,6 @@ internal fun Timeline(
                     }
                     drawLine(Color.White, Offset(centre, 0f), Offset(centre, size.height), strokeWidth = 2.dp.toPx())
                 }
-                project.clips.forEachIndexed { index, clip ->
-                    val x = with(density) { (centrePx + (project.outputStartOf(index) - positionMs) * pxPerMs).toDp() } + 12.dp
-                    if (index == selected && x >= gutter && x + 48.dp <= viewportWidth) {
-                        IconButton(onClick = { onMute(index) }, enabled = enabled,
-                            modifier = Modifier.offset(x = x, y = 8.dp).size(48.dp).background(Color.Black.copy(alpha = 0.8f), androidx.compose.foundation.shape.CircleShape)) {
-                            Icon(if (clip.muted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
-                                "${if (clip.muted) "Unmute" else "Mute"} clip ${index + 1}", tint = TextPrimary, modifier = Modifier.size(24.dp))
-                        }
-                    }
-                }
             }
         }
         Column(Modifier.width(gutter).height(rulerHeight + minOf(168.dp, VIDEO_ROW + if (laneCount > 0) LANE_GAP + LANE * laneCount else 0.dp))
@@ -344,5 +330,5 @@ private class TimelineState(
     val project: VideoProject, val selected: Int, val stickerId: String?, val positionMs: Long, val pxPerMs: Float,
     val layers: List<Sticker>, val lanes: Map<String, Int>,
     val onSelect: (Int) -> Unit, val onSelectSticker: (String?) -> Unit, val onTouch: (Boolean) -> Unit,
-    val onScrub: (Long) -> Unit, val onTrim: (Boolean, Long, Long) -> Unit, val onStickerTime: (Long, Long, Boolean) -> Unit
+    val onScrub: (Long) -> Unit, val onTrim: (Boolean, Long, Long) -> Unit, val onStickerTime: (Long, Long) -> Unit
 )

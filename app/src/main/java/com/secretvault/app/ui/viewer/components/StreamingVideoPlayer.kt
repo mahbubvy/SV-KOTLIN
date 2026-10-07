@@ -92,6 +92,7 @@ fun StreamingVideoPlayer(
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
+            .experimentalSetDynamicSchedulingEnabled(true)
             .build().apply {
                 val mediaUri = Uri.fromFile(File(item.encryptedPath))
                 setMediaItem(MediaItem.fromUri(mediaUri))

@@ -112,6 +112,7 @@ fun VideoEditorScreen(
     val player = remember(item.id) {
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(EncryptedMediaDataSource.Factory(app.cryptoEngine)))
+            .experimentalSetDynamicSchedulingEnabled(true)
             .build()
             .apply {
                 setMediaItem(androidx.media3.common.MediaItem.fromUri(Uri.fromFile(File(item.encryptedPath))))
