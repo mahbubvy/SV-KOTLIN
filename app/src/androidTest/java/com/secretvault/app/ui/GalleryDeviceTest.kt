@@ -38,6 +38,71 @@ class GalleryDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val app = instrumentation.targetContext.applicationContext as SecretVaultApp
 
+    @Test fun homePlusMenuKeepsCameraVisibleAndRoutesActions() {
+        waitUntil("Unlock phone for Home menu check", 120000) { !app.getSystemService(KeyguardManager::class.java).isDeviceLocked }
+        val media = object : com.secretvault.app.data.repository.MediaRepository by app.mediaRepository {
+            override fun getMedia(albumId: String?, sortOrder: SortOrder) = kotlinx.coroutines.flow.flowOf(emptyList<MediaItem>())
+        }
+        val albums = object : com.secretvault.app.data.repository.AlbumRepository by app.albumRepository {
+            override fun getAllAlbums() = kotlinx.coroutines.flow.flowOf(emptyList<com.secretvault.app.core.model.Album>())
+        }
+        val gallery = com.secretvault.app.ui.gallery.GalleryViewModel(media)
+        val albumModel = com.secretvault.app.ui.gallery.AlbumsViewModel(albums)
+        val actions = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                activity.setContent(parent = null) { SecretVaultTheme {
+                    com.secretvault.app.ui.gallery.GalleryScreen(
+                        app, gallery, albumModel, onMediaClick = {}, onCameraClick = { actions.add("camera") },
+                        onLockClick = {}, onSettingsClick = {}, onViewStreamClick = { actions.add("stream") },
+                        onReceiveFilesClick = { actions.add("receive") }, onVideoEditorClick = { actions.add("editor") }
+                    )
+                } }
+            }
+            wait("More actions"); wait("Open Camera")
+            assertNull(find { it.contentDescription?.toString() == "View stream" })
+            assertNull(find { it.contentDescription?.toString() == "Import Photos & Videos" })
+            click("Open Camera")
+            assertEquals("camera", actions.poll())
+            try {
+                scenario.onActivity { it.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+                SystemClock.sleep(300)
+                click("More actions")
+                for (label in listOf("View stream", "Receive files", "Video editor", "Import photos & videos")) wait(label)
+                SystemClock.sleep(300)
+                val image = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+                try { File(app.getExternalFilesDir(null), "home-plus-menu-test.png").outputStream().use {
+                    image.compress(Bitmap.CompressFormat.PNG, 100, it)
+                } } finally { image.recycle() }
+                instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+                waitUntil("Menu did not dismiss after screenshot") { find { it.text?.toString() == "View stream" } == null }
+            } finally { scenario.onActivity { it.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE) } }
+            for ((label, action) in listOf("View stream" to "stream", "Receive files" to "receive", "Video editor" to "editor")) {
+                if (find { it.text?.toString() == label } == null) click("More actions")
+                click(label)
+                waitUntil("Menu did not dismiss") { find { it.text?.toString() == label } == null }
+                assertEquals(action, actions.poll())
+                wait("Open Camera")
+            }
+            click("More actions")
+            wait("View stream")
+            instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+            waitUntil("Back did not dismiss menu") { find { it.text?.toString() == "View stream" } == null }
+            click("More actions"); click("Import photos & videos")
+            waitUntil("Photo picker did not open") { instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString()?.let { it != app.packageName } == true }
+            instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+            wait("More actions")
+            scenario.onActivity { gallery.setAlbumFilter("synthetic", "Test folder") }
+            wait("Import Photos & Videos")
+            assertNull(find { it.contentDescription?.toString() == "More actions" })
+            scenario.onActivity { gallery.toggleItemSelection("synthetic") }
+            waitUntil("Floating actions remain in selection mode") { find { it.contentDescription?.toString() == "Open Camera" } == null }
+            scenario.onActivity { gallery.clearSelection(); gallery.setAlbumFilter(null, "Albums") }
+            wait("More actions")
+        }
+    }
+
     @Test fun encryptedThumbnailKeepsOldPreviewDuringUpgrade(): Unit = runBlocking {
         waitUntil("Unlock Pixel for thumbnail UI check", 120000) { !app.getSystemService(KeyguardManager::class.java).isDeviceLocked }
         val directory = File(app.cacheDir, "thumbnail-continuity-${UUID.randomUUID()}").apply { mkdirs() }

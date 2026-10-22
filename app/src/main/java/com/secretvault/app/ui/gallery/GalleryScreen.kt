@@ -23,9 +23,12 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.MoveToInbox
 import androidx.compose.material.icons.filled.MovieCreation
@@ -308,7 +311,7 @@ fun GalleryScreen(
             }
         }
 
-        // Floating Action Buttons (Visible when not in multi-selection mode)
+        // Floating actions are hidden during selection.
         AnimatedVisibility(
             visible = !uiState.isSelectionMode,
             enter = fadeIn(),
@@ -322,34 +325,58 @@ fun GalleryScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 if (isAlbumsHome) {
-                    FloatingActionButton(onClick = onViewStreamClick,
-                        containerColor = VaultSurface, contentColor = VaultAccent) {
-                        Icon(Icons.Default.Cast, contentDescription = "View stream")
+                    var showActions by remember { mutableStateOf(false) }
+                    Box {
+                        FloatingActionButton(onClick = { showActions = true },
+                            containerColor = VaultSurface, contentColor = VaultAccent) {
+                            Icon(Icons.Default.Add, contentDescription = "More actions")
+                        }
+                        DropdownMenu(expanded = showActions, onDismissRequest = { showActions = false },
+                            containerColor = VaultSurface) {
+                            DropdownMenuItem(
+                                text = { Text("View stream", color = TextPrimary) },
+                                leadingIcon = { Icon(Icons.Default.Cast, null, tint = VaultAccent) },
+                                onClick = { showActions = false; onViewStreamClick() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Receive files", color = TextPrimary) },
+                                leadingIcon = { Icon(Icons.Default.MoveToInbox, null, tint = VaultAccent) },
+                                onClick = { showActions = false; onReceiveFilesClick() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Video editor", color = TextPrimary) },
+                                leadingIcon = { Icon(Icons.Default.MovieCreation, null, tint = VaultAccent) },
+                                onClick = { showActions = false; onVideoEditorClick() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Import photos & videos", color = TextPrimary) },
+                                leadingIcon = { Icon(Icons.Default.AddPhotoAlternate, null, tint = VaultAccent) },
+                                onClick = {
+                                    showActions = false
+                                    app.sessionManager.setExternalPickerInProgress(true)
+                                    photoPickerLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                                    )
+                                }
+                            )
+                        }
                     }
-                    FloatingActionButton(onClick = onReceiveFilesClick,
-                        containerColor = VaultSurface, contentColor = VaultAccent) {
-                        Icon(Icons.Default.MoveToInbox, contentDescription = "Receive files from another SV phone")
-                    }
-                    FloatingActionButton(onClick = onVideoEditorClick,
-                        containerColor = VaultSurface, contentColor = VaultAccent) {
-                        Icon(Icons.Default.MovieCreation, contentDescription = "Video editor")
-                    }
-                }
-                // Import from Device Button
-                FloatingActionButton(
-                    onClick = {
-                        app.sessionManager.setExternalPickerInProgress(true)
-                        photoPickerLauncher.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                } else {
+                    FloatingActionButton(
+                        onClick = {
+                            app.sessionManager.setExternalPickerInProgress(true)
+                            photoPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                            )
+                        },
+                        containerColor = VaultSurface,
+                        contentColor = VaultAccent
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AddPhotoAlternate,
+                            contentDescription = "Import Photos & Videos"
                         )
-                    },
-                    containerColor = VaultSurface,
-                    contentColor = VaultAccent
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.AddPhotoAlternate,
-                        contentDescription = "Import Photos & Videos"
-                    )
+                    }
                 }
 
                 // Open Camera Button
