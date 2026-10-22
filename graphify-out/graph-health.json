@@ -1,0 +1,212 @@
+{
+  "node_count": 2511,
+  "unverified_node_count": 0,
+  "raw_edge_count": 8946,
+  "non_object_edges": 0,
+  "missing_endpoint_edges": 0,
+  "dangling_endpoint_edges": 2754,
+  "external_reference_edges": 0,
+  "self_loop_edges": 76,
+  "valid_candidate_edges": 6192,
+  "exact_duplicate_edges": 0,
+  "directed_unique_endpoint_pairs": 6034,
+  "directed_same_endpoint_collapsed_edges": 158,
+  "undirected_unique_endpoint_pairs": 5946,
+  "undirected_same_endpoint_collapsed_edges": 246,
+  "same_endpoint_group_count": 137,
+  "relation_variant_groups": 54,
+  "source_file_variant_groups": 0,
+  "source_location_variant_groups": 51,
+  "context_variant_groups": 38,
+  "post_build_graph_type": "Graph",
+  "post_build_node_count": 3079,
+  "post_build_edge_count": 8692,
+  "post_build_error": "",
+  "producer_suppression": {
+    "path": "<graphify installation>/graphify\\extract.py",
+    "total_sites": 12,
+    "sites": [
+      {
+        "line": 1785,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 2349,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 2351,
+        "name": "seen_doc_refs",
+        "tuple_arity": 0,
+        "sample": "seen_doc_refs: set[str] = set()"
+      },
+      {
+        "line": 3018,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 3165,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n.get(\"id\") for n in nodes}"
+      },
+      {
+        "line": 4175,
+        "name": "seen_keys",
+        "tuple_arity": 0,
+        "sample": "seen_keys: set[tuple] = set()"
+      },
+      {
+        "line": 4361,
+        "name": "seen_keys",
+        "tuple_arity": 0,
+        "sample": "seen_keys: set[tuple] = set()"
+      },
+      {
+        "line": 7505,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 7613,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 7692,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 8207,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 8208,
+        "name": "seen_edges",
+        "tuple_arity": 4,
+        "sample": "seen_edges: set[tuple[str, str, str, str | None]] = set()"
+      }
+    ],
+    "error": ""
+  },
+  "examples": [
+    {
+      "source": "app_src_main_java_com_secretvault_app_secretvaultapp_secretvaultapp",
+      "target": "app_src_main_java_com_secretvault_app_secretvaultapp_kt_com",
+      "edge_count": 7,
+      "relations": [
+        "references"
+      ],
+      "source_files": [
+        "app/src/main/java/com/secretvault/app/SecretVaultApp.kt"
+      ],
+      "source_locations": [
+        "L35",
+        "L36",
+        "L37",
+        "L38",
+        "L39",
+        "L40",
+        "L41"
+      ],
+      "contexts": [
+        "field"
+      ]
+    },
+    {
+      "source": "app_src_main_java_com_secretvault_app_core_camera_cameramanager_cameramanager",
+      "target": "app_src_main_java_com_secretvault_app_core_camera_cameramanager_kt_stateflow",
+      "edge_count": 6,
+      "relations": [
+        "references"
+      ],
+      "source_files": [
+        "app/src/main/java/com/secretvault/app/core/camera/CameraManager.kt"
+      ],
+      "source_locations": [
+        "L86",
+        "L88",
+        "L91",
+        "L93",
+        "L95",
+        "L97"
+      ],
+      "contexts": [
+        "field"
+      ]
+    },
+    {
+      "source": "app_src_main_java_com_secretvault_app_core_processing_videoproject_videoprojecthistory",
+      "target": "app_src_main_java_com_secretvault_app_core_processing_videoproject_videoproject",
+      "edge_count": 4,
+      "relations": [
+        "references"
+      ],
+      "source_files": [
+        "app/src/main/java/com/secretvault/app/core/processing/VideoProject.kt"
+      ],
+      "source_locations": [
+        "L28",
+        "L29",
+        "L30",
+        "L31"
+      ],
+      "contexts": [
+        "field",
+        "generic_arg"
+      ]
+    },
+    {
+      "source": "app_src_main_java_com_secretvault_app_core_crypto_chunkedcipherstream_chunkedcipherstream_readheader",
+      "target": "app_src_main_java_com_secretvault_app_core_crypto_chunkedcipherstream_streamheader",
+      "edge_count": 3,
+      "relations": [
+        "calls",
+        "references"
+      ],
+      "source_files": [
+        "app/src/main/java/com/secretvault/app/core/crypto/ChunkedCipherStream.kt"
+      ],
+      "source_locations": [
+        "L109",
+        "L148",
+        "L151"
+      ],
+      "contexts": [
+        "call",
+        "return_type"
+      ]
+    },
+    {
+      "source": "app_src_main_java_com_secretvault_app_core_crypto_securememory_securememory",
+      "target": "app_src_main_java_com_secretvault_app_core_crypto_securememory_securememory_wipe",
+      "edge_count": 3,
+      "relations": [
+        "method"
+      ],
+      "source_files": [
+        "app/src/main/java/com/secretvault/app/core/crypto/SecureMemory.kt"
+      ],
+      "source_locations": [
+        "L11",
+        "L17",
+        "L23"
+      ],
+      "contexts": [
+        ""
+      ]
+    }
+  ]
+}

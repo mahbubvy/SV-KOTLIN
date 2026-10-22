@@ -1,0 +1,8 @@
+*
+!.gitignore
+!README.md
+!graph.html
+!graph.json
+!GRAPH_REPORT.md
+!graph-health.json
+!.graphify_labels.json
