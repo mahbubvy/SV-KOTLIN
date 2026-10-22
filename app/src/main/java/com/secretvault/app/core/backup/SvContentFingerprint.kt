@@ -9,21 +9,34 @@ import java.security.MessageDigest
  * hashes are SHA-256 hashed to produce a 64-character lowercase hex string.
  */
 class SvContentFingerprint {
-    private val chunkHashes = mutableListOf<ByteArray>()
+    private val chunkDigest = MessageDigest.getInstance("SHA-256")
+    private val digest = MessageDigest.getInstance("SHA-256")
+    private var chunkBytes = 0
+    private var fingerprint: String? = null
 
     fun update(bytes: ByteArray, offset: Int = 0, length: Int = bytes.size) {
-        val md = MessageDigest.getInstance("SHA-256")
-        md.update(bytes, offset, length)
-        chunkHashes.add(md.digest())
+        check(fingerprint == null) { "Fingerprint already finalized" }
+        require(offset >= 0 && length >= 0 && offset <= bytes.size - length)
+        var position = offset
+        val end = offset + length
+        // Archive records and vault decryption writes have different boundaries.
+        while (position < end) {
+            val count = minOf(end - position, SvBackupCrypto.CHUNK_SIZE - chunkBytes)
+            chunkDigest.update(bytes, position, count)
+            chunkBytes += count
+            position += count
+            if (chunkBytes == SvBackupCrypto.CHUNK_SIZE) {
+                digest.update(chunkDigest.digest())
+                chunkBytes = 0
+            }
+        }
     }
 
     @OptIn(ExperimentalStdlibApi::class)
     fun finish(): String {
-        val md = MessageDigest.getInstance("SHA-256")
-        for (h in chunkHashes) {
-            md.update(h)
-        }
-        return md.digest().toHexString()
+        fingerprint?.let { return it }
+        if (chunkBytes > 0) digest.update(chunkDigest.digest())
+        return digest.digest().toHexString().also { fingerprint = it }
     }
 
     companion object {
